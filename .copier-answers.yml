@@ -1,0 +1,18 @@
+# This file is auto-generated and updated by Copier; do not edit by hand.
+# Run `copier update` to pull in template changes.
+_commit: v1.8.1
+_src_path: gh:Generality-Labs/python-project-template
+author_email: m@ttfisher.com
+author_name: Matt Fisher
+github_owner: Generality-Labs
+license: MIT
+project_description: 'Static checks for Inspect AI evaluations: structure, tests,
+    best practices and sandbox pinning'
+project_kind: library
+project_name: inspect-evals-lint
+publish_to_pypi: true
+python_version: '3.11'
+use_coverage_gate: false
+use_frontend: false
+use_template_update: true
+use_typos: true

@@ -1,0 +1,43 @@
+# Byte-compiled
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+
+# Packaging / build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+
+# Coverage
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Local env / secrets — never commit API keys
+.env
+.env.*
+!.env.example
+
+# Claude Code per-user overrides (the shared .claude/settings.json is committed)
+.claude/settings.local.json
+
+# Eval / run output
+logs/
+
+# Editors
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

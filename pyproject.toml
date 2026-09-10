@@ -1,0 +1,89 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "inspect-evals-lint"
+dynamic = ["version"]
+description = "Static checks for Inspect AI evaluations: structure, tests, best practices and sandbox pinning"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Matt Fisher", email = "m@ttfisher.com" }]
+requires-python = ">=3.11"
+dependencies = [
+    "pyyaml>=6.0",
+    "rich>=13.0",
+]
+
+[project.scripts]
+inspect-evals-lint = "inspect_evals_lint.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Generality-Labs/inspect-evals-lint"
+Repository = "https://github.com/Generality-Labs/inspect-evals-lint"
+Issues = "https://github.com/Generality-Labs/inspect-evals-lint/issues"
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=7.0.0",
+    "basedpyright>=1.39",
+    "pre-commit>=4.0.0",
+    "types-PyYAML",
+]
+
+[tool.hatch.version]
+path = "src/inspect_evals_lint/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/inspect_evals_lint"]
+[tool.ruff]
+line-length = 100
+src = ["src"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "D",     # pydocstyle
+    "C4",    # flake8-comprehensions
+    "PT",    # flake8-pytest-style
+    "PIE",   # flake8-pie
+    "DTZ",   # flake8-datetimez (timezone-aware datetimes)
+    "ISC",   # implicit-str-concat (catches missing commas)
+    "ASYNC", # flake8-async
+    "N",     # pep8-naming
+    "FURB",  # refurb (modernization)
+    "RUF",   # ruff-specific rules
+    "PLE",   # pylint errors
+    "PLW",   # pylint warnings
+]
+ignore = [
+    "E501",   # line-too-long — the formatter owns line length
+    "D10",    # missing docstrings — don't force them
+    "D415",   # first-line punctuation — the module docstring is the project
+    # description, whose punctuation varies
+    "ISC001", # single-line implicit concat — conflicts with the formatter
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"] # tests don't need docstring linting
+
+[tool.basedpyright]
+pythonVersion = "3.11"
+# "strict" (pyright's), not basedpyright's stricter default "recommended" —
+# the based-only rules (reportAny etc.) are opt-in per project.
+typeCheckingMode = "strict"
+reportMissingTypeStubs = false # third-party libs are often untyped
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-rA --durations=10 --color=yes --cov=src --cov-report=term-missing"
