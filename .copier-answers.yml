@@ -14,5 +14,6 @@ publish_to_pypi: true
 python_version: '3.11'
 use_coverage_gate: false
 use_frontend: false
+use_repo_settings: true
 use_template_update: true
 use_typos: true
