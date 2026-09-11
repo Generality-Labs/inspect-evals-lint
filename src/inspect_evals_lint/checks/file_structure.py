@@ -16,7 +16,7 @@ from inspect_evals_lint.models import LintReport, LintResult
 
 
 def _find_task_functions(file_path: Path) -> list[str]:
-    """Names of ``@task``-decorated functions in ``file_path`` (empty if missing or unparseable)."""
+    """Names of ``@task``-decorated functions in ``file_path`` (empty if missing or unparsable)."""
     if not file_path.exists():
         return []
     try:

@@ -87,3 +87,7 @@ reportMissingTypeStubs = false # third-party libs are often untyped
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-rA --durations=10 --color=yes --cov=src --cov-report=term-missing"
+
+[tool.typos.default.extend-words]
+# Import name of the odfpy package, not a misspelling of "of".
+odf = "odf"

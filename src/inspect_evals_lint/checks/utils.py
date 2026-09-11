@@ -114,7 +114,7 @@ def parse_python_files(eval_path: Path) -> ParseResults:
 def add_parse_errors_to_report(
     check_name: str, failed_paths: list[str], report: LintReport
 ) -> bool:
-    """Record a failure for unparseable files; return True when the caller should stop."""
+    """Record a failure for unparsable files; return True when the caller should stop."""
     if not failed_paths:
         return False
     report.add(
