@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - `model_role_resolution` check: every `get_model(role=...)` call must pass an explicit model, pin a `default=` or set `required=True`, because an unbound role otherwise falls back to the model under evaluation and a grader silently grades itself. Ported from inspect_evals ([UKGovernmentBEIS/inspect_evals#2321](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2321) by @antnewman), and promoted from a warning to a failure with a `model-role-allowlist` configuration key that turns known call sites into warnings until they are fixed, the same ratchet `sandbox_image_pinning` uses.
+- `unscored_reason` check: every `Score.unscored(...)` call must pass a `reason=`, and the legacy `"unscored_reason"` metadata key must not appear, now that `Score.reason` (inspect_ai 0.3.261) is the first-class record of why a sample was left unscored (see [UKGovernmentBEIS/inspect_evals#2459](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2459)).
 
 ### Fixed
 

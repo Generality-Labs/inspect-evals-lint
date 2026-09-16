@@ -28,6 +28,7 @@ from inspect_evals_lint.checks import (
     check_task_overridable_defaults,
     check_tests_exist,
     check_tests_init,
+    check_unscored_reason,
     get_eval_path,
     get_test_path,
 )
@@ -63,6 +64,7 @@ CHECKS: dict[str, CheckFn] = {
     ),
     "private_api_imports": lambda c: check_private_api_imports(c.eval_path, c.report),
     "score_constants": lambda c: check_score_constants(c.eval_path, c.report),
+    "unscored_reason": lambda c: check_unscored_reason(c.eval_path, c.report),
     "get_model_location": lambda c: check_get_model_location(c.eval_path, c.report),
     "model_role_resolution": lambda c: check_model_role_resolution(
         c.eval_path, c.report, c.config.model_role_allowlist
@@ -102,6 +104,7 @@ CHECK_CATEGORIES: dict[str, str] = {
     "readme": "file_structure",
     "private_api_imports": "code_quality",
     "score_constants": "code_quality",
+    "unscored_reason": "code_quality",
     "external_dependencies": "code_quality",
     "tests_exist": "tests",
     "tests_init": "tests",
