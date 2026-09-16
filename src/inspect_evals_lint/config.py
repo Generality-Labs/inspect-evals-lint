@@ -18,6 +18,12 @@ TOOL_TABLE = "inspect-evals-lint"
 RegistryMode = Literal["module", "entry-points", "none"]
 REGISTRY_MODES: tuple[str, ...] = get_args(RegistryMode)
 
+TestsLayout = Literal["per-eval", "flat"]
+TESTS_LAYOUTS: tuple[str, ...] = get_args(TestsLayout)
+
+ReadmeLocation = Literal["eval-dir", "repo-root"]
+README_LOCATIONS: tuple[str, ...] = get_args(ReadmeLocation)
+
 
 class ConfigError(ValueError):
     """Raised when the ``[tool.inspect-evals-lint]`` table is invalid."""
@@ -32,6 +38,15 @@ class LintConfig:
 
     tests_root: str = "tests"
     """Directory holding ``<tests_root>/<eval_name>/`` test packages."""
+
+    tests_layout: TestsLayout = "per-eval"
+    """``per-eval`` requires ``<tests_root>/<eval_name>/``; ``flat`` also accepts test files directly under ``tests_root``, as single-evaluation repositories usually have."""
+
+    readme_location: ReadmeLocation = "eval-dir"
+    """``eval-dir`` requires ``README.md`` inside the evaluation directory; ``repo-root`` also accepts the repository's top-level ``README.md``."""
+
+    eval_yaml_required: bool = True
+    """Whether a missing ``eval.yaml`` fails. False skips instead, for repositories whose metadata lives in the inspect_evals register; a present file is still validated."""
 
     import_prefix: str = ""
     """Dotted import prefix for evaluations, e.g. ``inspect_evals``; empty when an eval imports as ``<eval_name>``."""
@@ -91,6 +106,14 @@ PRESETS: dict[str, LintConfig] = {
         non_eval_dirs=frozenset({"utils"}),
         isolated_packages_dir="packages",
     ),
+    # An upstream repo listed in the inspect_evals register: one evaluation,
+    # tests directly under tests/, README at the repo root, and eval.yaml held
+    # by the register entry rather than the repo.
+    "register": LintConfig(
+        tests_layout="flat",
+        readme_location="repo-root",
+        eval_yaml_required=False,
+    ),
 }
 DEFAULT_PRESET = "template"
 
@@ -101,6 +124,13 @@ def _expect(value: object, kind: type, key: str) -> Any:
     if not isinstance(value, kind):
         raise ConfigError(f"'{key}' must be a {kind.__name__}, got {type(value).__name__}")
     return value
+
+
+def _choice(value: object, key: str, choices: tuple[str, ...]) -> str:
+    text: str = _expect(value, str, key)
+    if text not in choices:
+        raise ConfigError(f"'{key}' must be one of {list(choices)}, got {text!r}")
+    return text
 
 
 def _str_list(value: object, key: str) -> list[str]:
@@ -121,10 +151,13 @@ def _coerce(key: str, value: object) -> object:
             pairs.update((name, image) for image in _str_list(images, key))
         return frozenset(pairs)
     if key == "registry":
-        mode = _expect(value, str, key)
-        if mode not in REGISTRY_MODES:
-            raise ConfigError(f"'registry' must be one of {list(REGISTRY_MODES)}, got {mode!r}")
-        return mode
+        return _choice(value, key, REGISTRY_MODES)
+    if key == "tests_layout":
+        return _choice(value, key, TESTS_LAYOUTS)
+    if key == "readme_location":
+        return _choice(value, key, README_LOCATIONS)
+    if key == "eval_yaml_required":
+        return _expect(value, bool, key)
     if key in ("registry_module", "isolated_packages_dir"):
         text = _expect(value, str, key)
         return text or None

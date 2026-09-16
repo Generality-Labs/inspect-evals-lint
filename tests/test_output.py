@@ -1,7 +1,16 @@
 """Tests for the final summary output, ported from inspect_evals."""
 
+import json
+from pathlib import Path
+
+from inspect_evals_lint import __version__
 from inspect_evals_lint.models import LintReport, LintResult
-from inspect_evals_lint.output import print_final_summary
+from inspect_evals_lint.output import (
+    print_final_summary,
+    render_json,
+    report_to_dict,
+    reports_to_dict,
+)
 
 
 def make_reports() -> list[LintReport]:
@@ -103,3 +112,61 @@ def test_no_warnings_section_when_none(capsys):
     print_final_summary(reports)
     out = capsys.readouterr().out
     assert "Warnings by check:" not in out
+
+
+def test_reports_to_dict_totals_and_pass_flag():
+    data = reports_to_dict(make_reports())
+    assert data["version"] == __version__
+    assert data["root"] is None
+    assert data["passed"] is False
+    assert data["evaluations_passed"] == 3
+    assert data["evaluations_total"] == 5
+    assert data["summary"] == {"pass": 3, "fail": 3, "warn": 1, "skip": 2, "suppressed": 0}
+    assert [e["name"] for e in data["evaluations"]] == [
+        "good_eval",
+        "bad_eval",
+        "worse_eval",
+        "mixed_eval",
+        "skippy_eval",
+    ]
+
+
+def test_report_to_dict_keeps_result_order_and_fields():
+    report = make_reports()[1]
+    data = report_to_dict(report)
+    assert data["passed"] is False
+    assert data["results"] == [
+        {
+            "check": "readme",
+            "category": "file_structure",
+            "status": "fail",
+            "message": "Missing README.md",
+            "file": "src/inspect_evals/bad_eval/README.md",
+            "line": None,
+        },
+        {
+            "check": "registry",
+            "category": "file_structure",
+            "status": "pass",
+            "message": "Registered",
+            "file": None,
+            "line": None,
+        },
+    ]
+
+
+def test_report_to_dict_relativises_paths_under_root(tmp_path: Path):
+    report = LintReport(eval_name="x")
+    inside = tmp_path / "src" / "x" / "x.py"
+    outside = Path("/definitely/elsewhere/x.py")
+    report.add(LintResult(name="a", status="fail", message="m", file=str(inside), line=3))
+    report.add(LintResult(name="b", status="fail", message="m", file=str(outside)))
+    report.add(LintResult(name="c", status="fail", message="m", file="tests/x"))
+    files = [r["file"] for r in report_to_dict(report, tmp_path)["results"]]
+    assert files == ["src/x/x.py", str(outside), "tests/x"]
+
+
+def test_render_json_is_parseable_and_newline_terminated():
+    text = render_json(make_reports())
+    assert text.endswith("\n")
+    assert json.loads(text)["evaluations_total"] == 5

@@ -18,30 +18,48 @@ from inspect_evals_lint.models import LintReport, LintResult
 
 
 def get_test_path(repo_root: Path, eval_name: str, config: LintConfig) -> Path | None:
-    """The evaluation's test directory, or None if it does not exist."""
-    test_path = config.tests_dir(repo_root) / eval_name
-    return test_path if test_path.is_dir() else None
+    """The evaluation's test directory, or None if it does not exist.
+
+    ``<tests_root>/<eval_name>/`` when present; with the ``flat`` layout, ``tests_root``
+    itself when it holds test files directly.
+    """
+    per_eval = config.tests_dir(repo_root) / eval_name
+    if per_eval.is_dir():
+        return per_eval
+    tests_root = config.tests_dir(repo_root)
+    if config.tests_layout == "flat" and _has_test_files(tests_root):
+        return tests_root
+    return None
+
+
+def _has_test_files(directory: Path) -> bool:
+    return directory.is_dir() and any(
+        path.is_file() for path in (*directory.glob("test_*.py"), *directory.glob("*_test.py"))
+    )
 
 
 def check_tests_exist(
     repo_root: Path, eval_name: str, config: LintConfig, report: LintReport
 ) -> Path | None:
-    """Check ``<tests_root>/<eval_name>/`` exists; returns its path."""
+    """Check the evaluation has a test directory; returns its path."""
     test_path = get_test_path(repo_root, eval_name, config)
     if test_path:
         report.add(
             LintResult(
                 name="tests_exist",
                 status="pass",
-                message=f"Test directory exists at {config.tests_root}/{eval_name}",
+                message=f"Test directory exists at {test_path.relative_to(repo_root).as_posix()}",
             )
         )
         return test_path
+    expected = f"{config.tests_root}/{eval_name}"
+    if config.tests_layout == "flat":
+        expected += f" (or test files directly under {config.tests_root}/)"
     report.add(
         LintResult(
             name="tests_exist",
             status="fail",
-            message=f"Missing test directory: {config.tests_root}/{eval_name}",
+            message=f"Missing test directory: {expected}",
         )
     )
     return None
@@ -234,10 +252,26 @@ def check_custom_tool_tests(test_path: Path | None, eval_path: Path, report: Lin
 EXCLUDED_TEST_DIRS = {"__pycache__", ".mypy_cache", "utils"}
 
 
-def check_tests_init(test_path: Path | None, report: LintReport) -> None:
-    """Check the test directory and every sub-directory has an ``__init__.py``."""
+def check_tests_init(
+    test_path: Path | None, report: LintReport, tests_root: Path | None = None
+) -> None:
+    """Check the test directory and every sub-directory has an ``__init__.py``.
+
+    Skipped when ``test_path`` is ``tests_root`` itself (flat layout): the packages
+    guard against basename collisions between per-evaluation test directories,
+    and a flat tree has none.
+    """
     if test_path is None:
         _no_test_dir("tests_init", report)
+        return
+    if tests_root is not None and test_path == tests_root:
+        report.add(
+            LintResult(
+                name="tests_init",
+                status="skip",
+                message="Tests live directly under the tests root; __init__.py files not required",
+            )
+        )
         return
 
     missing_init: list[str] = []

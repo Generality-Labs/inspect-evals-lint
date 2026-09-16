@@ -16,10 +16,20 @@ from inspect_evals_lint.config import LintConfig
 from inspect_evals_lint.models import LintReport, LintResult
 
 
+def _normalize_name(name: str) -> str:
+    """Canonical PEP 503 form: lower-cased, with runs of ``-``, ``_`` and ``.`` collapsed to ``-``.
+
+    ``inspect_ai`` and ``inspect-ai`` name the same distribution, and distribution
+    metadata uses whichever spelling the author wrote, so every name is compared
+    in this form.
+    """
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
 def _extract_package_name(dep: str) -> str | None:
-    """Lower-cased package name from a requirement string, stripping specifiers, extras and markers."""
-    dep_name = re.split(r"[<>=;[\s]", dep)[0].strip().lower()
-    return dep_name or None
+    """Normalised package name from a requirement string, stripping specifiers, extras and markers."""
+    dep_name = re.split(r"[<>=!~@,;[\s]", dep)[0].strip()
+    return _normalize_name(dep_name) if dep_name else None
 
 
 @functools.cache
@@ -76,10 +86,10 @@ _KNOWN_IMPORT_ALIASES: dict[str, str] = {
 @functools.cache
 def _get_import_to_package_map() -> dict[str, str]:
     """Import name -> distribution name, from installed packages plus static aliases."""
-    mapping = dict(_KNOWN_IMPORT_ALIASES)
+    mapping = {imp: _normalize_name(dist) for imp, dist in _KNOWN_IMPORT_ALIASES.items()}
     for import_name, distributions in packages_distributions().items():
         if distributions:
-            mapping[import_name] = distributions[0]
+            mapping[import_name] = _normalize_name(distributions[0])
     return mapping
 
 
@@ -178,7 +188,7 @@ def check_external_dependencies(
     external_imports: set[str] = set()
     for imp in imports:
         imp_lower = imp.lower()
-        package_name = import_to_package.get(imp, imp).lower()
+        package_name = import_to_package.get(imp, _normalize_name(imp))
         if (
             imp_lower not in stdlib_modules
             and package_name not in core_deps
@@ -215,8 +225,8 @@ def check_external_dependencies(
 
     missing_deps: list[str] = []
     for imp in sorted(external_imports):
-        package_name = import_to_package.get(imp, imp).lower()
-        if package_name not in all_optional_deps and imp.lower() not in all_optional_deps:
+        package_name = import_to_package.get(imp, _normalize_name(imp))
+        if package_name not in all_optional_deps and _normalize_name(imp) not in all_optional_deps:
             missing_deps.append(f"{imp} (package: {package_name})")
 
     if missing_deps:

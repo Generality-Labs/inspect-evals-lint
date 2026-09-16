@@ -7,9 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from inspect_evals_lint import LintConfig, get_all_check_names, get_all_eval_names, lint_evaluation
-from inspect_evals_lint.runner import CHECKS
-from tests.conftest import make_eval, make_monorepo, make_template_repo, write
+from inspect_evals_lint import (
+    PRESETS,
+    LintConfig,
+    get_all_check_names,
+    get_all_eval_names,
+    lint_evaluation,
+)
+from inspect_evals_lint.runner import CHECK_CATEGORIES, CHECKS, category_of
+from tests.conftest import make_eval, make_monorepo, make_register_repo, make_template_repo, write
 
 
 def statuses(
@@ -27,9 +33,26 @@ def test_all_check_names_are_registered() -> None:
     assert len(get_all_check_names()) == 20
 
 
-@pytest.mark.parametrize("layout", ["monorepo", "template"])
+def test_every_check_has_a_category() -> None:
+    assert set(CHECK_CATEGORIES) == set(get_all_check_names())
+    assert set(CHECK_CATEGORIES.values()) == {
+        "file_structure",
+        "code_quality",
+        "tests",
+        "best_practices",
+    }
+    assert category_of("readme") == "file_structure"
+    assert category_of("invalid_check") is None
+
+
+@pytest.mark.parametrize("layout", ["monorepo", "template", "register"])
 def test_well_formed_eval_passes_every_check(tmp_path: Path, layout: str) -> None:
-    config = make_monorepo(tmp_path) if layout == "monorepo" else make_template_repo(tmp_path)
+    builders = {
+        "monorepo": make_monorepo,
+        "template": make_template_repo,
+        "register": make_register_repo,
+    }
+    config = builders[layout](tmp_path)
     report = lint_evaluation(tmp_path, "alpha", config)
     failing = [(r.name, r.message) for r in report.results if r.status == "fail"]
     assert failing == []
@@ -181,3 +204,127 @@ def test_sandbox_allowlist_from_config(monorepo: tuple[Path, LintConfig]) -> Non
     assert statuses(root, config)["sandbox_image_pinning"] == ["fail"]
     config = replace(config, sandbox_image_allowlist=frozenset({("alpha", "example/untagged")}))
     assert statuses(root, config)["sandbox_image_pinning"] == ["warn"]
+
+
+def test_register_layout_statuses(register_repo: tuple[Path, LintConfig]) -> None:
+    """Flat tests, root README and no eval.yaml are accepted rather than merely tolerated."""
+    root, config = register_repo
+    result = statuses(root, config)
+    assert result["tests_exist"] == ["pass"]
+    assert result["tests_init"] == ["skip"]
+    assert result["e2e_test"] == ["pass"]
+    assert result["record_to_sample_test"] == ["pass"]
+    assert result["readme"] == ["pass"]
+    assert result["eval_yaml"] == ["skip"]
+
+
+def test_register_layout_same_repo_fails_under_template_preset(
+    register_repo: tuple[Path, LintConfig],
+) -> None:
+    root, _ = register_repo
+    result = statuses(root, replace(PRESETS["template"]))
+    assert result["tests_exist"] == ["fail"]
+    assert result["readme"] == ["fail"]
+    assert result["eval_yaml"] == ["fail"]
+
+
+def test_flat_layout_prefers_per_eval_directory(register_repo: tuple[Path, LintConfig]) -> None:
+    """A template-derived repo that kept tests/<eval>/ is linted as before, __init__.py included."""
+    root, config = register_repo
+    write(config.tests_dir(root) / "alpha" / "test_other.py", "def test_x():\n    pass\n")
+    report = lint_evaluation(root, "alpha", config)
+    by_name = {r.name: r for r in report.results}
+    assert "tests/alpha" in by_name["tests_exist"].message
+    assert by_name["tests_init"].status == "fail"  # tests/alpha has no __init__.py
+    assert by_name["e2e_test"].status == "fail"  # the flat file is no longer in scope
+
+
+def test_flat_layout_needs_test_files(register_repo: tuple[Path, LintConfig]) -> None:
+    root, config = register_repo
+    (config.tests_dir(root) / "test_alpha.py").unlink()
+    write(config.tests_dir(root) / "conftest.py", "")
+    result = statuses(root, config)
+    assert result["tests_exist"] == ["fail"]
+    assert result["e2e_test"] == ["fail"]
+
+
+def test_root_readme_fallback_only_when_eval_dir_has_none(
+    register_repo: tuple[Path, LintConfig],
+) -> None:
+    root, config = register_repo
+    write(config.eval_dir(root, "alpha") / "README.md", "# alpha\n\nTODO: write me\n")
+    report = lint_evaluation(root, "alpha", config)
+    readme = next(r for r in report.results if r.name == "readme")
+    assert readme.status == "warn"  # the eval-dir README wins and its TODO is reported
+    (config.eval_dir(root, "alpha") / "README.md").unlink()
+    (root / "README.md").unlink()
+    report = lint_evaluation(root, "alpha", config)
+    readme = next(r for r in report.results if r.name == "readme")
+    assert readme.status == "fail"
+    assert "alpha/" in readme.message
+
+
+def test_optional_eval_yaml_is_still_validated_when_present(
+    register_repo: tuple[Path, LintConfig],
+) -> None:
+    root, config = register_repo
+    write(config.eval_dir(root, "alpha") / "eval.yaml", "title: Alpha\n")
+    report = lint_evaluation(root, "alpha", config)
+    result = next(r for r in report.results if r.name == "eval_yaml")
+    assert result.status == "fail"
+    assert "description" in result.message
+
+
+def test_tasks_py_accepted_as_main_file(template_repo: tuple[Path, LintConfig]) -> None:
+    root, config = template_repo
+    eval_dir = config.eval_dir(root, "alpha")
+    (eval_dir / "alpha.py").rename(eval_dir / "tasks.py")
+    write(eval_dir / "__init__.py", "from .tasks import alpha\n\n__all__ = ['alpha']\n")
+    report = lint_evaluation(root, "alpha", config)
+    by_name = {r.name: r for r in report.results}
+    assert by_name["main_file"].status == "pass"
+    assert "tasks.py" in by_name["main_file"].message
+    assert by_name["init_exports"].status == "pass"
+
+
+def test_tasks_py_exports_are_checked(template_repo: tuple[Path, LintConfig]) -> None:
+    root, config = template_repo
+    eval_dir = config.eval_dir(root, "alpha")
+    (eval_dir / "alpha.py").rename(eval_dir / "tasks.py")
+    write(eval_dir / "__init__.py", "")
+    result = statuses(root, config)
+    assert result["main_file"] == ["pass"]
+    assert result["init_exports"] == ["fail"]
+
+
+def test_named_main_file_preferred_over_tasks_py(template_repo: tuple[Path, LintConfig]) -> None:
+    root, config = template_repo
+    eval_dir = config.eval_dir(root, "alpha")
+    write(eval_dir / "tasks.py", "from inspect_ai import task\n\n@task\ndef other():\n    ...\n")
+    report = lint_evaluation(root, "alpha", config)
+    main = next(r for r in report.results if r.name == "main_file")
+    assert main.status == "pass"
+    assert main.message.startswith("alpha.py")
+
+
+def test_empty_named_main_file_does_not_hide_tasks_py(
+    template_repo: tuple[Path, LintConfig],
+) -> None:
+    root, config = template_repo
+    eval_dir = config.eval_dir(root, "alpha")
+    (eval_dir / "alpha.py").rename(eval_dir / "tasks.py")
+    write(eval_dir / "alpha.py", "CONSTANT = 1\n")
+    write(eval_dir / "__init__.py", "from .tasks import alpha\n")
+    result = statuses(root, config)
+    assert result["main_file"] == ["pass"]
+    assert result["init_exports"] == ["pass"]
+
+
+def test_missing_main_file_names_both_candidates(template_repo: tuple[Path, LintConfig]) -> None:
+    root, config = template_repo
+    (config.eval_dir(root, "alpha") / "alpha.py").unlink()
+    report = lint_evaluation(root, "alpha", config)
+    by_name = {r.name: r for r in report.results}
+    assert by_name["main_file"].status == "fail"
+    assert by_name["main_file"].message == "Missing main file: alpha.py or tasks.py"
+    assert by_name["init_exports"].status == "skip"

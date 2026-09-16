@@ -55,7 +55,11 @@ CheckFn = Callable[[LintContext], object]
 CHECKS: dict[str, CheckFn] = {
     "main_file": lambda c: check_main_file(c.eval_path, c.eval_name, c.report),
     "init_exports": lambda c: check_init_exports(c.eval_path, c.eval_name, c.report),
-    "readme": lambda c: check_readme(c.eval_path, c.report),
+    "readme": lambda c: check_readme(
+        c.eval_path,
+        c.report,
+        fallback=c.root / "README.md" if c.config.readme_location == "repo-root" else None,
+    ),
     "private_api_imports": lambda c: check_private_api_imports(c.eval_path, c.report),
     "score_constants": lambda c: check_score_constants(c.eval_path, c.report),
     "get_model_location": lambda c: check_get_model_location(c.eval_path, c.report),
@@ -71,7 +75,9 @@ CHECKS: dict[str, CheckFn] = {
     ),
     "tests_exist": lambda c: check_tests_exist(c.root, c.eval_name, c.config, c.report),
     "e2e_test": lambda c: check_e2e_test(c.test_path, c.report),
-    "tests_init": lambda c: check_tests_init(c.test_path, c.report),
+    "tests_init": lambda c: check_tests_init(
+        c.test_path, c.report, tests_root=c.config.tests_dir(c.root)
+    ),
     "record_to_sample_test": lambda c: check_record_to_sample_test(
         c.test_path, c.eval_path, c.report
     ),
@@ -81,6 +87,35 @@ CHECKS: dict[str, CheckFn] = {
 }
 
 EVAL_LOCATION = "eval_location"
+
+# The sections of docs/CHECKS.md. Reporting tools group results by these.
+CHECK_CATEGORIES: dict[str, str] = {
+    EVAL_LOCATION: "file_structure",
+    "main_file": "file_structure",
+    "init_exports": "file_structure",
+    "registry": "file_structure",
+    "eval_yaml": "file_structure",
+    "readme": "file_structure",
+    "private_api_imports": "code_quality",
+    "score_constants": "code_quality",
+    "external_dependencies": "code_quality",
+    "tests_exist": "tests",
+    "tests_init": "tests",
+    "e2e_test": "tests",
+    "record_to_sample_test": "tests",
+    "custom_solver_tests": "tests",
+    "custom_scorer_tests": "tests",
+    "custom_tool_tests": "tests",
+    "get_model_location": "best_practices",
+    "sample_ids": "best_practices",
+    "task_overridable_defaults": "best_practices",
+    "sandbox_image_pinning": "best_practices",
+}
+
+
+def category_of(check_name: str) -> str | None:
+    """The docs/CHECKS.md section a check belongs to; None for runner-level results such as ``invalid_check``."""
+    return CHECK_CATEGORIES.get(check_name)
 
 
 def get_all_check_names() -> list[str]:

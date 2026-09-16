@@ -34,6 +34,30 @@ def test_monorepo_preset_values() -> None:
     assert PRESETS["template"].module_name("gpqa") == "gpqa"
 
 
+def test_register_preset_values() -> None:
+    cfg = PRESETS["register"]
+    assert cfg.tests_layout == "flat"
+    assert cfg.readme_location == "repo-root"
+    assert cfg.eval_yaml_required is False
+    # Everything else follows the template layout.
+    assert cfg.source_root == "src"
+    assert cfg.registry == "entry-points"
+    assert PRESETS["template"].tests_layout == "per-eval"
+    assert PRESETS["template"].readme_location == "eval-dir"
+    assert PRESETS["template"].eval_yaml_required is True
+
+
+def test_layout_keys_are_overridable() -> None:
+    cfg = config_from_table(
+        {"tests-layout": "flat", "readme_location": "repo-root", "eval-yaml-required": False}
+    )
+    assert cfg.tests_layout == "flat"
+    assert cfg.readme_location == "repo-root"
+    assert cfg.eval_yaml_required is False
+    cfg = config_from_table({"preset": "register", "eval-yaml-required": True})
+    assert cfg.eval_yaml_required is True
+
+
 def test_kebab_and_snake_keys_override_preset() -> None:
     cfg = config_from_table(
         {
@@ -60,6 +84,9 @@ def test_kebab_and_snake_keys_override_preset() -> None:
         {"registry": "module"},
         {"non-eval-dirs": "utils"},
         {"sandbox-image-allowlist": {"e": "img"}},
+        {"tests-layout": "nested"},
+        {"readme-location": "anywhere"},
+        {"eval-yaml-required": "no"},
     ],
 )
 def test_invalid_tables_raise(table: dict[str, object]) -> None:

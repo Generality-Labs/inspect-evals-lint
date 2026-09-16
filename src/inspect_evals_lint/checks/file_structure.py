@@ -89,16 +89,42 @@ def check_eval_location(
     return None
 
 
+MAIN_FILE_ALTERNATIVE = "tasks.py"
+"""Also accepted as the module holding the ``@task`` functions, alongside ``<eval_name>.py``."""
+
+
+def main_file_candidates(eval_path: Path, eval_name: str) -> tuple[Path, ...]:
+    return (eval_path / f"{eval_name}.py", eval_path / MAIN_FILE_ALTERNATIVE)
+
+
+def find_main_file(eval_path: Path, eval_name: str) -> Path:
+    """The module the checks treat as the evaluation's main file.
+
+    The first candidate that defines a ``@task`` wins, then the first that exists,
+    so a stray empty ``<eval_name>.py`` does not hide the tasks in ``tasks.py``.
+    Falls back to ``<eval_name>.py`` when neither exists, for the failure message.
+    """
+    candidates = main_file_candidates(eval_path, eval_name)
+    for candidate in candidates:
+        if _find_task_functions(candidate):
+            return candidate
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
 def check_main_file(eval_path: Path, eval_name: str, report: LintReport) -> list[str]:
-    """Check ``<eval_name>.py`` exists with at least one ``@task``; returns the task names."""
-    main_file = eval_path / f"{eval_name}.py"
+    """Check ``<eval_name>.py`` or ``tasks.py`` exists with at least one ``@task``; returns the task names."""
+    main_file = find_main_file(eval_path, eval_name)
 
     if not main_file.exists():
+        expected = " or ".join(c.name for c in main_file_candidates(eval_path, eval_name))
         report.add(
             LintResult(
                 name="main_file",
                 status="fail",
-                message=f"Missing main file: {eval_name}.py",
+                message=f"Missing main file: {expected}",
                 file=str(main_file),
             )
         )
@@ -111,7 +137,7 @@ def check_main_file(eval_path: Path, eval_name: str, report: LintReport) -> list
             LintResult(
                 name="main_file",
                 status="fail",
-                message=f"Syntax error in {eval_name}.py: {e}",
+                message=f"Syntax error in {main_file.name}: {e}",
                 file=str(main_file),
             )
         )
@@ -123,7 +149,7 @@ def check_main_file(eval_path: Path, eval_name: str, report: LintReport) -> list
             LintResult(
                 name="main_file",
                 status="fail",
-                message=f"{eval_name}.py has no @task decorated functions",
+                message=f"{main_file.name} has no @task decorated functions",
                 file=str(main_file),
             )
         )
@@ -133,7 +159,7 @@ def check_main_file(eval_path: Path, eval_name: str, report: LintReport) -> list
         LintResult(
             name="main_file",
             status="pass",
-            message=f"{eval_name}.py has {len(task_functions)} @task function(s): {task_functions}",
+            message=f"{main_file.name} has {len(task_functions)} @task function(s): {task_functions}",
             file=str(main_file),
         )
     )
@@ -143,7 +169,7 @@ def check_main_file(eval_path: Path, eval_name: str, report: LintReport) -> list
 def check_init_exports(eval_path: Path, eval_name: str, report: LintReport) -> None:
     """Check ``__init__.py`` re-exports every ``@task`` function from the main file."""
     init_file = eval_path / "__init__.py"
-    main_file = eval_path / f"{eval_name}.py"
+    main_file = find_main_file(eval_path, eval_name)
 
     if not init_file.exists():
         report.add(
@@ -174,7 +200,7 @@ def check_init_exports(eval_path: Path, eval_name: str, report: LintReport) -> N
             LintResult(
                 name="init_exports",
                 status="skip",
-                message=f"Main file {eval_name}.py not found, cannot check exports",
+                message=f"Main file {main_file.name} not found, cannot check exports",
                 file=str(init_file),
             )
         )
@@ -316,17 +342,30 @@ def check_registry(repo_root: Path, eval_name: str, config: LintConfig, report: 
 def check_eval_yaml(
     repo_root: Path, eval_name: str, config: LintConfig, report: LintReport
 ) -> None:
-    """Check ``eval.yaml`` exists, is a mapping, and defines the configured required fields."""
+    """Check ``eval.yaml`` exists, is a mapping, and defines the configured required fields.
+
+    A missing file is a skip rather than a failure when ``config.eval_yaml_required`` is
+    false; a present file is validated either way.
+    """
     eval_yaml_file = config.eval_dir(repo_root, eval_name) / "eval.yaml"
     if not eval_yaml_file.exists():
-        report.add(
-            LintResult(
-                name="eval_yaml",
-                status="fail",
-                message=f"Missing eval.yaml in {config.source_root}/{eval_name}/",
-                file=str(eval_yaml_file),
+        if config.eval_yaml_required:
+            report.add(
+                LintResult(
+                    name="eval_yaml",
+                    status="fail",
+                    message=f"Missing eval.yaml in {config.source_root}/{eval_name}/",
+                    file=str(eval_yaml_file),
+                )
             )
-        )
+        else:
+            report.add(
+                LintResult(
+                    name="eval_yaml",
+                    status="skip",
+                    message="No eval.yaml; not required in this layout",
+                )
+            )
         return
 
     try:
@@ -374,15 +413,24 @@ def check_eval_yaml(
         )
 
 
-def check_readme(eval_path: Path, report: LintReport) -> None:
-    """Check ``README.md`` exists; warn if it still contains ``TODO:`` markers."""
+def check_readme(eval_path: Path, report: LintReport, fallback: Path | None = None) -> None:
+    """Check ``README.md`` exists; warn if it still contains ``TODO:`` markers.
+
+    ``fallback`` is a second acceptable location (the repository root's README) used
+    when the evaluation directory has none.
+    """
     readme_file = eval_path / "README.md"
+    if not readme_file.exists() and fallback is not None and fallback.exists():
+        readme_file = fallback
     if not readme_file.exists():
+        message = "Missing README.md"
+        if fallback is not None:
+            message += f" (looked in {eval_path.name}/ and {fallback.parent.name}/)"
         report.add(
             LintResult(
                 name="readme",
                 status="fail",
-                message="Missing README.md",
+                message=message,
                 file=str(readme_file),
             )
         )
