@@ -261,3 +261,58 @@ def test_optional_eval_yaml_is_still_validated_when_present(
     result = next(r for r in report.results if r.name == "eval_yaml")
     assert result.status == "fail"
     assert "description" in result.message
+
+
+def test_tasks_py_accepted_as_main_file(template_repo: tuple[Path, LintConfig]) -> None:
+    root, config = template_repo
+    eval_dir = config.eval_dir(root, "alpha")
+    (eval_dir / "alpha.py").rename(eval_dir / "tasks.py")
+    write(eval_dir / "__init__.py", "from .tasks import alpha\n\n__all__ = ['alpha']\n")
+    report = lint_evaluation(root, "alpha", config)
+    by_name = {r.name: r for r in report.results}
+    assert by_name["main_file"].status == "pass"
+    assert "tasks.py" in by_name["main_file"].message
+    assert by_name["init_exports"].status == "pass"
+
+
+def test_tasks_py_exports_are_checked(template_repo: tuple[Path, LintConfig]) -> None:
+    root, config = template_repo
+    eval_dir = config.eval_dir(root, "alpha")
+    (eval_dir / "alpha.py").rename(eval_dir / "tasks.py")
+    write(eval_dir / "__init__.py", "")
+    result = statuses(root, config)
+    assert result["main_file"] == ["pass"]
+    assert result["init_exports"] == ["fail"]
+
+
+def test_named_main_file_preferred_over_tasks_py(template_repo: tuple[Path, LintConfig]) -> None:
+    root, config = template_repo
+    eval_dir = config.eval_dir(root, "alpha")
+    write(eval_dir / "tasks.py", "from inspect_ai import task\n\n@task\ndef other():\n    ...\n")
+    report = lint_evaluation(root, "alpha", config)
+    main = next(r for r in report.results if r.name == "main_file")
+    assert main.status == "pass"
+    assert main.message.startswith("alpha.py")
+
+
+def test_empty_named_main_file_does_not_hide_tasks_py(
+    template_repo: tuple[Path, LintConfig],
+) -> None:
+    root, config = template_repo
+    eval_dir = config.eval_dir(root, "alpha")
+    (eval_dir / "alpha.py").rename(eval_dir / "tasks.py")
+    write(eval_dir / "alpha.py", "CONSTANT = 1\n")
+    write(eval_dir / "__init__.py", "from .tasks import alpha\n")
+    result = statuses(root, config)
+    assert result["main_file"] == ["pass"]
+    assert result["init_exports"] == ["pass"]
+
+
+def test_missing_main_file_names_both_candidates(template_repo: tuple[Path, LintConfig]) -> None:
+    root, config = template_repo
+    (config.eval_dir(root, "alpha") / "alpha.py").unlink()
+    report = lint_evaluation(root, "alpha", config)
+    by_name = {r.name: r for r in report.results}
+    assert by_name["main_file"].status == "fail"
+    assert by_name["main_file"].message == "Missing main file: alpha.py or tasks.py"
+    assert by_name["init_exports"].status == "skip"

@@ -89,16 +89,42 @@ def check_eval_location(
     return None
 
 
+MAIN_FILE_ALTERNATIVE = "tasks.py"
+"""Also accepted as the module holding the ``@task`` functions, alongside ``<eval_name>.py``."""
+
+
+def main_file_candidates(eval_path: Path, eval_name: str) -> tuple[Path, ...]:
+    return (eval_path / f"{eval_name}.py", eval_path / MAIN_FILE_ALTERNATIVE)
+
+
+def find_main_file(eval_path: Path, eval_name: str) -> Path:
+    """The module the checks treat as the evaluation's main file.
+
+    The first candidate that defines a ``@task`` wins, then the first that exists,
+    so a stray empty ``<eval_name>.py`` does not hide the tasks in ``tasks.py``.
+    Falls back to ``<eval_name>.py`` when neither exists, for the failure message.
+    """
+    candidates = main_file_candidates(eval_path, eval_name)
+    for candidate in candidates:
+        if _find_task_functions(candidate):
+            return candidate
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
 def check_main_file(eval_path: Path, eval_name: str, report: LintReport) -> list[str]:
-    """Check ``<eval_name>.py`` exists with at least one ``@task``; returns the task names."""
-    main_file = eval_path / f"{eval_name}.py"
+    """Check ``<eval_name>.py`` or ``tasks.py`` exists with at least one ``@task``; returns the task names."""
+    main_file = find_main_file(eval_path, eval_name)
 
     if not main_file.exists():
+        expected = " or ".join(c.name for c in main_file_candidates(eval_path, eval_name))
         report.add(
             LintResult(
                 name="main_file",
                 status="fail",
-                message=f"Missing main file: {eval_name}.py",
+                message=f"Missing main file: {expected}",
                 file=str(main_file),
             )
         )
@@ -111,7 +137,7 @@ def check_main_file(eval_path: Path, eval_name: str, report: LintReport) -> list
             LintResult(
                 name="main_file",
                 status="fail",
-                message=f"Syntax error in {eval_name}.py: {e}",
+                message=f"Syntax error in {main_file.name}: {e}",
                 file=str(main_file),
             )
         )
@@ -123,7 +149,7 @@ def check_main_file(eval_path: Path, eval_name: str, report: LintReport) -> list
             LintResult(
                 name="main_file",
                 status="fail",
-                message=f"{eval_name}.py has no @task decorated functions",
+                message=f"{main_file.name} has no @task decorated functions",
                 file=str(main_file),
             )
         )
@@ -133,7 +159,7 @@ def check_main_file(eval_path: Path, eval_name: str, report: LintReport) -> list
         LintResult(
             name="main_file",
             status="pass",
-            message=f"{eval_name}.py has {len(task_functions)} @task function(s): {task_functions}",
+            message=f"{main_file.name} has {len(task_functions)} @task function(s): {task_functions}",
             file=str(main_file),
         )
     )
@@ -143,7 +169,7 @@ def check_main_file(eval_path: Path, eval_name: str, report: LintReport) -> list
 def check_init_exports(eval_path: Path, eval_name: str, report: LintReport) -> None:
     """Check ``__init__.py`` re-exports every ``@task`` function from the main file."""
     init_file = eval_path / "__init__.py"
-    main_file = eval_path / f"{eval_name}.py"
+    main_file = find_main_file(eval_path, eval_name)
 
     if not init_file.exists():
         report.add(
@@ -174,7 +200,7 @@ def check_init_exports(eval_path: Path, eval_name: str, report: LintReport) -> N
             LintResult(
                 name="init_exports",
                 status="skip",
-                message=f"Main file {eval_name}.py not found, cannot check exports",
+                message=f"Main file {main_file.name} not found, cannot check exports",
                 file=str(init_file),
             )
         )

@@ -5,7 +5,7 @@ Every check produces one of `pass`, `fail`, `warn`, `skip` or `suppressed`. Only
 ## File structure
 
 - The evaluation directory exists at `<source-root>/<eval_name>/` (`eval_location`). Every other check depends on this one.
-- `<eval_name>.py` exists and defines at least one `@task` function (`main_file`). Keeping tasks in a predictably named module lets tooling and readers find them.
+- `<eval_name>.py` or `tasks.py` exists and defines at least one `@task` function (`main_file`). Keeping tasks in a predictably named module lets tooling and readers find them. When both files exist, the first that defines a task is used, `<eval_name>.py` first.
 - `__init__.py` exports every `@task` function from the main file, via `__all__` or `from ... import` (`init_exports`).
 - The evaluation is registered so `inspect eval` can find it (`registry`): under `[project.entry-points.inspect_ai]` in `pyproject.toml` (`registry = "entry-points"`), or imported by a registry module (`registry = "module"`). Set `registry = "none"` to skip.
 - `eval.yaml` exists, is a mapping, and defines the configured required fields (`eval_yaml`). With `eval-yaml-required = false` a missing file is a skip, because the inspect_evals register entry carries the metadata for upstream repositories; a present file is still validated.
