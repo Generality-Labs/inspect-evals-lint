@@ -15,6 +15,7 @@ from rich.text import Text
 from inspect_evals_lint import __version__
 from inspect_evals_lint.config import LintConfig
 from inspect_evals_lint.models import LintReport, LintResult
+from inspect_evals_lint.runner import category_of
 
 console = Console()
 stderr_console = Console(stderr=True)
@@ -288,6 +289,7 @@ def report_to_dict(report: LintReport, root: Path | None = None) -> dict[str, An
         "results": [
             {
                 "check": result.name,
+                "category": category_of(result.name),
                 "status": result.status,
                 "message": result.message,
                 "file": _relative_file(result.file, root),

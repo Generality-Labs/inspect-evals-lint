@@ -138,6 +138,7 @@ def test_report_to_dict_keeps_result_order_and_fields():
     assert data["results"] == [
         {
             "check": "readme",
+            "category": "file_structure",
             "status": "fail",
             "message": "Missing README.md",
             "file": "src/inspect_evals/bad_eval/README.md",
@@ -145,6 +146,7 @@ def test_report_to_dict_keeps_result_order_and_fields():
         },
         {
             "check": "registry",
+            "category": "file_structure",
             "status": "pass",
             "message": "Registered",
             "file": None,

@@ -26,7 +26,7 @@ inspect-evals-lint --all-evals --json > lint.json
 inspect-evals-lint --list-checks
 ```
 
-`--json` writes one document to stdout and sends progress to stderr, so the output can be piped straight into other tooling. It carries `passed`, run-wide `summary` counts and, per evaluation, every check's `status`, `message`, `file` (relative to the repository root when possible) and `line`.
+`--json` writes one document to stdout and sends progress to stderr, so the output can be piped straight into other tooling. It carries `passed`, run-wide `summary` counts and, per evaluation, every check's `status`, `category` (the [CHECKS.md](docs/CHECKS.md) section: `file_structure`, `code_quality`, `tests` or `best_practices`), `message`, `file` (relative to the repository root when possible) and `line`.
 
 The repository root is the nearest `pyproject.toml` carrying a `[tool.inspect-evals-lint]` table (falling back to the nearest `pyproject.toml`, then the current directory). Pass `--root` to override.
 

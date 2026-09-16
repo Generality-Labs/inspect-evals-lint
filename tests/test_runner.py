@@ -14,7 +14,7 @@ from inspect_evals_lint import (
     get_all_eval_names,
     lint_evaluation,
 )
-from inspect_evals_lint.runner import CHECKS
+from inspect_evals_lint.runner import CHECK_CATEGORIES, CHECKS, category_of
 from tests.conftest import make_eval, make_monorepo, make_register_repo, make_template_repo, write
 
 
@@ -31,6 +31,18 @@ def statuses(
 def test_all_check_names_are_registered() -> None:
     assert get_all_check_names() == sorted(["eval_location", *CHECKS])
     assert len(get_all_check_names()) == 20
+
+
+def test_every_check_has_a_category() -> None:
+    assert set(CHECK_CATEGORIES) == set(get_all_check_names())
+    assert set(CHECK_CATEGORIES.values()) == {
+        "file_structure",
+        "code_quality",
+        "tests",
+        "best_practices",
+    }
+    assert category_of("readme") == "file_structure"
+    assert category_of("invalid_check") is None
 
 
 @pytest.mark.parametrize("layout", ["monorepo", "template", "register"])
