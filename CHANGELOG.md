@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `[tool.inspect-evals-lint]` configuration with `monorepo` and `template` layout presets covering source root, tests root, import prefix, registry mode (`module`, `entry-points`, `none`), non-eval directories, required `eval.yaml` fields, isolated package directory, disabled checks and the sandbox image allowlist.
 - Repository root discovery from the nearest configured `pyproject.toml`, with `--root` and `--preset` overrides.
 - Malformed `eval.yaml`, unparsable main files and unreadable test files now produce `fail` results instead of crashing the run.
+- `register` layout preset for single-evaluation upstream repositories, built from three new configuration keys: `tests-layout = "flat"` accepts test files directly under the tests root when `<tests-root>/<eval>/` is absent (and skips `tests_init` there), `readme-location = "repo-root"` accepts the repository's top-level `README.md`, and `eval-yaml-required = false` turns a missing `eval.yaml` into a skip while still validating one that is present.
 - `--json` writes results as a single JSON document to stdout (progress goes to stderr), with paths relative to the repository root, for badges and other tooling. `render_json`, `report_to_dict` and `reports_to_dict` expose the same in the Python API.
 
 ### Fixed

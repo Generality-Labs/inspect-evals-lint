@@ -111,6 +111,34 @@ def make_template_repo(root: Path, eval_names: tuple[str, ...] = ("alpha",)) -> 
     return config
 
 
+def make_register_repo(root: Path, name: str = "alpha") -> LintConfig:
+    """A single-eval upstream repo as listed in the inspect_evals register.
+
+    Tests sit directly under ``tests/``, the README is at the repo root and there
+    is no ``eval.yaml`` (the register entry carries the metadata).
+    """
+    config = PRESETS["register"]
+    write(
+        root / "pyproject.toml",
+        '[project]\nname = "my-eval"\ndependencies = ["inspect-ai"]\n\n'
+        f'[project.entry-points.inspect_ai]\n{name} = "{name}"\n',
+    )
+    eval_dir = config.eval_dir(root, name)
+    write(eval_dir / "__init__.py", EVAL_INIT.format(name=name))
+    write(eval_dir / f"{name}.py", EVAL_MAIN.format(name=name))
+    write(root / "README.md", f"# {name}\n")
+    write(
+        config.tests_dir(root) / f"test_{name}.py",
+        TEST_FILE.format(module=config.module_name(name), name=name),
+    )
+    return config
+
+
+@pytest.fixture
+def register_repo(tmp_path: Path) -> tuple[Path, LintConfig]:
+    return tmp_path, make_register_repo(tmp_path)
+
+
 @pytest.fixture
 def monorepo(tmp_path: Path) -> tuple[Path, LintConfig]:
     return tmp_path, make_monorepo(tmp_path)

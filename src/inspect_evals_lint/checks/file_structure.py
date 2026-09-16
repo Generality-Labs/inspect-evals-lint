@@ -316,17 +316,30 @@ def check_registry(repo_root: Path, eval_name: str, config: LintConfig, report: 
 def check_eval_yaml(
     repo_root: Path, eval_name: str, config: LintConfig, report: LintReport
 ) -> None:
-    """Check ``eval.yaml`` exists, is a mapping, and defines the configured required fields."""
+    """Check ``eval.yaml`` exists, is a mapping, and defines the configured required fields.
+
+    A missing file is a skip rather than a failure when ``config.eval_yaml_required`` is
+    false; a present file is validated either way.
+    """
     eval_yaml_file = config.eval_dir(repo_root, eval_name) / "eval.yaml"
     if not eval_yaml_file.exists():
-        report.add(
-            LintResult(
-                name="eval_yaml",
-                status="fail",
-                message=f"Missing eval.yaml in {config.source_root}/{eval_name}/",
-                file=str(eval_yaml_file),
+        if config.eval_yaml_required:
+            report.add(
+                LintResult(
+                    name="eval_yaml",
+                    status="fail",
+                    message=f"Missing eval.yaml in {config.source_root}/{eval_name}/",
+                    file=str(eval_yaml_file),
+                )
             )
-        )
+        else:
+            report.add(
+                LintResult(
+                    name="eval_yaml",
+                    status="skip",
+                    message="No eval.yaml; not required in this layout",
+                )
+            )
         return
 
     try:
@@ -374,15 +387,24 @@ def check_eval_yaml(
         )
 
 
-def check_readme(eval_path: Path, report: LintReport) -> None:
-    """Check ``README.md`` exists; warn if it still contains ``TODO:`` markers."""
+def check_readme(eval_path: Path, report: LintReport, fallback: Path | None = None) -> None:
+    """Check ``README.md`` exists; warn if it still contains ``TODO:`` markers.
+
+    ``fallback`` is a second acceptable location (the repository root's README) used
+    when the evaluation directory has none.
+    """
     readme_file = eval_path / "README.md"
+    if not readme_file.exists() and fallback is not None and fallback.exists():
+        readme_file = fallback
     if not readme_file.exists():
+        message = "Missing README.md"
+        if fallback is not None:
+            message += f" (looked in {eval_path.name}/ and {fallback.parent.name}/)"
         report.add(
             LintResult(
                 name="readme",
                 status="fail",
-                message="Missing README.md",
+                message=message,
                 file=str(readme_file),
             )
         )

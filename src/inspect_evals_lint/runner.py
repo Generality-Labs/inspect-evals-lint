@@ -55,7 +55,11 @@ CheckFn = Callable[[LintContext], object]
 CHECKS: dict[str, CheckFn] = {
     "main_file": lambda c: check_main_file(c.eval_path, c.eval_name, c.report),
     "init_exports": lambda c: check_init_exports(c.eval_path, c.eval_name, c.report),
-    "readme": lambda c: check_readme(c.eval_path, c.report),
+    "readme": lambda c: check_readme(
+        c.eval_path,
+        c.report,
+        fallback=c.root / "README.md" if c.config.readme_location == "repo-root" else None,
+    ),
     "private_api_imports": lambda c: check_private_api_imports(c.eval_path, c.report),
     "score_constants": lambda c: check_score_constants(c.eval_path, c.report),
     "get_model_location": lambda c: check_get_model_location(c.eval_path, c.report),
@@ -71,7 +75,9 @@ CHECKS: dict[str, CheckFn] = {
     ),
     "tests_exist": lambda c: check_tests_exist(c.root, c.eval_name, c.config, c.report),
     "e2e_test": lambda c: check_e2e_test(c.test_path, c.report),
-    "tests_init": lambda c: check_tests_init(c.test_path, c.report),
+    "tests_init": lambda c: check_tests_init(
+        c.test_path, c.report, tests_root=c.config.tests_dir(c.root)
+    ),
     "record_to_sample_test": lambda c: check_record_to_sample_test(
         c.test_path, c.eval_path, c.report
     ),

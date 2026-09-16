@@ -8,8 +8,8 @@ Every check produces one of `pass`, `fail`, `warn`, `skip` or `suppressed`. Only
 - `<eval_name>.py` exists and defines at least one `@task` function (`main_file`). Keeping tasks in a predictably named module lets tooling and readers find them.
 - `__init__.py` exports every `@task` function from the main file, via `__all__` or `from ... import` (`init_exports`).
 - The evaluation is registered so `inspect eval` can find it (`registry`): under `[project.entry-points.inspect_ai]` in `pyproject.toml` (`registry = "entry-points"`), or imported by a registry module (`registry = "module"`). Set `registry = "none"` to skip.
-- `eval.yaml` exists, is a mapping, and defines the configured required fields (`eval_yaml`).
-- `README.md` exists (`readme`); it warns if the file still contains `TODO:` markers.
+- `eval.yaml` exists, is a mapping, and defines the configured required fields (`eval_yaml`). With `eval-yaml-required = false` a missing file is a skip, because the inspect_evals register entry carries the metadata for upstream repositories; a present file is still validated.
+- `README.md` exists (`readme`); it warns if the file still contains `TODO:` markers. With `readme-location = "repo-root"` the repository's top-level `README.md` is accepted when the evaluation directory has none.
 
 ## Code quality
 
@@ -19,8 +19,8 @@ Every check produces one of `pass`, `fail`, `warn`, `skip` or `suppressed`. Only
 
 ## Tests
 
-- A test directory exists at `<tests-root>/<eval_name>/` (`tests_exist`).
-- The test directory and every sub-directory contain `__init__.py` (`tests_init`). Flat test trees with duplicate module basenames collide during pytest collection without them.
+- A test directory exists at `<tests-root>/<eval_name>/` (`tests_exist`). With `tests-layout = "flat"`, test files directly under `<tests-root>/` are accepted when that directory is absent, as single-evaluation repositories usually have.
+- The test directory and every sub-directory contain `__init__.py` (`tests_init`). Per-evaluation test trees with duplicate module basenames collide during pytest collection without them. Skipped when the tests live directly under the tests root, where there is nothing to collide with.
 - At least one test file calls `eval()` or `eval_async()` (or an alias imported from `inspect_ai`) and mentions `mockllm/model` (`e2e_test`). An end-to-end run against the mock model catches wiring mistakes without spending tokens.
 - If the evaluation mentions `record_to_sample`, some test file does too (`record_to_sample_test`).
 - Every `@solver`, `@scorer` and `@tool` function name appears somewhere in the test tree (`custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`). This is a presence check, not a quality check.

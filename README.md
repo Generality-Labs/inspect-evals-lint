@@ -38,23 +38,28 @@ Configuration lives in `pyproject.toml`. Pick a layout preset and override any f
 
 ```toml
 [tool.inspect-evals-lint]
-preset = "template"   # or "monorepo"
+preset = "template"   # or "monorepo" / "register"
 ```
 
-| Key                         | `template` preset                                | `monorepo` preset                | Meaning                                                                                                  |
-| --------------------------- | ------------------------------------------------ | -------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `source-root`               | `src`                                            | `src/inspect_evals`              | Directory with one sub-directory per evaluation                                                          |
-| `tests-root`                | `tests`                                          | `tests`                          | Directory holding `<tests-root>/<eval>/`                                                                 |
-| `import-prefix`             | `""`                                             | `inspect_evals`                  | Dotted prefix evaluations import under                                                                   |
-| `registry`                  | `entry-points`                                   | `module`                         | `entry-points` reads `[project.entry-points.inspect_ai]`; `module` greps a registry module; `none` skips |
-| `registry-module`           | unset                                            | `src/inspect_evals/_registry.py` | Required when `registry = "module"`                                                                      |
-| `non-eval-dirs`             | `["utils", "examples"]`                          | `["utils"]`                      | Sub-directories of `source-root` that are not evaluations                                                |
-| `eval-yaml-required-fields` | `title, description, group, contributors, tasks` | same                             | Keys every `eval.yaml` must define                                                                       |
-| `isolated-packages-dir`     | unset                                            | `packages`                       | Per-eval `pyproject.toml` directory for isolated dependency sets                                         |
-| `disabled-checks`           | `[]`                                             | `[]`                             | Checks that never run                                                                                    |
-| `sandbox-image-allowlist`   | `{}`                                             | `{}`                             | `{ eval = ["image/ref"] }` pairs allowed to stay unpinned (warn, not fail)                               |
+| Key                         | `template` preset                                | `monorepo` preset                | `register` preset | Meaning                                                                                                  |
+| --------------------------- | ------------------------------------------------ | -------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------- |
+| `source-root`               | `src`                                            | `src/inspect_evals`              | `src`             | Directory with one sub-directory per evaluation                                                          |
+| `tests-root`                | `tests`                                          | `tests`                          | `tests`           | Directory holding `<tests-root>/<eval>/`                                                                 |
+| `tests-layout`              | `per-eval`                                       | `per-eval`                       | `flat`            | `flat` also accepts test files directly under `tests-root` when `<tests-root>/<eval>/` is absent         |
+| `readme-location`           | `eval-dir`                                       | `eval-dir`                       | `repo-root`       | `repo-root` also accepts the repository's top-level `README.md`                                          |
+| `eval-yaml-required`        | `true`                                           | `true`                           | `false`           | Whether a missing `eval.yaml` fails (a present one is always validated)                                  |
+| `import-prefix`             | `""`                                             | `inspect_evals`                  | `""`              | Dotted prefix evaluations import under                                                                   |
+| `registry`                  | `entry-points`                                   | `module`                         | `entry-points`    | `entry-points` reads `[project.entry-points.inspect_ai]`; `module` greps a registry module; `none` skips |
+| `registry-module`           | unset                                            | `src/inspect_evals/_registry.py` | unset             | Required when `registry = "module"`                                                                      |
+| `non-eval-dirs`             | `["utils", "examples"]`                          | `["utils"]`                      | same as template  | Sub-directories of `source-root` that are not evaluations                                                |
+| `eval-yaml-required-fields` | `title, description, group, contributors, tasks` | same                             | same              | Keys every `eval.yaml` must define                                                                       |
+| `isolated-packages-dir`     | unset                                            | `packages`                       | unset             | Per-eval `pyproject.toml` directory for isolated dependency sets                                         |
+| `disabled-checks`           | `[]`                                             | `[]`                             | `[]`              | Checks that never run                                                                                    |
+| `sandbox-image-allowlist`   | `{}`                                             | `{}`                             | `{}`              | `{ eval = ["image/ref"] }` pairs allowed to stay unpinned (warn, not fail)                               |
 
 Without a `[tool.inspect-evals-lint]` table the `template` preset is used. `--preset` overrides the table for one run.
+
+The `register` preset is for an upstream repository listed in the [inspect_evals register](https://github.com/UKGovernmentBEIS/inspect_evals/blob/main/register/README.md): one evaluation, tests directly under `tests/`, the README at the repository root, and metadata held by the register entry rather than an `eval.yaml` in the repo. Run it from outside the repo with `inspect-evals-lint --root <clone> --preset register --all-evals --json`.
 
 ## Suppressing a check
 
