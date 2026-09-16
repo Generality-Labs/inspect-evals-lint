@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
+from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
+from inspect_evals_lint import __version__
 from inspect_evals_lint.config import LintConfig
 from inspect_evals_lint.models import LintReport, LintResult
 
 console = Console()
+stderr_console = Console(stderr=True)
 
 CHECKS_DOC_URL = "https://github.com/Generality-Labs/inspect-evals-lint/blob/main/docs/CHECKS.md"
 
@@ -259,3 +264,60 @@ def print_overall_summary(reports: list[LintReport]) -> None:
         console.print(
             f"[bold]{passed}/{len(reports)} evaluations passed[/], [red]{failed} failed[/]"
         )
+
+
+def _relative_file(file: str | None, root: Path | None) -> str | None:
+    """``file`` relative to ``root`` with forward slashes, when it is an absolute path under ``root``.
+
+    Checks record absolute paths, which would tie the JSON to the machine that produced it.
+    """
+    if file is None or root is None:
+        return file
+    path = Path(file)
+    if path.is_absolute() and path.is_relative_to(root):
+        return path.relative_to(root).as_posix()
+    return file
+
+
+def report_to_dict(report: LintReport, root: Path | None = None) -> dict[str, Any]:
+    """One evaluation's report as a JSON-serialisable mapping."""
+    return {
+        "name": report.eval_name,
+        "passed": report.passed(),
+        "summary": report.summary(),
+        "results": [
+            {
+                "check": result.name,
+                "status": result.status,
+                "message": result.message,
+                "file": _relative_file(result.file, root),
+                "line": result.line,
+            }
+            for result in report.results
+        ],
+    }
+
+
+def reports_to_dict(reports: list[LintReport], root: Path | None = None) -> dict[str, Any]:
+    """Every report plus run-wide totals as a JSON-serialisable mapping.
+
+    ``passed`` mirrors the CLI exit code: true when no check failed in any evaluation.
+    """
+    totals: dict[str, int] = dict.fromkeys(("pass", "fail", "warn", "skip", "suppressed"), 0)
+    for report in reports:
+        for status, count in report.summary().items():
+            totals[status] += count
+    return {
+        "version": __version__,
+        "root": str(root) if root is not None else None,
+        "passed": all(report.passed() for report in reports),
+        "evaluations_passed": sum(1 for report in reports if report.passed()),
+        "evaluations_total": len(reports),
+        "summary": totals,
+        "evaluations": [report_to_dict(report, root) for report in reports],
+    }
+
+
+def render_json(reports: list[LintReport], root: Path | None = None) -> str:
+    """The ``--json`` document: :func:`reports_to_dict` as indented JSON with a trailing newline."""
+    return json.dumps(reports_to_dict(reports, root), indent=2) + "\n"

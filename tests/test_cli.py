@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -76,3 +77,51 @@ def test_preset_flag_overrides_table(tmp_path: Path) -> None:
 def test_config_error_is_exit_2(tmp_path: Path) -> None:
     write(tmp_path / "pyproject.toml", "[tool.inspect-evals-lint]\npreset = 'nope'\n")
     assert run("--all-evals", "--root", str(tmp_path)) == 2
+
+
+def test_json_single_eval(
+    monorepo: tuple[Path, LintConfig], capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, config = monorepo
+    (config.eval_dir(root, "alpha") / "README.md").unlink()
+    assert run("alpha", "--root", str(root), "--json") == 1
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)  # stdout is the document and nothing else
+    assert data["passed"] is False
+    assert data["root"] == str(root.resolve())
+    (evaluation,) = data["evaluations"]
+    assert evaluation["name"] == "alpha"
+    readme = next(r for r in evaluation["results"] if r["check"] == "readme")
+    assert readme["status"] == "fail"
+    assert readme["file"] == "src/inspect_evals/alpha/README.md"
+
+
+def test_json_all_evals_sends_progress_to_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    make_template_repo(tmp_path, eval_names=("alpha", "beta"))
+    assert run("--all-evals", "--root", str(tmp_path), "--json") == 0
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert data["passed"] is True
+    assert data["evaluations_total"] == 2
+    assert [e["name"] for e in data["evaluations"]] == ["alpha", "beta"]
+    assert "Linting 2 evaluations" in captured.err
+    assert "No [tool.inspect-evals-lint] table" in captured.err
+
+
+def test_json_with_check_summary_still_emits_document(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    make_template_repo(tmp_path)
+    assert run("--check-summary", "--root", str(tmp_path), "--json", "--check", "readme") == 0
+    data = json.loads(capsys.readouterr().out)
+    assert {r["check"] for e in data["evaluations"] for r in e["results"]} == {"readme"}
+
+
+def test_missing_table_message_keeps_brackets(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    make_template_repo(tmp_path)
+    assert run("--all-evals", "--root", str(tmp_path)) == 0
+    assert "No [tool.inspect-evals-lint] table" in capsys.readouterr().out

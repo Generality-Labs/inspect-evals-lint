@@ -10,6 +10,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from rich.markup import escape
+
 from inspect_evals_lint import __version__
 from inspect_evals_lint.config import (
     PRESETS,
@@ -24,6 +26,8 @@ from inspect_evals_lint.output import (
     print_final_summary,
     print_overall_summary,
     print_report,
+    render_json,
+    stderr_console,
 )
 from inspect_evals_lint.runner import get_all_check_names, get_all_eval_names, lint_evaluation
 
@@ -52,6 +56,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--check-summary",
         action="store_true",
         help="Per-check compliance across all evals (implies --all-evals --summary-only)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "Write results as JSON to stdout instead of the rich report; progress goes to "
+            "stderr and exit codes are unchanged (--summary-only and --check-summary are ignored)"
+        ),
     )
     parser.add_argument(
         "--root",
@@ -89,12 +101,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     if not args.eval_name and not args.all_evals:
         parser.error("Either provide an eval_name or use --all-evals")
 
+    # Under --json, stdout carries only the document; everything informational goes to stderr.
+    info = stderr_console if args.json else console
+
     repo_root = (args.root or find_repo_root()).resolve()
     try:
         if read_tool_table(repo_root) is None and args.preset is None:
-            console.print(
-                f"[dim]No [tool.inspect-evals-lint] table in {repo_root / 'pyproject.toml'}; "
-                "using the 'template' preset.[/]"
+            info.print(
+                f"[dim]No {escape('[tool.inspect-evals-lint]')} table in "
+                f"{repo_root / 'pyproject.toml'}; using the 'template' preset.[/]"
             )
         config = load_config(repo_root, preset=args.preset)
     except ConfigError as e:
@@ -104,11 +119,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.all_evals:
         eval_names = get_all_eval_names(repo_root, config)
         check_msg = f" (check: {args.check})" if args.check else ""
-        print(f"Linting {len(eval_names)} evaluations{check_msg}...\n")
+        info.print(f"Linting {len(eval_names)} evaluations{check_msg}...\n", markup=False)
 
         reports = [
             lint_evaluation(repo_root, name, config, check=args.check) for name in eval_names
         ]
+        if args.json:
+            sys.stdout.write(render_json(reports, repo_root))
+            sys.exit(0 if all(r.passed() for r in reports) else 1)
         if not args.summary_only:
             for report in reports:
                 print_report(report, config)
@@ -122,7 +140,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         sys.exit(0 if all(r.passed() for r in reports) else 1)
 
     report = lint_evaluation(repo_root, args.eval_name, config, check=args.check)
-    print_report(report, config)
+    if args.json:
+        sys.stdout.write(render_json([report], repo_root))
+    else:
+        print_report(report, config)
     sys.exit(0 if report.passed() else 1)
 
 

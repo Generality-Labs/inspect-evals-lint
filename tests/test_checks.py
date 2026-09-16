@@ -2,10 +2,13 @@
 
 import ast
 
+from inspect_evals_lint.checks import dependencies
 from inspect_evals_lint.checks.dependencies import (
     _extract_package_name,
     _get_imports_from_file,
     _get_stdlib_modules,
+    _normalize_name,
+    check_external_dependencies,
 )
 from inspect_evals_lint.checks.file_structure import (
     _find_task_functions,
@@ -86,6 +89,88 @@ class TestExtractPackageName:
     def test_complex_specifier(self):
         """Test complex version specifier."""
         assert _extract_package_name("torch>=1.0,<2.0") == "torch"
+
+    def test_not_equal_and_compatible_specifiers(self):
+        assert _extract_package_name("requests!=2.0") == "requests"
+        assert _extract_package_name("requests~=2.0") == "requests"
+
+    def test_url_requirement(self):
+        assert _extract_package_name("mypkg @ https://example.com/mypkg.whl") == "mypkg"
+
+    def test_name_is_normalised(self):
+        """Underscores, dots and case collapse to the PEP 503 form so spellings compare equal."""
+        assert _extract_package_name("inspect_ai>=0.3") == "inspect-ai"
+        assert _extract_package_name("Inspect-AI") == "inspect-ai"
+        assert _extract_package_name("zope.interface") == "zope-interface"
+        assert _extract_package_name("a__b--c..d") == "a-b-c-d"
+
+
+class TestNormalizeName:
+    def test_pep503_forms(self):
+        assert _normalize_name("Friendly_Bard") == "friendly-bard"
+        assert _normalize_name("friendly.bard") == "friendly-bard"
+        assert _normalize_name("FRIENDLY-BARD") == "friendly-bard"
+        assert _normalize_name("friendly_-_bard") == "friendly-bard"
+
+    def test_import_map_values_are_normalised(self, monkeypatch):
+        """Distribution metadata may spell a name either way; the map stores the canonical form."""
+        monkeypatch.setattr(
+            dependencies, "packages_distributions", lambda: {"foo": ["Foo_Bar"], "none": []}
+        )
+        dependencies._get_import_to_package_map.cache_clear()
+        try:
+            mapping = dependencies._get_import_to_package_map()
+            assert mapping["foo"] == "foo-bar"
+            assert "none" not in mapping
+            assert mapping["sklearn"] == "scikit-learn"
+        finally:
+            dependencies._get_import_to_package_map.cache_clear()
+
+
+class TestCheckExternalDependenciesNormalisation:
+    """The declared spelling of a dependency must not matter."""
+
+    @staticmethod
+    def _status(root, config, eval_name="alpha"):
+        report = LintReport(eval_name=eval_name)
+        check_external_dependencies(
+            root, eval_name, config.eval_dir(root, eval_name), config, report
+        )
+        (result,) = report.results
+        return result
+
+    def test_hyphenated_core_dependency_covers_underscore_import(self, template_repo):
+        """``import inspect_ai`` is satisfied by ``dependencies = ["inspect-ai"]``."""
+        root, config = template_repo
+        pyproject = root / "pyproject.toml"
+        pyproject.write_text(
+            pyproject.read_text().replace(
+                'dependencies = ["inspect_ai"]', 'dependencies = ["Inspect-AI>=0.3"]'
+            )
+        )
+        assert "inspect_ai" in (config.eval_dir(root, "alpha") / "alpha.py").read_text()
+        assert self._status(root, config).status == "pass"
+
+    def test_hyphenated_optional_dependency_covers_underscore_import(self, template_repo):
+        root, config = template_repo
+        (config.eval_dir(root, "alpha") / "alpha.py").write_text(
+            "import some_extra_pkg\n" + (config.eval_dir(root, "alpha") / "alpha.py").read_text()
+        )
+        pyproject = root / "pyproject.toml"
+        pyproject.write_text(
+            pyproject.read_text()
+            + '\n[project.optional-dependencies]\nalpha = ["Some.Extra-Pkg>=1"]\n'
+        )
+        assert self._status(root, config).status == "pass"
+
+    def test_undeclared_import_still_fails(self, template_repo):
+        root, config = template_repo
+        (config.eval_dir(root, "alpha") / "alpha.py").write_text(
+            "import some_extra_pkg\n" + (config.eval_dir(root, "alpha") / "alpha.py").read_text()
+        )
+        result = self._status(root, config)
+        assert result.status == "fail"
+        assert "some_extra_pkg (package: some-extra-pkg)" in result.message
 
 
 class TestGetStdlibModules:
