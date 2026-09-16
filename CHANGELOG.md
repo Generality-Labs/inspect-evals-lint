@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-16
+
+### Added
+
+- `model_role_resolution` check: every `get_model(role=...)` call must pass an explicit model, pin a `default=` or set `required=True`, because an unbound role otherwise falls back to the model under evaluation and a grader silently grades itself. Ported from inspect_evals ([UKGovernmentBEIS/inspect_evals#2321](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2321) by @antnewman), and promoted from a warning to a failure with a `model-role-allowlist` configuration key that turns known call sites into warnings until they are fixed, the same ratchet `sandbox_image_pinning` uses.
+
+### Fixed
+
+- Every file read passes `encoding="utf-8"`, so `--all-evals` no longer aborts with `UnicodeDecodeError` on platforms whose default locale encoding is not UTF-8, such as Windows cp1252. Ported from [UKGovernmentBEIS/inspect_evals#2322](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2322) by @antnewman.
+
 ## [0.1.0] - 2026-09-16
 
 ### Added
