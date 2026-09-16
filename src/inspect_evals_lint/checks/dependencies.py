@@ -41,7 +41,7 @@ def _get_stdlib_modules() -> frozenset[str]:
 @functools.cache
 def _load_toml_at(path: Path, mtime_ns: int) -> dict[str, Any]:
     try:
-        return tomllib.loads(path.read_text())
+        return tomllib.loads(path.read_text(encoding="utf-8"))
     except (tomllib.TOMLDecodeError, OSError):
         return {}
 
@@ -96,7 +96,7 @@ def _get_import_to_package_map() -> dict[str, str]:
 def _get_imports_from_file(file_path: Path) -> tuple[set[str], str | None]:
     """Top-level module names imported by ``file_path``, plus a syntax-error message if any."""
     try:
-        tree = ast.parse(file_path.read_text())
+        tree = ast.parse(file_path.read_text(encoding="utf-8"))
     except SyntaxError as e:
         return set(), str(e)
 

@@ -2,6 +2,7 @@
 
 from inspect_evals_lint.checks.best_practices import (
     check_get_model_location,
+    check_model_role_resolution,
     check_sample_ids,
     check_task_overridable_defaults,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "check_get_model_location",
     "check_init_exports",
     "check_main_file",
+    "check_model_role_resolution",
     "check_private_api_imports",
     "check_readme",
     "check_record_to_sample_test",

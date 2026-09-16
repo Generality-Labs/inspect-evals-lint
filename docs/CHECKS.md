@@ -27,6 +27,7 @@ Every check produces one of `pass`, `fail`, `warn`, `skip` or `suppressed`. Only
 
 ## Best practices
 
+- Every `get_model(role=...)` call resolves deliberately: an explicit model, a pinned `default=`, or `required=True` (`model_role_resolution`). A role with none of these silently falls back to the model under evaluation when it isn't bound at invocation, so a grader can grade its own output and the scores still look plausible. A literal `default=None`, `model=None` or `required=False` changes nothing at runtime and so does not count. One result per call site, so line-level suppression works. Entries in `model-role-allowlist` (`{ eval = ["role"] }`, with `"<dynamic>"` for a non-literal role name) warn instead of failing so an existing surface can be burned down while new violations are blocked; a stale entry also warns so it gets removed. Contributed to inspect_evals by @antnewman.
 - `get_model()` is only called inside `@solver` or `@scorer` functions (`get_model_location`, warns). Resolving models late keeps tasks declarative and lets callers override the model. One result per call site.
 - Every `Sample(...)` call passes `id=` (`sample_ids`). Stable IDs keep samples comparable across shuffles, reruns and dataset updates.
 - `@task` parameters whose names contain `solver`, `scorer`, `metric`, `metrics`, `grader` or `model` have defaults (`task_overridable_defaults`), so the task runs unconfigured and each piece can still be overridden.

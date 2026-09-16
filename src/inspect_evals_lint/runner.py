@@ -17,6 +17,7 @@ from inspect_evals_lint.checks import (
     check_get_model_location,
     check_init_exports,
     check_main_file,
+    check_model_role_resolution,
     check_private_api_imports,
     check_readme,
     check_record_to_sample_test,
@@ -63,6 +64,9 @@ CHECKS: dict[str, CheckFn] = {
     "private_api_imports": lambda c: check_private_api_imports(c.eval_path, c.report),
     "score_constants": lambda c: check_score_constants(c.eval_path, c.report),
     "get_model_location": lambda c: check_get_model_location(c.eval_path, c.report),
+    "model_role_resolution": lambda c: check_model_role_resolution(
+        c.eval_path, c.report, c.config.model_role_allowlist
+    ),
     "sample_ids": lambda c: check_sample_ids(c.eval_path, c.report),
     "task_overridable_defaults": lambda c: check_task_overridable_defaults(c.eval_path, c.report),
     "sandbox_image_pinning": lambda c: check_sandbox_image_pinning(
@@ -107,6 +111,7 @@ CHECK_CATEGORIES: dict[str, str] = {
     "custom_scorer_tests": "tests",
     "custom_tool_tests": "tests",
     "get_model_location": "best_practices",
+    "model_role_resolution": "best_practices",
     "sample_ids": "best_practices",
     "task_overridable_defaults": "best_practices",
     "sandbox_image_pinning": "best_practices",

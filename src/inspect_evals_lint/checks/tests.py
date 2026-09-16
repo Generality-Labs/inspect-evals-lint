@@ -99,7 +99,7 @@ def check_e2e_test(test_path: Path | None, report: LintReport) -> None:
     found_e2e_test = False
     for py_file in test_path.rglob("*.py"):
         try:
-            content = py_file.read_text()
+            content = py_file.read_text(encoding="utf-8")
             tree = ast.parse(content)
         except (SyntaxError, UnicodeDecodeError, OSError):
             unparsable.append(str(py_file))
@@ -131,7 +131,7 @@ def check_e2e_test(test_path: Path | None, report: LintReport) -> None:
 def _any_file_mentions(directory: Path, needle: str) -> bool:
     for py_file in directory.rglob("*.py"):
         try:
-            if needle in py_file.read_text():
+            if needle in py_file.read_text(encoding="utf-8"):
                 return True
         except (OSError, UnicodeDecodeError):
             continue

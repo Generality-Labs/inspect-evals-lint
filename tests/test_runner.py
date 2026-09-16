@@ -30,7 +30,7 @@ def statuses(
 
 def test_all_check_names_are_registered() -> None:
     assert get_all_check_names() == sorted(["eval_location", *CHECKS])
-    assert len(get_all_check_names()) == 20
+    assert len(get_all_check_names()) == 21
 
 
 def test_every_check_has_a_category() -> None:
@@ -328,3 +328,14 @@ def test_missing_main_file_names_both_candidates(template_repo: tuple[Path, Lint
     assert by_name["main_file"].status == "fail"
     assert by_name["main_file"].message == "Missing main file: alpha.py or tasks.py"
     assert by_name["init_exports"].status == "skip"
+
+
+def test_model_role_allowlist_from_config(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    write(
+        config.eval_dir(root, "alpha") / "scorer.py",
+        'from inspect_ai.model import get_model\n\ngrader = get_model(role="grader")\n',
+    )
+    assert statuses(root, config)["model_role_resolution"] == ["fail"]
+    config = replace(config, model_role_allowlist=frozenset({("alpha", "grader")}))
+    assert statuses(root, config)["model_role_resolution"] == ["warn"]

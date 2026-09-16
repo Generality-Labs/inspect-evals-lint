@@ -72,7 +72,7 @@ def get_call_name(node: ast.Call) -> str | None:
 
 def safe_parse_file(file_path: Path) -> ParsedFile | ParseFailure:
     try:
-        return ParsedFile(path=file_path, tree=ast.parse(file_path.read_text()))
+        return ParsedFile(path=file_path, tree=ast.parse(file_path.read_text(encoding="utf-8")))
     except (SyntaxError, UnicodeDecodeError, OSError) as e:
         return ParseFailure(path=file_path, error=str(e))
 

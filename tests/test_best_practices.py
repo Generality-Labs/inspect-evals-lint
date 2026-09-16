@@ -1,14 +1,21 @@
 """Tests for the best-practice AST visitors, ported from inspect_evals."""
 
 import ast
+from pathlib import Path
+
+import pytest
 
 from inspect_evals_lint.checks.best_practices import (
     GetModelVisitor,
+    ModelRoleVisitor,
     SampleIdVisitor,
     TaskDefaultsVisitor,
     TaskParameterVisitor,
+    check_model_role_resolution,
 )
 from inspect_evals_lint.checks.utils import get_call_name, get_decorator_name
+from inspect_evals_lint.models import LintReport
+from inspect_evals_lint.suppressions import apply_suppressions, load_suppressions
 
 
 class TestGetDecoratorName:
@@ -386,3 +393,117 @@ def my_task(solver, scorer=None):
         _name, _line, param_defaults = visitor.tasks[0]
         assert param_defaults["solver"] is False
         assert param_defaults["scorer"] is True
+
+
+class TestModelRoleVisitor:
+    """Ported from inspect_evals (UKGovernmentBEIS/inspect_evals#2321)."""
+
+    def _visit(self, code: str):
+        visitor = ModelRoleVisitor()
+        visitor.visit(ast.parse(code))
+        return visitor.calls
+
+    def test_bare_role_is_flagged(self):
+        (call,) = self._visit('grader = get_model(role="grader")')
+        assert call == (1, "grader", False)
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            'get_model(role="grader", required=True)',
+            'get_model(role="grader", default="openai/gpt-4o")',
+            'get_model(model=judge_llm, role="grader")',
+            'get_model(judge_llm, role="grader")',
+            'get_model(role="grader", required=strict)',  # not knowable statically
+        ],
+    )
+    def test_deliberate_resolutions_are_accepted(self, code: str):
+        assert self._visit(code)[0][2] is True
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            'get_model(model=None, role="grader")',
+            'get_model(role="grader", default=None)',
+            'get_model(role="grader", required=False)',
+        ],
+    )
+    def test_no_op_arguments_do_not_silence_the_check(self, code: str):
+        assert self._visit(code)[0][2] is False
+
+    def test_attribute_call_is_matched(self):
+        (call,) = self._visit('grader = inspect_model.get_model(role="grader")')
+        assert call[1] == "grader"
+
+    def test_call_without_role_is_ignored(self):
+        assert self._visit("model = get_model()") == []
+        assert self._visit('model = get_model("openai/gpt-4o")') == []
+
+    def test_dynamic_role_name_is_a_placeholder(self):
+        assert self._visit("get_model(role=role_name, required=True)")[0][1] == "<dynamic>"
+
+    def test_multiline_call_reports_the_call_start_line(self):
+        assert self._visit('x = get_model(\n    role="grader",\n)')[0][0] == 1
+
+
+class TestCheckModelRoleResolution:
+    @staticmethod
+    def _run(eval_dir: Path, source: str, allowlist: frozenset[tuple[str, str]] = frozenset()):
+        eval_dir.mkdir(exist_ok=True)
+        (eval_dir / "scorer.py").write_text(source, encoding="utf-8")
+        report = LintReport(eval_name=eval_dir.name)
+        check_model_role_resolution(eval_dir, report, allowlist)
+        return report.results
+
+    def test_skips_when_no_role_calls(self, tmp_path: Path):
+        results = self._run(tmp_path / "alpha", "x = get_model()")
+        assert [r.status for r in results] == ["skip"]
+
+    def test_passes_when_all_roles_resolve(self, tmp_path: Path):
+        results = self._run(tmp_path / "alpha", 'x = get_model(role="grader", required=True)')
+        assert [r.status for r in results] == ["pass"]
+        assert "1 model role call" in results[0].message
+
+    def test_fails_once_per_offending_call_site(self, tmp_path: Path):
+        source = 'a = get_model(role="grader")\nb = get_model(role="judge", default=None)\n'
+        results = self._run(tmp_path / "alpha", source)
+        assert [r.status for r in results] == ["fail", "fail"]
+        assert [r.line for r in results] == [1, 2]
+        assert results[0].file is not None
+        assert results[0].file.endswith("scorer.py")
+        assert "role='grader'" in results[0].message
+        assert "role='judge'" in results[1].message
+
+    def test_allowlisted_role_warns_instead(self, tmp_path: Path):
+        results = self._run(
+            tmp_path / "alpha",
+            'a = get_model(role="grader")\nb = get_model(role="judge")\n',
+            allowlist=frozenset({("alpha", "grader")}),
+        )
+        assert [(r.status, r.line) for r in results] == [("warn", 1), ("fail", 2)]
+        assert "remove the allowlist entry" in results[0].message
+
+    def test_allowlist_is_scoped_to_the_eval(self, tmp_path: Path):
+        results = self._run(
+            tmp_path / "alpha",
+            'a = get_model(role="grader")',
+            allowlist=frozenset({("beta", "grader")}),
+        )
+        assert [r.status for r in results] == ["fail"]
+
+    def test_stale_allowlist_entry_warns(self, tmp_path: Path):
+        results = self._run(
+            tmp_path / "alpha",
+            'a = get_model(role="grader", required=True)',
+            allowlist=frozenset({("alpha", "grader")}),
+        )
+        assert [r.status for r in results] == ["warn"]
+        assert "no longer needed" in results[0].message
+
+    def test_line_level_suppression_silences_a_call_site(self, tmp_path: Path):
+        eval_dir = tmp_path / "alpha"
+        results = self._run(
+            eval_dir, 'x = get_model(role="grader")  # noautolint: model_role_resolution\n'
+        )
+        apply_suppressions(results, load_suppressions(eval_dir))
+        assert [r.status for r in results] == ["suppressed"]

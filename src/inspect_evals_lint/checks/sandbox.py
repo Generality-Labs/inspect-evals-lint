@@ -52,7 +52,7 @@ def check_sandbox_image_pinning(
     checked_images = 0
     for compose_file in compose_files:
         try:
-            compose: Any = yaml.safe_load(compose_file.read_text())
+            compose: Any = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
         except yaml.YAMLError as e:
             report.add(
                 LintResult(
