@@ -231,3 +231,177 @@ def check_task_overridable_defaults(eval_path: Path, report: LintReport) -> None
                 message="Tasks provide defaults for overridable parameters",
             )
         )
+
+
+class ModelRoleVisitor(ast.NodeVisitor):
+    """Record every ``get_model(role=...)`` call with whether the role resolves deliberately."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, str, bool]] = []  # (line, role, resolves_deliberately)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if get_call_name(node) == "get_model":
+            keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
+            if "role" in keywords:
+                self.calls.append(
+                    (
+                        node.lineno,
+                        _literal_role_name(keywords["role"]),
+                        _resolves_deliberately(node, keywords),
+                    )
+                )
+        self.generic_visit(node)
+
+
+def _literal_role_name(node: ast.expr) -> str:
+    """Role name if given as a literal, else a placeholder for the message."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return "<dynamic>"
+
+
+def _is_literal_none(node: ast.expr) -> bool:
+    return isinstance(node, ast.Constant) and node.value is None
+
+
+def _resolves_deliberately(node: ast.Call, keywords: dict[str, ast.expr]) -> bool:
+    """Whether the role can resolve to anything but the model under evaluation.
+
+    Any of three things suffices, matching ``get_model()``'s own precedence: an
+    explicit model, a pinned ``default=``, or ``required=True``. The explicit
+    model counts because ``get_model()`` only consults its default (and
+    ultimately the model under evaluation) when ``model is None``.
+    """
+    return _has_model(node, keywords) or _has_default(keywords) or _is_required(keywords)
+
+
+def _has_model(node: ast.Call, keywords: dict[str, ast.expr]) -> bool:
+    """Whether an explicit model is supplied, positionally or by keyword."""
+    if node.args and not _is_literal_none(node.args[0]):
+        return True
+    return "model" in keywords and not _is_literal_none(keywords["model"])
+
+
+def _has_default(keywords: dict[str, ast.expr]) -> bool:
+    """Whether a fallback model is pinned via ``default=``.
+
+    A literal ``default=None`` leaves the fallback exactly where it was, so it
+    must not count: otherwise a no-op edit could silence the check.
+    """
+    return "default" in keywords and not _is_literal_none(keywords["default"])
+
+
+def _is_required(keywords: dict[str, ast.expr]) -> bool:
+    """Whether the role is marked required.
+
+    A non-literal ``required=`` (a variable) is taken at face value rather than
+    flagged, since its value isn't knowable statically.
+    """
+    if "required" not in keywords:
+        return False
+    value = keywords["required"]
+    if isinstance(value, ast.Constant):
+        return bool(value.value)
+    return True
+
+
+MODEL_ROLE_CHECK = "model_role_resolution"
+MODEL_ROLE_ALLOWLIST_LOCATION = "[tool.inspect-evals-lint.model_role_allowlist] in pyproject.toml"
+_MODEL_ROLE_ADVICE = (
+    "pass an explicit model, pin a default=, or mark it required=True. An unbound "
+    "role otherwise falls back to the model under evaluation, so a grader can "
+    "silently grade itself"
+)
+
+
+def check_model_role_resolution(
+    eval_path: Path,
+    report: LintReport,
+    allowlist: frozenset[tuple[str, str]] = frozenset(),
+) -> None:
+    """Fail on ``get_model(role=...)`` calls with no explicit model, no ``default=`` and no ``required=True``.
+
+    Such a role falls back to the model under evaluation when it isn't bound at
+    invocation, and the resulting scores still look plausible. ``allowlist``
+    entries ``(eval_name, role)`` warn instead of failing so an existing surface
+    can be burned down while new violations are blocked, and a stale entry warns
+    so it gets removed. One result per call site so line-level suppression works.
+    """
+    eval_name = eval_path.name
+    parse_results = parse_python_files(eval_path)
+    if add_parse_errors_to_report(MODEL_ROLE_CHECK, parse_results.failed_paths, report):
+        return
+
+    total_role_calls = 0
+    issues: list[tuple[Issue, str]] = []
+    for parsed in parse_results.parsed:
+        visitor = ModelRoleVisitor()
+        visitor.visit(parsed.tree)
+        total_role_calls += len(visitor.calls)
+        issues.extend(
+            (Issue(str(parsed.path), line, f"role={role!r}"), role)
+            for line, role, resolves_deliberately in visitor.calls
+            if not resolves_deliberately
+        )
+
+    seen_allowlisted: set[tuple[str, str]] = set()
+    for issue, role in issues:
+        if (eval_name, role) in allowlist:
+            seen_allowlisted.add((eval_name, role))
+            report.add(
+                LintResult(
+                    name=MODEL_ROLE_CHECK,
+                    status="warn",
+                    message=(
+                        f"Allowlisted get_model(role={role!r}) has no deliberate resolution; "
+                        f"{_MODEL_ROLE_ADVICE}, then remove the allowlist entry"
+                    ),
+                    file=issue.file,
+                    line=issue.line,
+                )
+            )
+        else:
+            report.add(
+                LintResult(
+                    name=MODEL_ROLE_CHECK,
+                    status="fail",
+                    message=(
+                        f"get_model(role={role!r}) has no model, no default= and no "
+                        f"required=True; {_MODEL_ROLE_ADVICE}"
+                    ),
+                    file=issue.file,
+                    line=issue.line,
+                )
+            )
+
+    stale = {(name, role) for (name, role) in allowlist if name == eval_name} - seen_allowlisted
+    for _, role in sorted(stale):
+        report.add(
+            LintResult(
+                name=MODEL_ROLE_CHECK,
+                status="warn",
+                message=(
+                    f"Allowlist entry for role {role!r} is no longer needed; "
+                    f"remove it from {MODEL_ROLE_ALLOWLIST_LOCATION}"
+                ),
+            )
+        )
+
+    if issues or stale:
+        return
+    if total_role_calls == 0:
+        report.add(
+            LintResult(
+                name=MODEL_ROLE_CHECK,
+                status="skip",
+                message="No get_model(role=...) calls found",
+            )
+        )
+    else:
+        report.add(
+            LintResult(
+                name=MODEL_ROLE_CHECK,
+                status="pass",
+                message=f"All {total_role_calls} model role call(s) resolve deliberately",
+            )
+        )

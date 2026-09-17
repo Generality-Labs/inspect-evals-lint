@@ -66,7 +66,11 @@ def test_kebab_and_snake_keys_override_preset() -> None:
             "disabled_checks": ["tests_init"],
             "eval-yaml-required-fields": ["title"],
             "sandbox-image-allowlist": {"cybench": ["a/b", "c/d:latest"]},
+            "model-role-allowlist": {"moru": ["grader"], "makemesay": ["judge", "<dynamic>"]},
         }
+    )
+    assert cfg.model_role_allowlist == frozenset(
+        {("moru", "grader"), ("makemesay", "judge"), ("makemesay", "<dynamic>")}
     )
     assert cfg.non_eval_dirs == frozenset({"utils", "gdm_capabilities"})
     assert cfg.disabled_checks == frozenset({"tests_init"})
@@ -84,6 +88,7 @@ def test_kebab_and_snake_keys_override_preset() -> None:
         {"registry": "module"},
         {"non-eval-dirs": "utils"},
         {"sandbox-image-allowlist": {"e": "img"}},
+        {"model-role-allowlist": {"e": "grader"}},
         {"tests-layout": "nested"},
         {"readme-location": "anywhere"},
         {"eval-yaml-required": "no"},

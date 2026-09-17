@@ -78,6 +78,9 @@ class LintConfig:
     sandbox_image_allowlist: frozenset[tuple[str, str]] = frozenset()
     """``(eval_name, image)`` pairs allowed to stay unpinned; each produces a warning instead of a failure."""
 
+    model_role_allowlist: frozenset[tuple[str, str]] = frozenset()
+    """``(eval_name, role)`` pairs whose ``get_model(role=...)`` calls may lack a deliberate resolution for now; each produces a warning instead of a failure."""
+
     def source_dir(self, root: Path) -> Path:
         return root / self.source_root
 
@@ -143,7 +146,7 @@ def _coerce(key: str, value: object) -> object:
         return frozenset(_str_list(value, key))
     if key == "eval_yaml_required_fields":
         return tuple(_str_list(value, key))
-    if key == "sandbox_image_allowlist":
+    if key in ("sandbox_image_allowlist", "model_role_allowlist"):
         table: dict[object, object] = _expect(value, dict, key)
         pairs: set[tuple[str, str]] = set()
         for eval_name, images in table.items():
@@ -192,7 +195,7 @@ def read_tool_table(root: Path) -> Mapping[str, Any] | None:
     if not pyproject.exists():
         return None
     try:
-        data = tomllib.loads(pyproject.read_text())
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"Could not parse {pyproject}: {e}") from e
     tool: Any = data.get("tool")

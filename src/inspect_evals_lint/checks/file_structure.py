@@ -20,7 +20,7 @@ def _find_task_functions(file_path: Path) -> list[str]:
     if not file_path.exists():
         return []
     try:
-        tree = ast.parse(file_path.read_text())
+        tree = ast.parse(file_path.read_text(encoding="utf-8"))
     except SyntaxError:
         return []
     return [
@@ -36,7 +36,7 @@ def _get_exported_names(init_file: Path) -> set[str]:
     if not init_file.exists():
         return set()
     try:
-        tree = ast.parse(init_file.read_text())
+        tree = ast.parse(init_file.read_text(encoding="utf-8"))
     except SyntaxError:
         return set()
 
@@ -131,7 +131,7 @@ def check_main_file(eval_path: Path, eval_name: str, report: LintReport) -> list
         return []
 
     try:
-        ast.parse(main_file.read_text())
+        ast.parse(main_file.read_text(encoding="utf-8"))
     except SyntaxError as e:
         report.add(
             LintResult(
@@ -183,7 +183,7 @@ def check_init_exports(eval_path: Path, eval_name: str, report: LintReport) -> N
         return
 
     try:
-        ast.parse(init_file.read_text())
+        ast.parse(init_file.read_text(encoding="utf-8"))
     except SyntaxError as e:
         report.add(
             LintResult(
@@ -248,7 +248,7 @@ def _table(mapping: dict[str, Any], key: str) -> dict[str, Any]:
 def _entry_point_modules(pyproject: Path) -> dict[str, str]:
     """``[project.entry-points.inspect_ai]`` as ``{name: module}``."""
     try:
-        data: dict[str, Any] = tomllib.loads(pyproject.read_text())
+        data: dict[str, Any] = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError:
         return {}
     group = _table(_table(_table(data, "project"), "entry-points"), "inspect_ai")
@@ -266,7 +266,7 @@ def _check_registry_module(
 
     module = config.module_name(eval_name)
     pattern = rf"from {re.escape(module)}\b|^\s*import {re.escape(module)}\b"
-    if re.search(pattern, registry_file.read_text(), re.MULTILINE):
+    if re.search(pattern, registry_file.read_text(encoding="utf-8"), re.MULTILINE):
         report.add(
             LintResult(
                 name="registry",
@@ -369,7 +369,7 @@ def check_eval_yaml(
         return
 
     try:
-        data = yaml.safe_load(eval_yaml_file.read_text())
+        data = yaml.safe_load(eval_yaml_file.read_text(encoding="utf-8"))
     except yaml.YAMLError as e:
         report.add(
             LintResult(
@@ -436,7 +436,7 @@ def check_readme(eval_path: Path, report: LintReport, fallback: Path | None = No
         )
         return
 
-    if "TODO:" in readme_file.read_text():
+    if "TODO:" in readme_file.read_text(encoding="utf-8"):
         report.add(
             LintResult(
                 name="readme",

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -125,3 +128,32 @@ def test_missing_table_message_keeps_brackets(
     make_template_repo(tmp_path)
     assert run("--all-evals", "--root", str(tmp_path)) == 0
     assert "No [tool.inspect-evals-lint] table" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="forces an ASCII locale the way only glibc does"
+)
+def test_non_utf8_locale_still_reads_source_files(monorepo: tuple[Path, LintConfig]) -> None:
+    """Every file read passes encoding="utf-8", so a cp1252/ASCII default locale cannot break a run.
+
+    Ported from UKGovernmentBEIS/inspect_evals#2322. PEP 538/540 normally rescue a C
+    locale, so both are disabled to make Python's default encoding really be ASCII.
+    """
+    root, config = monorepo
+    main_file = config.eval_dir(root, "alpha") / "alpha.py"
+    main_file.write_text(
+        '"""Évaluation — naïve façade."""\n' + main_file.read_text(), encoding="utf-8"
+    )
+    env = {**os.environ, "LC_ALL": "C", "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0"}
+    for var in ("PYTHONIOENCODING", "LANG", "LC_CTYPE"):
+        env.pop(var, None)
+    result = subprocess.run(
+        [sys.executable, "-m", "inspect_evals_lint", "alpha", "--root", str(root), "--json"],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["passed"] is True

@@ -14,7 +14,7 @@ from inspect_evals_lint.runner import (
     lint_evaluation,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "PRESETS",

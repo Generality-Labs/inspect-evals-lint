@@ -24,7 +24,7 @@ def load_suppressions(eval_path: Path) -> Suppressions:
 
     for noautolint_file in eval_path.rglob(".noautolint"):
         checks: set[str] = set()
-        for raw_line in noautolint_file.read_text().splitlines():
+        for raw_line in noautolint_file.read_text(encoding="utf-8").splitlines():
             stripped = raw_line.strip()
             if stripped and not stripped.startswith("#"):
                 checks.add(stripped)
@@ -36,7 +36,7 @@ def load_suppressions(eval_path: Path) -> Suppressions:
 
     for py_file in eval_path.rglob("*.py"):
         try:
-            lines = py_file.read_text().splitlines()
+            lines = py_file.read_text(encoding="utf-8").splitlines()
         except (OSError, UnicodeDecodeError):
             continue
 
