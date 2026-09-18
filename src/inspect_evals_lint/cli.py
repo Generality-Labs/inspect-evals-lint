@@ -29,7 +29,12 @@ from inspect_evals_lint.output import (
     render_json,
     stderr_console,
 )
-from inspect_evals_lint.runner import get_all_check_names, get_all_eval_names, lint_evaluation
+from inspect_evals_lint.runner import (
+    get_all_check_names,
+    get_all_eval_names,
+    get_all_helper_names,
+    lint_evaluation,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,9 +42,15 @@ def build_parser() -> argparse.ArgumentParser:
         prog="inspect-evals-lint",
         description="Lint Inspect AI evaluations for structure, tests, best practices and sandbox pinning.",
     )
-    parser.add_argument("eval_name", nargs="?", help="Name of the evaluation to lint (e.g. 'gpqa')")
     parser.add_argument(
-        "--all-evals", action="store_true", help="Lint every evaluation in the repository"
+        "eval_name",
+        nargs="?",
+        help="Name of the evaluation or helper package to lint (e.g. 'gpqa' or 'utils')",
+    )
+    parser.add_argument(
+        "--all-evals",
+        action="store_true",
+        help="Lint every evaluation and helper package in the repository",
     )
     parser.add_argument(
         "--check",
@@ -118,11 +129,17 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.all_evals:
         eval_names = get_all_eval_names(repo_root, config)
+        helper_names = get_all_helper_names(repo_root, config)
         check_msg = f" (check: {args.check})" if args.check else ""
-        info.print(f"Linting {len(eval_names)} evaluations{check_msg}...\n", markup=False)
+        what = f"{len(eval_names)} evaluations"
+        if helper_names:
+            plural = "s" if len(helper_names) != 1 else ""
+            what += f" and {len(helper_names)} helper package{plural}"
+        info.print(f"Linting {what}{check_msg}...\n", markup=False)
 
         reports = [
-            lint_evaluation(repo_root, name, config, check=args.check) for name in eval_names
+            lint_evaluation(repo_root, name, config, check=args.check)
+            for name in (*eval_names, *helper_names)
         ]
         if args.json:
             sys.stdout.write(render_json(reports, repo_root))

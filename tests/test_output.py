@@ -50,6 +50,12 @@ def make_reports() -> list[LintReport]:
     return [passing, failing, also_failing, mixed, skipping]
 
 
+def make_helper_report(status: str = "pass") -> LintReport:
+    helper = LintReport(eval_name="utils", kind="helper")
+    helper.add(LintResult(name="model_role_resolution", status=status, message="m"))
+    return helper
+
+
 def test_lists_checks_run(capsys):
     print_final_summary(make_reports())
     out = capsys.readouterr().out
@@ -129,12 +135,40 @@ def test_reports_to_dict_totals_and_pass_flag():
         "mixed_eval",
         "skippy_eval",
     ]
+    assert data["helpers"] == []
+    assert data["helpers_total"] == 0
+    assert data["helpers_passed"] == 0
+
+
+def test_reports_to_dict_lists_helpers_separately():
+    data = reports_to_dict([make_reports()[0], make_helper_report("fail")])
+    assert [e["name"] for e in data["evaluations"]] == ["good_eval"]
+    assert data["evaluations_total"] == 1
+    assert data["evaluations_passed"] == 1
+    assert [h["name"] for h in data["helpers"]] == ["utils"]
+    assert data["helpers_total"] == 1
+    assert data["helpers_passed"] == 0
+    assert data["passed"] is False  # a helper failure fails the run
+    assert data["summary"]["fail"] == 1
+
+
+def test_overall_summary_counts_packages_when_helpers_are_present(capsys):
+    from inspect_evals_lint.output import print_overall_summary
+
+    print_overall_summary([make_reports()[0], make_helper_report()])
+    out = capsys.readouterr().out
+    assert "utils (helper)" in out
+    assert "2/2 packages passed" in out
+    print_overall_summary([make_reports()[0]])
+    assert "1/1 evaluations passed" in capsys.readouterr().out
 
 
 def test_report_to_dict_keeps_result_order_and_fields():
     report = make_reports()[1]
     data = report_to_dict(report)
     assert data["passed"] is False
+    assert data["kind"] == "eval"
+    assert report_to_dict(make_helper_report())["kind"] == "helper"
     assert data["results"] == [
         {
             "check": "readme",

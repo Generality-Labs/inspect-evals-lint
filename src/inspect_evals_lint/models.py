@@ -8,6 +8,9 @@ from typing import Literal
 
 Status = Literal["pass", "fail", "warn", "skip", "suppressed"]
 
+PackageKind = Literal["eval", "helper"]
+"""What a linted package is: an evaluation, or shared code that evaluations import."""
+
 
 @dataclass
 class LintResult:
@@ -26,6 +29,7 @@ class LintReport:
 
     eval_name: str
     results: list[LintResult] = field(default_factory=list)
+    kind: PackageKind = "eval"
 
     def add(self, result: LintResult) -> None:
         self.results.append(result)

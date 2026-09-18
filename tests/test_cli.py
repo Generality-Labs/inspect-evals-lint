@@ -59,8 +59,9 @@ def test_all_evals_and_check_summary(tmp_path: Path, capsys: pytest.CaptureFixtu
     make_template_repo(tmp_path, eval_names=("alpha", "beta"))
     assert run("--all-evals", "--root", str(tmp_path)) == 0
     out = capsys.readouterr().out
-    assert "Linting 2 evaluations" in out
-    assert "2/2 evaluations passed" in out
+    assert "Linting 2 evaluations and 1 helper package" in out
+    assert "3/3 packages passed" in out
+    assert "utils (helper)" in out
     assert "using the 'template' preset" in out
 
     assert run("--check-summary", "--root", str(tmp_path)) == 0
@@ -109,8 +110,33 @@ def test_json_all_evals_sends_progress_to_stderr(
     assert data["passed"] is True
     assert data["evaluations_total"] == 2
     assert [e["name"] for e in data["evaluations"]] == ["alpha", "beta"]
-    assert "Linting 2 evaluations" in captured.err
+    assert data["helpers_total"] == 1
+    assert [(h["name"], h["kind"]) for h in data["helpers"]] == [("utils", "helper")]
+    assert "Linting 2 evaluations and 1 helper package" in captured.err
     assert "No [tool.inspect-evals-lint] table" in captured.err
+
+
+def test_helper_package_can_be_named_directly(
+    monorepo: tuple[Path, LintConfig], capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, _ = monorepo
+    assert run("utils", "--root", str(root)) == 0
+    out = capsys.readouterr().out
+    assert "Lint Report: utils (helper package)" in out
+    assert "model_role_resolution" in out
+    assert "readme" not in out
+
+
+def test_helper_failure_sets_exit_code(
+    monorepo: tuple[Path, LintConfig], capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, config = monorepo
+    write(
+        config.source_dir(root) / "utils" / "grader.py",
+        'from inspect_ai.model import get_model\n\ngrader = get_model(role="grader")\n',
+    )
+    assert run("--all-evals", "--root", str(root)) == 1
+    assert "src/inspect_evals/utils/.noautolint" in capsys.readouterr().out
 
 
 def test_json_with_check_summary_still_emits_document(

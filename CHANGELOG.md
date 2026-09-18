@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-18
+
+### Added
+
+- Helper packages. Directories listed in the new `helper-dirs` key (default `["utils"]` in every preset) are linted with the checks that guard code behaviour: `private_api_imports`, `score_constants`, `unscored_reason`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `external_dependencies`, `tests_init` and the `custom_*_tests` checks. Structure and registration checks (`main_file`, `init_exports`, `readme`, `registry`, `eval_yaml`, `tests_exist`, `e2e_test`, `record_to_sample_test`) do not run for them. Before, these directories were skipped entirely, so a shared grader helper could carry the very `get_model(role=...)` fallback the linter exists to catch ([UKGovernmentBEIS/inspect_evals#2461](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2461)). `--all-evals` now includes helper packages, a helper can be named directly on the command line, and a failing helper check fails the run.
+- `external_dependencies` tells module-level imports apart from imports inside a function, a `try` block or an `if TYPE_CHECKING:` block. For a helper package the former must be in `[project].dependencies`, because every evaluation that imports the helper loads them, while the latter only need declaring in some group. The evaluation rule is unchanged.
+- The `custom_*_tests` checks look for a helper package's tests anywhere under the tests root, and `tests_init` skips a helper without a `tests/<name>/` directory.
+- `ignore-dirs` names sub-directories of `source-root` that are never linted (default `["examples"]` in the `template` and `register` presets).
+- `runner.CHECK_SCOPES` records which package kinds each check applies to, and `runner.CATEGORIES` the fixed set of four categories. `get_all_helper_names` and `PackageKind` join the public API; `LintReport.kind` says what was linted.
+- `--json` documents carry `kind` per package and list helper packages under `helpers` with `helpers_total` / `helpers_passed`; `evaluations` and its counts keep their meaning.
+
+### Changed
+
+- A directory under `source-root` without an `__init__.py` is reported as a skip by `eval_location` when named directly, instead of failing every check. `--all-evals` already ignored such directories, so a documentation-only directory such as inspect_evals' `gdm_capabilities/` needs no configuration entry at all.
+- `tests_init` no longer exempts sub-directories named `utils` inside an evaluation's test tree; the exemption was a leftover from the vendored linter.
+
+### Removed
+
+- The `non-eval-dirs` key. Its two meanings are now `helper-dirs` (lint as shared code) and `ignore-dirs` (never lint); the table rejects the old key with a message naming both.
+
 ## [0.1.1] - 2026-09-16
 
 ### Added
