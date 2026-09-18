@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from inspect_evals_lint import ConfigError, LintConfig, lint_evaluation
+from inspect_evals_lint import ConfigError, LintConfig, lint_package
 from inspect_evals_lint.config import PRESETS
 from inspect_evals_lint.diagnostics import Diagnostic
 from inspect_evals_lint.registry import get_rule
@@ -16,7 +16,7 @@ from tests.conftest import write
 
 def test_line_level_by_name_or_code(monorepo: tuple[Path, LintConfig]) -> None:
     root, config = monorepo
-    eval_dir = config.eval_dir(root, "alpha")
+    eval_dir = config.package_dir(root, "alpha")
     write(
         eval_dir / "private.py",
         "from inspect_ai.model._model import a  # inspect-evals-lint: ignore[private_api_imports]\n"
@@ -25,7 +25,7 @@ def test_line_level_by_name_or_code(monorepo: tuple[Path, LintConfig]) -> None:
         "from inspect_ai.util._util import d  # inspect-evals-lint: ignore[readme, IEBP]\n"
         "from inspect_ai.log._log import e\n",
     )
-    report = lint_evaluation(root, "alpha", config, check="private_api_imports")
+    report = lint_package(root, "alpha", config, check="private_api_imports")
     assert sorted(report.statuses()["private_api_imports"]) == [
         "fail",
         "fail",

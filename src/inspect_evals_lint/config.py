@@ -130,7 +130,7 @@ class LintConfig:
     def tests_dir(self, root: Path) -> Path:
         return root / self.tests_root
 
-    def eval_dir(self, root: Path, name: str) -> Path:
+    def package_dir(self, root: Path, name: str) -> Path:
         return self.source_dir(root) / name
 
     def module_name(self, name: str) -> str:
@@ -230,7 +230,7 @@ def _str_list(value: object, key: str) -> list[str]:
     return [_expect(item, str, key) for item in items]
 
 
-def _known_selectors(values: list[str], key: str) -> tuple[str, ...]:
+def known_selectors(values: list[str], key: str) -> tuple[str, ...]:
     from inspect_evals_lint.registry import rules  # lazy: the registry imports this module's types
 
     for selector in values:
@@ -266,7 +266,7 @@ def _allowlists(value: object, key: str) -> dict[str, Allowlist]:
 def _per_file_ignores(value: object, key: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
     table: dict[object, object] = _expect(value, dict, key)
     return tuple(
-        (_expect(pattern, str, key), _known_selectors(_str_list(selectors, key), key))
+        (_expect(pattern, str, key), known_selectors(_str_list(selectors, key), key))
         for pattern, selectors in table.items()
     )
 
@@ -277,7 +277,7 @@ def _coerce(key: str, value: object) -> object:
     if key == "eval_yaml_required_fields":
         return tuple(_str_list(value, key))
     if key in ("select", "ignore"):
-        return _known_selectors(_str_list(value, key), key)
+        return known_selectors(_str_list(value, key), key)
     if key == "exclude":
         return tuple(_str_list(value, key))
     if key == "per_file_ignores":

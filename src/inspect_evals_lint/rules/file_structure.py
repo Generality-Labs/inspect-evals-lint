@@ -64,12 +64,12 @@ def _get_exported_names(init_file: Path) -> set[str]:
 
 @rule(
     code="IEFS001",
-    name="eval_location",
+    name="package_location",
     category="file_structure",
     scopes=("eval", "helper"),
     summary="The package exists at <source-root>/<name>/ with an __init__.py",
 )
-def eval_location(ctx: LintContext) -> Iterable[Finding]:
+def package_location(ctx: LintContext) -> Iterable[Finding]:
     """Check the package lives at ``<source_root>/<name>``.
 
     Every other rule depends on this one. A directory that exists but has no

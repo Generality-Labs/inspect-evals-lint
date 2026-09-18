@@ -369,5 +369,5 @@ def run_to_dict(run: RunReport) -> dict[str, Any]:
 
 
 def render_json(run: RunReport) -> str:
-    """The ``--json`` document: :func:`run_to_dict` as indented JSON with a trailing newline."""
+    """The ``--output-format json`` document: :func:`run_to_dict` as indented JSON with a trailing newline."""
     return json.dumps(run_to_dict(run), indent=2) + "\n"

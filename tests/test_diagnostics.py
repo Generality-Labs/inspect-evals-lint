@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from inspect_evals_lint import LintConfig, lint_evaluation
+from inspect_evals_lint import LintConfig, lint_package
 from inspect_evals_lint.diagnostics import Diagnostic, Outcome, PackageReport, RunReport
 from inspect_evals_lint.registry import get_rule
 from inspect_evals_lint.rules.best_practices import sample_ids, task_overridable_defaults
@@ -18,11 +18,11 @@ def _diagnostics(report: PackageReport, name: str) -> list[Diagnostic]:
 
 def test_every_finding_has_a_file(monorepo: tuple[Path, LintConfig]) -> None:
     root, config = monorepo
-    eval_dir = config.eval_dir(root, "alpha")
+    eval_dir = config.package_dir(root, "alpha")
     (eval_dir / "README.md").unlink()
     (eval_dir / "eval.yaml").write_text("title: Alpha\n")
     write(eval_dir / "extra.py", "import definitely_not_installed_pkg\nx = Sample(input='q')\n")
-    report = lint_evaluation(root, "alpha", config)
+    report = lint_package(root, "alpha", config)
     assert report.diagnostics, "expected findings"
     for d in report.diagnostics:
         assert isinstance(d.file, Path), d
@@ -87,16 +87,16 @@ def test_score_constants_report_each_literal(tmp_path: Path) -> None:
 
 def test_readme_todos_report_each_line(monorepo: tuple[Path, LintConfig]) -> None:
     root, config = monorepo
-    write(config.eval_dir(root, "alpha") / "README.md", "# alpha\n\nTODO: a\n\nfine\nTODO: b\n")
-    report = lint_evaluation(root, "alpha", config, check="readme")
+    write(config.package_dir(root, "alpha") / "README.md", "# alpha\n\nTODO: a\n\nfine\nTODO: b\n")
+    report = lint_package(root, "alpha", config, check="readme")
     assert [(d.status, d.line) for d in report.diagnostics] == [("warn", 3), ("warn", 6)]
     assert report.passed()
 
 
 def test_eval_yaml_reports_each_missing_field(monorepo: tuple[Path, LintConfig]) -> None:
     root, config = monorepo
-    (config.eval_dir(root, "alpha") / "eval.yaml").write_text("title: Alpha\n")
-    report = lint_evaluation(root, "alpha", config, check="eval_yaml")
+    (config.package_dir(root, "alpha") / "eval.yaml").write_text("title: Alpha\n")
+    report = lint_package(root, "alpha", config, check="eval_yaml")
     fields = [d.message.split("'")[1] for d in report.diagnostics]
     assert fields == ["description", "group", "contributors", "tasks"]
     assert all(d.file.name == "eval.yaml" for d in report.diagnostics)
@@ -104,13 +104,13 @@ def test_eval_yaml_reports_each_missing_field(monorepo: tuple[Path, LintConfig])
 
 def test_init_exports_reports_each_missing_task(monorepo: tuple[Path, LintConfig]) -> None:
     root, config = monorepo
-    eval_dir = config.eval_dir(root, "alpha")
+    eval_dir = config.package_dir(root, "alpha")
     write(
         eval_dir / "alpha.py",
         "from inspect_ai import task\n\n@task\ndef alpha(): ...\n\n@task\ndef beta(): ...\n",
     )
     write(eval_dir / "__init__.py", "")
-    report = lint_evaluation(root, "alpha", config, check="init_exports")
+    report = lint_package(root, "alpha", config, check="init_exports")
     assert [d.message for d in report.diagnostics] == [
         "__init__.py does not export the @task function 'alpha'",
         "__init__.py does not export the @task function 'beta'",
@@ -122,7 +122,7 @@ def test_tests_init_reports_each_directory(monorepo: tuple[Path, LintConfig]) ->
     root, config = monorepo
     write(root / "tests/alpha/fixtures/a.txt", "")
     write(root / "tests/alpha/more/deep/x.py", "")
-    report = lint_evaluation(root, "alpha", config, check="tests_init")
+    report = lint_package(root, "alpha", config, check="tests_init")
     dirs = sorted(d.file.relative_to(root).as_posix() for d in report.diagnostics)
     assert dirs == ["tests/alpha/fixtures", "tests/alpha/more", "tests/alpha/more/deep"]
 
@@ -132,10 +132,10 @@ def test_custom_component_diagnostics_point_at_the_definition(
 ) -> None:
     root, config = monorepo
     write(
-        config.eval_dir(root, "alpha") / "scorer.py",
+        config.package_dir(root, "alpha") / "scorer.py",
         "from inspect_ai.scorer import scorer\n\n\n@scorer(metrics=[])\ndef my_scorer():\n    ...\n",
     )
-    report = lint_evaluation(root, "alpha", config, check="custom_scorer_tests")
+    report = lint_package(root, "alpha", config, check="custom_scorer_tests")
     (d,) = report.diagnostics
     assert d.file.name == "scorer.py"
     assert d.line == 5
@@ -147,10 +147,10 @@ def test_external_dependency_diagnostics_point_at_the_import(
 ) -> None:
     root, config = monorepo
     write(
-        config.eval_dir(root, "alpha") / "extra.py",
+        config.package_dir(root, "alpha") / "extra.py",
         "import os\n\nimport definitely_not_installed_pkg\n",
     )
-    report = lint_evaluation(root, "alpha", config, check="external_dependencies")
+    report = lint_package(root, "alpha", config, check="external_dependencies")
     (d,) = report.diagnostics
     assert (d.file.name, d.line, d.column) == ("extra.py", 3, 1)
     assert "definitely_not_installed_pkg" in d.message
@@ -158,7 +158,7 @@ def test_external_dependency_diagnostics_point_at_the_import(
 
 def test_rule_yielding_nothing_passes_with_its_summary(monorepo: tuple[Path, LintConfig]) -> None:
     root, config = monorepo
-    report = lint_evaluation(root, "alpha", config, check="readme")
+    report = lint_package(root, "alpha", config, check="readme")
     (outcome,) = report.outcomes
     assert outcome.status == "pass"
 

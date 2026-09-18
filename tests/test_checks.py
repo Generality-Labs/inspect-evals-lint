@@ -137,8 +137,8 @@ class TestCheckExternalDependenciesNormalisation:
     """The declared spelling of a dependency must not matter."""
 
     @staticmethod
-    def _status(root, config, eval_name="alpha"):
-        (result,) = external_dependencies(LintContext.build(root, eval_name, config))
+    def _status(root, config, name="alpha"):
+        (result,) = external_dependencies(LintContext.build(root, name, config))
         return result
 
     def test_hyphenated_core_dependency_covers_underscore_import(self, template_repo):
@@ -150,13 +150,13 @@ class TestCheckExternalDependenciesNormalisation:
                 'dependencies = ["inspect_ai"]', 'dependencies = ["Inspect-AI>=0.3"]'
             )
         )
-        assert "inspect_ai" in (config.eval_dir(root, "alpha") / "alpha.py").read_text()
+        assert "inspect_ai" in (config.package_dir(root, "alpha") / "alpha.py").read_text()
         assert self._status(root, config).status == "pass"
 
     def test_hyphenated_optional_dependency_covers_underscore_import(self, template_repo):
         root, config = template_repo
-        (config.eval_dir(root, "alpha") / "alpha.py").write_text(
-            "import some_extra_pkg\n" + (config.eval_dir(root, "alpha") / "alpha.py").read_text()
+        (config.package_dir(root, "alpha") / "alpha.py").write_text(
+            "import some_extra_pkg\n" + (config.package_dir(root, "alpha") / "alpha.py").read_text()
         )
         pyproject = root / "pyproject.toml"
         pyproject.write_text(
@@ -167,8 +167,8 @@ class TestCheckExternalDependenciesNormalisation:
 
     def test_undeclared_import_still_fails(self, template_repo):
         root, config = template_repo
-        (config.eval_dir(root, "alpha") / "alpha.py").write_text(
-            "import some_extra_pkg\n" + (config.eval_dir(root, "alpha") / "alpha.py").read_text()
+        (config.package_dir(root, "alpha") / "alpha.py").write_text(
+            "import some_extra_pkg\n" + (config.package_dir(root, "alpha") / "alpha.py").read_text()
         )
         result = self._status(root, config)
         assert result.status == "fail"
@@ -413,8 +413,8 @@ __all__ = ["my_eval", "CONSTANT"]
 class TestSandboxImagePinning:
     """Tests for the sandbox_image_pinning rule."""
 
-    def run_check(self, tmp_path, compose_content, eval_name="my_eval"):
-        eval_path = tmp_path / eval_name
+    def run_check(self, tmp_path, compose_content, name="my_eval"):
+        eval_path = tmp_path / name
         eval_path.mkdir()
         (eval_path / "compose.yaml").write_text(compose_content)
         return list(sandbox_image_pinning(context_for(eval_path)))
@@ -601,8 +601,8 @@ class TestGpuSandboxCheck:
 
     GPU_TASKS = "tasks:\n  - name: my_eval\n    dataset_samples: 10\n"
 
-    def run_check(self, tmp_path, eval_yaml, eval_name="my_eval"):
-        eval_path = tmp_path / eval_name
+    def run_check(self, tmp_path, eval_yaml, name="my_eval"):
+        eval_path = tmp_path / name
         eval_path.mkdir()
         if eval_yaml is not None:
             (eval_path / "eval.yaml").write_text(eval_yaml)

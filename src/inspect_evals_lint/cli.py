@@ -6,21 +6,25 @@ Exit codes: 0 all checks passed, 1 some check failed, 2 usage or configuration e
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 from rich.markup import escape
+from rich.table import Table
 
 from inspect_evals_lint import __version__
 from inspect_evals_lint.config import (
     PRESETS,
     ConfigError,
+    LintConfig,
     find_repo_root,
+    known_selectors,
     load_config,
     read_tool_table,
 )
-from inspect_evals_lint.diagnostics import RunReport
+from inspect_evals_lint.context import evaluation_names, helper_names
 from inspect_evals_lint.output import (
     console,
     print_check_summary,
@@ -30,13 +34,10 @@ from inspect_evals_lint.output import (
     render_json,
     stderr_console,
 )
-from inspect_evals_lint.runner import (
-    get_all_check_names,
-    get_all_eval_names,
-    get_all_helper_names,
-    lint_evaluation,
-    lint_repository,
-)
+from inspect_evals_lint.registry import Rule, get_rule, rules
+from inspect_evals_lint.runner import lint_repository
+
+OUTPUT_FORMATS = ("text", "json")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,38 +46,35 @@ def build_parser() -> argparse.ArgumentParser:
         description="Lint Inspect AI evaluations for structure, tests, best practices and sandbox pinning.",
     )
     parser.add_argument(
-        "eval_name",
-        nargs="?",
-        help="Name of the evaluation or helper package to lint (e.g. 'gpqa' or 'utils')",
+        "packages",
+        nargs="*",
+        metavar="PACKAGE",
+        help="Evaluation or helper packages to lint (e.g. gpqa, utils); default: every package with --all",
     )
     parser.add_argument(
-        "--all-evals",
+        "--all",
         action="store_true",
         help="Lint every evaluation and helper package in the repository",
     )
     parser.add_argument(
-        "--check",
-        metavar="CHECK_NAME",
-        help="Run only this check (see --list-checks)",
-    )
-    parser.add_argument("--list-checks", action="store_true", help="List available checks and exit")
-    parser.add_argument(
-        "--summary-only",
-        action="store_true",
-        help="Only print the summary (useful with --all-evals)",
+        "--select",
+        metavar="RULES",
+        help="Only run these rules: names, codes or code prefixes, comma-separated (overrides the config)",
     )
     parser.add_argument(
-        "--check-summary",
-        action="store_true",
-        help="Per-check compliance across all evals (implies --all-evals --summary-only)",
+        "--ignore",
+        metavar="RULES",
+        help="Also skip these rules: names, codes or code prefixes, comma-separated",
+    )
+    parser.add_argument("--list-rules", action="store_true", help="List every rule and exit")
+    parser.add_argument(
+        "--explain", metavar="RULE", help="Print a rule's documentation (by code or name) and exit"
     )
     parser.add_argument(
-        "--json",
-        action="store_true",
-        help=(
-            "Write results as JSON to stdout instead of the rich report; progress goes to "
-            "stderr and exit codes are unchanged (--summary-only and --check-summary are ignored)"
-        ),
+        "--output-format",
+        choices=OUTPUT_FORMATS,
+        default="text",
+        help="text (default) prints reports and summaries; json writes one document to stdout",
     )
     parser.add_argument(
         "--root",
@@ -92,30 +90,91 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _fail(message: str, code: int = 2) -> None:
+    print(f"Error: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+def _rule_dict(rule: Rule) -> dict[str, object]:
+    return {
+        "code": rule.code,
+        "name": rule.name,
+        "category": rule.category,
+        "scopes": sorted(rule.scopes),
+        "summary": rule.summary,
+        "allowlist": rule.allowlist,
+    }
+
+
+def _list_rules(output_format: str) -> None:
+    if output_format == "json":
+        sys.stdout.write(json.dumps([_rule_dict(r) for r in rules()], indent=2) + "\n")
+        return
+    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+    table.add_column("Code", style="cyan", no_wrap=True)
+    table.add_column("Rule", style="cyan", no_wrap=True)
+    table.add_column("Category", no_wrap=True)
+    table.add_column("Scope", no_wrap=True)
+    table.add_column("Summary", overflow="fold")
+    for rule in rules():
+        table.add_row(
+            rule.code,
+            rule.name,
+            rule.category,
+            "+".join(sorted(rule.scopes)),
+            escape(rule.summary),
+        )
+    console.print(table)
+
+
+def _explain(rule: Rule, output_format: str) -> None:
+    if output_format == "json":
+        sys.stdout.write(json.dumps({**_rule_dict(rule), "doc": rule.doc}, indent=2) + "\n")
+        return
+    console.print(f"[bold cyan]{rule.code}[/] [bold]{rule.name}[/]")
+    console.print(
+        f"[dim]category:[/] {rule.category}   [dim]applies to:[/] {', '.join(sorted(rule.scopes))}"
+    )
+    if rule.allowlist:
+        console.print(
+            f"[dim]allowlist:[/] {escape(f'[tool.inspect-evals-lint.allowlists.{rule.name}]')}"
+        )
+    console.print()
+    console.print(escape(rule.summary), style="bold")
+    console.print()
+    console.print(escape(rule.doc))
+
+
+def _selectors(raw: str | None, key: str) -> tuple[str, ...] | None:
+    if raw is None:
+        return None
+    values = [v.strip() for v in raw.split(",") if v.strip()]
+    if not values:
+        _fail(f"--{key} needs at least one rule")
+    return known_selectors(values, key)
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.list_checks:
-        print("Available checks:")
-        for check_name in get_all_check_names():
-            print(f"  {check_name}")
+    if args.list_rules:
+        _list_rules(args.output_format)
         sys.exit(0)
 
-    if args.check and args.check not in get_all_check_names():
-        print(f"Error: Unknown check '{args.check}'", file=sys.stderr)
-        print(f"Available checks: {', '.join(get_all_check_names())}", file=sys.stderr)
-        sys.exit(2)
+    if args.explain:
+        rule = get_rule(args.explain)
+        if rule is None:
+            _fail(f"Unknown rule '{args.explain}'. Use --list-rules to see them.")
+            return
+        _explain(rule, args.output_format)
+        sys.exit(0)
 
-    if args.check_summary:
-        args.all_evals = True
-        args.summary_only = True
+    if not args.packages and not args.all:
+        parser.error("Name at least one package or use --all")
 
-    if not args.eval_name and not args.all_evals:
-        parser.error("Either provide an eval_name or use --all-evals")
-
-    # Under --json, stdout carries only the document; everything informational goes to stderr.
-    info = stderr_console if args.json else console
+    # Under --output-format json, stdout carries only the document; everything informational goes to stderr.
+    info = stderr_console if args.output_format == "json" else console
 
     repo_root = (args.root or find_repo_root()).resolve()
     try:
@@ -125,53 +184,57 @@ def main(argv: Sequence[str] | None = None) -> None:
                 f"{repo_root / 'pyproject.toml'}; using the 'template' preset.[/]"
             )
         config = load_config(repo_root, preset=args.preset)
+        config = _with_cli_selection(config, args.select, args.ignore)
     except ConfigError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(2)
+        _fail(str(e))
+        return
 
-    if args.all_evals:
-        eval_names = get_all_eval_names(repo_root, config)
-        helper_names = get_all_helper_names(repo_root, config)
-        check_msg = f" (check: {args.check})" if args.check else ""
-        what = f"{len(eval_names)} evaluations"
-        if helper_names:
-            plural = "s" if len(helper_names) != 1 else ""
-            what += f" and {len(helper_names)} helper package{plural}"
-        info.print(f"Linting {what}{check_msg}...\n", markup=False)
-
-        try:
-            run = lint_repository(
-                repo_root, config, names=[*eval_names, *helper_names], check=args.check
-            )
-        except ConfigError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            sys.exit(2)
-        if args.json:
-            sys.stdout.write(render_json(run))
-            sys.exit(0 if run.passed() else 1)
-        if not args.summary_only:
-            for report in run.packages:
-                print_report(report, config, root=repo_root)
-
-        if args.check_summary:
-            print_check_summary(run)
-        else:
-            print_overall_summary(run)
-        print_final_summary(run)
-
-        sys.exit(0 if run.passed() else 1)
+    if args.all:
+        evals = evaluation_names(repo_root, config)
+        helpers = helper_names(repo_root, config)
+        what = f"{len(evals)} evaluations"
+        if helpers:
+            plural = "s" if len(helpers) != 1 else ""
+            what += f" and {len(helpers)} helper package{plural}"
+        info.print(f"Linting {what}...\n", markup=False)
+        names = [
+            *evals,
+            *helpers,
+            *[p for p in args.packages if p not in evals and p not in helpers],
+        ]
+    else:
+        names = list(dict.fromkeys(args.packages))
 
     try:
-        report = lint_evaluation(repo_root, args.eval_name, config, check=args.check)
+        run = lint_repository(repo_root, config, names=names)
     except ConfigError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(2)
-    run = RunReport(root=repo_root, packages=[report])
-    if args.json:
+        _fail(str(e))
+        return
+
+    if args.output_format == "json":
         sys.stdout.write(render_json(run))
-    else:
+        sys.exit(0 if run.passed() else 1)
+
+    for report in run.packages:
         print_report(report, config, root=repo_root)
-    sys.exit(0 if report.passed() else 1)
+    if len(run.packages) > 1:
+        print_overall_summary(run)
+        print_check_summary(run)
+        print_final_summary(run)
+    sys.exit(0 if run.passed() else 1)
+
+
+def _with_cli_selection(config: LintConfig, select: str | None, ignore: str | None) -> LintConfig:
+    """Apply ``--select`` (replacing the configured selection) and ``--ignore`` (adding to it)."""
+    from dataclasses import replace
+
+    selected = _selectors(select, "select")
+    ignored = _selectors(ignore, "ignore")
+    if selected is not None:
+        config = replace(config, select=selected)
+    if ignored is not None:
+        config = replace(config, ignore=(*config.ignore, *ignored))
+    return config
 
 
 if __name__ == "__main__":

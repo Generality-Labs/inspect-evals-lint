@@ -7,8 +7,8 @@ from pathlib import Path
 from inspect_evals_lint.config import LintConfig, load_config
 from inspect_evals_lint.context import (
     LintContext,
-    get_all_eval_names,
-    get_all_helper_names,
+    evaluation_names,
+    helper_names,
     is_package,
     package_kind,
 )
@@ -16,13 +16,8 @@ from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome, Package
 from inspect_evals_lint.registry import Rule, get_rule, rule_names, rules
 from inspect_evals_lint.suppressions import apply_suppressions, load_suppressions
 
-LOCATION_RULE = "eval_location"
+LOCATION_RULE = "package_location"
 """The rule that establishes the package exists. Nothing else runs when it does not."""
-
-
-def get_all_check_names() -> list[str]:
-    """Every rule name, sorted."""
-    return rule_names()
 
 
 def _selected(rule: Rule, only: Rule | None, config: LintConfig) -> bool:
@@ -77,9 +72,9 @@ def _apply_allowlist(rule: Rule, context: LintContext, findings: list[Finding]) 
     ]
 
 
-def lint_evaluation(
+def lint_package(
     repo_root: Path,
-    eval_name: str,
+    name: str,
     config: LintConfig | None = None,
     check: str | None = None,
 ) -> PackageReport:
@@ -87,7 +82,7 @@ def lint_evaluation(
 
     Args:
         repo_root: Repository root.
-        eval_name: Directory name of the evaluation or helper package under ``config.source_root``.
+        name: Directory name of the evaluation or helper package under ``config.source_root``.
         config: Layout configuration; loaded from ``repo_root/pyproject.toml`` when omitted.
         check: Run only this rule, by name or code.
 
@@ -95,11 +90,11 @@ def lint_evaluation(
         ValueError: ``check`` names no rule.
     """
     config = config or load_config(repo_root)
-    kind = package_kind(eval_name, config)
-    report = PackageReport(name=eval_name, kind=kind)
+    kind = package_kind(name, config)
+    report = PackageReport(name=name, kind=kind)
 
-    if eval_name in config.ignore_dirs:
-        report.skipped = f"'{eval_name}' is listed in ignore-dirs"
+    if name in config.ignore_dirs:
+        report.skipped = f"'{name}' is listed in ignore-dirs"
         return report
 
     only: Rule | None = None
@@ -113,7 +108,7 @@ def lint_evaluation(
             )
             return report
 
-    context = LintContext.build(repo_root, eval_name, config)
+    context = LintContext.build(repo_root, name, config)
     for rule in rules():
         if rule.applies_to(kind) and _selected(rule, only, config):
             _run_rule(rule, context, report)
@@ -133,20 +128,19 @@ def lint_repository(
     """Lint every evaluation and helper package in the repository (or just ``names``)."""
     config = config or load_config(repo_root)
     if names is None:
-        names = [*get_all_eval_names(repo_root, config), *get_all_helper_names(repo_root, config)]
+        names = [*evaluation_names(repo_root, config), *helper_names(repo_root, config)]
     return RunReport(
         root=repo_root,
-        packages=[lint_evaluation(repo_root, name, config, check=check) for name in names],
+        packages=[lint_package(repo_root, name, config, check=check) for name in names],
     )
 
 
 __all__ = [
     "LOCATION_RULE",
     "Diagnostic",
-    "get_all_check_names",
-    "get_all_eval_names",
-    "get_all_helper_names",
-    "lint_evaluation",
+    "evaluation_names",
+    "helper_names",
+    "lint_package",
     "lint_repository",
     "package_kind",
 ]

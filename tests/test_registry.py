@@ -30,7 +30,7 @@ def test_codes_carry_their_category_prefix() -> None:
 def test_rules_run_in_category_then_code_order() -> None:
     order = [(CATEGORIES.index(r.category), r.code) for r in rules()]
     assert order == sorted(order)
-    assert rules()[0].name == "eval_location"
+    assert rules()[0].name == "package_location"
 
 
 def test_every_rule_is_documented() -> None:
