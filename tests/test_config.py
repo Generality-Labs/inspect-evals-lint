@@ -26,12 +26,20 @@ def test_default_is_template_preset() -> None:
 def test_monorepo_preset_values() -> None:
     cfg = PRESETS["monorepo"]
     assert cfg.source_root == "src/inspect_evals"
+    assert cfg.helper_dirs == frozenset({"utils"})
+    assert cfg.ignore_dirs == frozenset()
     assert cfg.import_prefix == "inspect_evals"
     assert cfg.registry == "module"
     assert cfg.registry_module == "src/inspect_evals/_registry.py"
     assert cfg.isolated_packages_dir == "packages"
     assert cfg.module_name("gpqa") == "inspect_evals.gpqa"
     assert PRESETS["template"].module_name("gpqa") == "gpqa"
+
+
+def test_template_preset_directory_kinds() -> None:
+    cfg = PRESETS["template"]
+    assert cfg.helper_dirs == frozenset({"utils"})
+    assert cfg.ignore_dirs == frozenset({"examples"})
 
 
 def test_register_preset_values() -> None:
@@ -62,7 +70,8 @@ def test_kebab_and_snake_keys_override_preset() -> None:
     cfg = config_from_table(
         {
             "preset": "monorepo",
-            "non-eval-dirs": ["utils", "gdm_capabilities"],
+            "helper-dirs": ["utils", "common"],
+            "ignore_dirs": ["docs_only"],
             "disabled_checks": ["tests_init"],
             "eval-yaml-required-fields": ["title"],
             "sandbox-image-allowlist": {"cybench": ["a/b", "c/d:latest"]},
@@ -72,7 +81,8 @@ def test_kebab_and_snake_keys_override_preset() -> None:
     assert cfg.model_role_allowlist == frozenset(
         {("moru", "grader"), ("makemesay", "judge"), ("makemesay", "<dynamic>")}
     )
-    assert cfg.non_eval_dirs == frozenset({"utils", "gdm_capabilities"})
+    assert cfg.helper_dirs == frozenset({"utils", "common"})
+    assert cfg.ignore_dirs == frozenset({"docs_only"})
     assert cfg.disabled_checks == frozenset({"tests_init"})
     assert cfg.eval_yaml_required_fields == ("title",)
     assert cfg.sandbox_image_allowlist == frozenset({("cybench", "a/b"), ("cybench", "c/d:latest")})
@@ -86,7 +96,8 @@ def test_kebab_and_snake_keys_override_preset() -> None:
         {"bogus": 1},
         {"registry": "magic"},
         {"registry": "module"},
-        {"non-eval-dirs": "utils"},
+        {"helper-dirs": "utils"},
+        {"ignore-dirs": "examples"},
         {"sandbox-image-allowlist": {"e": "img"}},
         {"model-role-allowlist": {"e": "grader"}},
         {"tests-layout": "nested"},
@@ -97,6 +108,13 @@ def test_kebab_and_snake_keys_override_preset() -> None:
 def test_invalid_tables_raise(table: dict[str, object]) -> None:
     with pytest.raises(ConfigError):
         config_from_table(table)
+
+
+def test_removed_non_eval_dirs_key_names_its_replacements() -> None:
+    with pytest.raises(ConfigError, match=r"helper-dirs.*ignore-dirs"):
+        config_from_table({"non-eval-dirs": ["utils"]})
+    with pytest.raises(ConfigError, match=r"helper-dirs.*ignore-dirs"):
+        config_from_table({"non_eval_dirs": ["utils"]})
 
 
 def test_empty_string_clears_optional_paths() -> None:

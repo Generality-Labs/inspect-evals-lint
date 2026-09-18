@@ -7,14 +7,15 @@ from inspect_evals_lint.config import (
     find_repo_root,
     load_config,
 )
-from inspect_evals_lint.models import LintReport, LintResult
+from inspect_evals_lint.models import LintReport, LintResult, PackageKind
 from inspect_evals_lint.runner import (
     get_all_check_names,
     get_all_eval_names,
+    get_all_helper_names,
     lint_evaluation,
 )
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 __all__ = [
     "PRESETS",
@@ -22,10 +23,12 @@ __all__ = [
     "LintConfig",
     "LintReport",
     "LintResult",
+    "PackageKind",
     "__version__",
     "find_repo_root",
     "get_all_check_names",
     "get_all_eval_names",
+    "get_all_helper_names",
     "lint_evaluation",
     "load_config",
 ]

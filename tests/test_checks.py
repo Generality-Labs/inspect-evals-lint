@@ -208,29 +208,29 @@ class TestGetStdlibModules:
 class TestGetImportsFromFile:
     """Test the _get_imports_from_file function from dependencies.py."""
 
+    @staticmethod
+    def imports(path):
+        eager, lazy, error = _get_imports_from_file(path)
+        assert error is None
+        return eager | lazy
+
     def test_simple_import(self, tmp_path):
         """Test simple import statement."""
         py_file = tmp_path / "test.py"
         py_file.write_text("import os")
-        imports, error = _get_imports_from_file(py_file)
-        assert error is None
-        assert "os" in imports
+        assert "os" in self.imports(py_file)
 
     def test_from_import(self, tmp_path):
         """Test from import statement."""
         py_file = tmp_path / "test.py"
         py_file.write_text("from pathlib import Path")
-        imports, error = _get_imports_from_file(py_file)
-        assert error is None
-        assert "pathlib" in imports
+        assert "pathlib" in self.imports(py_file)
 
     def test_nested_import(self, tmp_path):
         """Test nested module import - should return top-level."""
         py_file = tmp_path / "test.py"
         py_file.write_text("from os.path import join")
-        imports, error = _get_imports_from_file(py_file)
-        assert error is None
-        assert "os" in imports
+        assert "os" in self.imports(py_file)
 
     def test_multiple_imports(self, tmp_path):
         """Test multiple imports."""
@@ -241,21 +241,51 @@ import sys
 from pathlib import Path
 from json import loads, dumps
 """)
-        imports, error = _get_imports_from_file(py_file)
-        assert error is None
-        assert "os" in imports
-        assert "sys" in imports
-        assert "pathlib" in imports
-        assert "json" in imports
+        imports = self.imports(py_file)
+        assert {"os", "sys", "pathlib", "json"} <= imports
 
     def test_aliased_import(self, tmp_path):
         """Test import with alias."""
         py_file = tmp_path / "test.py"
         py_file.write_text("import numpy as np")
-        imports, error = _get_imports_from_file(py_file)
-        assert error is None
+        imports = self.imports(py_file)
         assert "numpy" in imports
         assert "np" not in imports
+
+    def test_eager_and_lazy_imports_are_told_apart(self, tmp_path):
+        py_file = tmp_path / "test.py"
+        py_file.write_text("""
+import eager_a
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    import typed_only
+if True:
+    import eager_b
+try:
+    import guarded
+except ImportError:
+    guarded = None
+
+def f():
+    import in_function
+    def g():
+        from nested import thing
+    return lambda: __import__("x")
+
+async def h():
+    import in_async
+""")
+        eager, lazy, error = _get_imports_from_file(py_file)
+        assert error is None
+        assert eager == {"eager_a", "eager_b", "typing"}
+        assert lazy == {"typed_only", "guarded", "in_function", "nested", "in_async"}
+
+    def test_syntax_error_is_reported(self, tmp_path):
+        py_file = tmp_path / "test.py"
+        py_file.write_text("import (")
+        eager, lazy, error = _get_imports_from_file(py_file)
+        assert (eager, lazy) == (set(), set())
+        assert error
 
 
 class TestFindTaskFunctions:

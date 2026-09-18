@@ -59,31 +59,54 @@ def _get_exported_names(init_file: Path) -> set[str]:
     return exported
 
 
+def is_package(path: Path) -> bool:
+    """Whether ``path`` is a Python package: a directory with an ``__init__.py``."""
+    return path.is_dir() and (path / "__init__.py").is_file()
+
+
 def get_eval_path(repo_root: Path, eval_name: str, config: LintConfig) -> Path | None:
-    """The evaluation directory, or None if it does not exist."""
+    """The evaluation package directory, or None if it does not exist or is not a package."""
     eval_path = config.eval_dir(repo_root, eval_name)
-    return eval_path if eval_path.is_dir() else None
+    return eval_path if is_package(eval_path) else None
 
 
 def check_eval_location(
     repo_root: Path, eval_name: str, config: LintConfig, report: LintReport
 ) -> Path | None:
-    """Check the evaluation lives at ``<source_root>/<eval_name>``; returns its path."""
+    """Check the package lives at ``<source_root>/<eval_name>``; returns its path.
+
+    A directory that exists but has no ``__init__.py`` is skipped rather than
+    failed: it is documentation or data, not code, and the same rule keeps it
+    out of ``--all-evals`` discovery.
+    """
     eval_path = get_eval_path(repo_root, eval_name, config)
     if eval_path:
         report.add(
             LintResult(
                 name="eval_location",
                 status="pass",
-                message=f"Evaluation located at {eval_path.relative_to(repo_root)}",
+                message=f"Package located at {eval_path.relative_to(repo_root).as_posix()}",
             )
         )
         return eval_path
+    location = f"{config.source_root}/{eval_name}"
+    if config.eval_dir(repo_root, eval_name).is_dir():
+        report.add(
+            LintResult(
+                name="eval_location",
+                status="skip",
+                message=(
+                    f"{location} has no __init__.py, so it is not a Python package; "
+                    "documentation-only directories are not linted"
+                ),
+            )
+        )
+        return None
     report.add(
         LintResult(
             name="eval_location",
             status="fail",
-            message=f"Evaluation directory not found: {config.source_root}/{eval_name}",
+            message=f"Evaluation directory not found: {location}",
         )
     )
     return None

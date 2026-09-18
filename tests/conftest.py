@@ -78,6 +78,15 @@ def make_eval(root: Path, config: LintConfig, name: str, *, with_tests: bool = T
     return eval_dir
 
 
+def make_helper(root: Path, config: LintConfig, name: str = "utils", code: str = "") -> Path:
+    """Create a helper package named ``name`` under ``config.source_root`` with ``code`` in ``helpers.py``."""
+    helper_dir = config.source_dir(root) / name
+    write(helper_dir / "__init__.py", "")
+    if code:
+        write(helper_dir / "helpers.py", code)
+    return helper_dir
+
+
 def make_monorepo(root: Path, eval_names: tuple[str, ...] = ("alpha",)) -> LintConfig:
     """A repo shaped like inspect_evals: src/inspect_evals/<eval>, _registry.py, [tool] table."""
     config = PRESETS["monorepo"]

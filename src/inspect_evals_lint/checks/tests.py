@@ -249,20 +249,33 @@ def check_custom_tool_tests(test_path: Path | None, eval_path: Path, report: Lin
     _check_custom_decorated_tests(test_path, eval_path, report, "tool")
 
 
-EXCLUDED_TEST_DIRS = {"__pycache__", ".mypy_cache", "utils"}
+EXCLUDED_TEST_DIRS = {"__pycache__", ".mypy_cache", ".pytest_cache"}
 
 
 def check_tests_init(
-    test_path: Path | None, report: LintReport, tests_root: Path | None = None
+    test_path: Path | None,
+    report: LintReport,
+    tests_root: Path | None = None,
+    required: bool = True,
 ) -> None:
     """Check the test directory and every sub-directory has an ``__init__.py``.
 
     Skipped when ``test_path`` is ``tests_root`` itself (flat layout): the packages
     guard against basename collisions between per-evaluation test directories,
-    and a flat tree has none.
+    and a flat tree has none. With ``required=False`` a missing test directory is
+    a skip rather than a failure, for helper packages whose tests may live anywhere.
     """
     if test_path is None:
-        _no_test_dir("tests_init", report)
+        if required:
+            _no_test_dir("tests_init", report)
+        else:
+            report.add(
+                LintResult(
+                    name="tests_init",
+                    status="skip",
+                    message="No test directory named after this package",
+                )
+            )
         return
     if tests_root is not None and test_path == tests_root:
         report.add(

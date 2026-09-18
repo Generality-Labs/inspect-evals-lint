@@ -43,12 +43,20 @@ def _location(result: LintResult) -> str:
     return location
 
 
+def _label(report: LintReport) -> str:
+    """The package name, marked when it is a helper rather than an evaluation."""
+    return f"{report.eval_name} (helper)" if report.kind == "helper" else report.eval_name
+
+
 def print_report(report: LintReport, config: LintConfig | None = None) -> None:
-    """Print one evaluation's results with suppression hints for any failures."""
+    """Print one package's results with suppression hints for any failures."""
     source_root = config.source_root if config else "src"
 
     console.print()
-    console.print(Rule(f"[bold]Lint Report: {report.eval_name}[/]", style="blue"))
+    title = f"Lint Report: {report.eval_name}"
+    if report.kind == "helper":
+        title += " (helper package)"
+    console.print(Rule(f"[bold]{title}[/]", style="blue"))
     console.print()
 
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
@@ -94,7 +102,7 @@ def print_report(report: LintReport, config: LintConfig | None = None) -> None:
     for check in dict.fromkeys(failed_checks):
         console.print(f"  [cyan]# noautolint: {check}[/]  [dim](on the line)[/]")
     console.print(
-        f"  [dim]Or add check name to[/] [cyan]{source_root}/{report.eval_name}/.noautolint[/]  [dim](eval-level)[/]"
+        f"  [dim]Or add check name to[/] [cyan]{source_root}/{report.eval_name}/.noautolint[/]  [dim](package-level)[/]"
     )
     console.print(
         f"  [dim]Or add check name to[/] [cyan]{source_root}/{report.eval_name}/<subdir>/.noautolint[/]  [dim](dir-level)[/]"
@@ -189,7 +197,7 @@ def _print_grouped_results(reports: list[LintReport], status: str, noun: str, st
     for report in reports:
         for result in report.results:
             if result.status == status:
-                by_check.setdefault(result.name, []).append((report.eval_name, result))
+                by_check.setdefault(result.name, []).append((_label(report), result))
     if not by_check:
         return False
 
@@ -218,7 +226,7 @@ def print_overall_summary(reports: list[LintReport]) -> None:
 
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
     table.add_column("Status", width=6)
-    table.add_column("Evaluation", style="cyan")
+    table.add_column("Package", style="cyan")
     table.add_column("Pass", justify="right", style="green")
     table.add_column("Fail", justify="right", style="red")
     table.add_column("Warn", justify="right", style="yellow")
@@ -237,7 +245,7 @@ def print_overall_summary(reports: list[LintReport]) -> None:
             status = Text.from_markup("[bold red]FAIL[/]")
         table.add_row(
             status,
-            report.eval_name,
+            _label(report),
             str(summary["pass"]),
             str(summary["fail"]),
             str(summary["warn"]),
@@ -257,14 +265,11 @@ def print_overall_summary(reports: list[LintReport]) -> None:
     console.print()
 
     failed = len(reports) - passed
+    noun = "packages" if any(r.kind == "helper" for r in reports) else "evaluations"
     if failed == 0:
-        console.print(
-            f"[bold green]{passed}/{len(reports)} evaluations passed all required checks[/]"
-        )
+        console.print(f"[bold green]{passed}/{len(reports)} {noun} passed all required checks[/]")
     else:
-        console.print(
-            f"[bold]{passed}/{len(reports)} evaluations passed[/], [red]{failed} failed[/]"
-        )
+        console.print(f"[bold]{passed}/{len(reports)} {noun} passed[/], [red]{failed} failed[/]")
 
 
 def _relative_file(file: str | None, root: Path | None) -> str | None:
@@ -281,9 +286,10 @@ def _relative_file(file: str | None, root: Path | None) -> str | None:
 
 
 def report_to_dict(report: LintReport, root: Path | None = None) -> dict[str, Any]:
-    """One evaluation's report as a JSON-serialisable mapping."""
+    """One package's report as a JSON-serialisable mapping."""
     return {
         "name": report.eval_name,
+        "kind": report.kind,
         "passed": report.passed(),
         "summary": report.summary(),
         "results": [
@@ -303,20 +309,27 @@ def report_to_dict(report: LintReport, root: Path | None = None) -> dict[str, An
 def reports_to_dict(reports: list[LintReport], root: Path | None = None) -> dict[str, Any]:
     """Every report plus run-wide totals as a JSON-serialisable mapping.
 
-    ``passed`` mirrors the CLI exit code: true when no check failed in any evaluation.
+    ``passed`` mirrors the CLI exit code: true when no check failed in any package.
+    Evaluations and helper packages are listed separately so consumers that
+    only know evaluations keep reading the same ``evaluations`` list.
     """
     totals: dict[str, int] = dict.fromkeys(("pass", "fail", "warn", "skip", "suppressed"), 0)
     for report in reports:
         for status, count in report.summary().items():
             totals[status] += count
+    evaluations = [report for report in reports if report.kind == "eval"]
+    helpers = [report for report in reports if report.kind == "helper"]
     return {
         "version": __version__,
         "root": str(root) if root is not None else None,
         "passed": all(report.passed() for report in reports),
-        "evaluations_passed": sum(1 for report in reports if report.passed()),
-        "evaluations_total": len(reports),
+        "evaluations_passed": sum(1 for report in evaluations if report.passed()),
+        "evaluations_total": len(evaluations),
+        "helpers_passed": sum(1 for report in helpers if report.passed()),
+        "helpers_total": len(helpers),
         "summary": totals,
-        "evaluations": [report_to_dict(report, root) for report in reports],
+        "evaluations": [report_to_dict(report, root) for report in evaluations],
+        "helpers": [report_to_dict(report, root) for report in helpers],
     }
 
 

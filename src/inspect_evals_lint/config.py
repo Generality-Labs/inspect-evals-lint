@@ -57,8 +57,16 @@ class LintConfig:
     registry_module: str | None = None
     """Path of the registry module (relative to the repo root); required when ``registry == "module"``."""
 
-    non_eval_dirs: frozenset[str] = frozenset({"utils", "examples"})
-    """Sub-directories of ``source_root`` that are not evaluations."""
+    helper_dirs: frozenset[str] = frozenset({"utils"})
+    """Sub-directories of ``source_root`` holding shared code rather than an evaluation.
+
+    They are linted with the helper scope: the checks that guard code behaviour
+    (private imports, score values, model roles, dependencies, tests for custom
+    components) but not the ones about an evaluation's structure and registration.
+    """
+
+    ignore_dirs: frozenset[str] = frozenset({"examples"})
+    """Sub-directories of ``source_root`` that are never linted."""
 
     eval_yaml_required_fields: tuple[str, ...] = (
         "title",
@@ -106,7 +114,7 @@ PRESETS: dict[str, LintConfig] = {
         import_prefix="inspect_evals",
         registry="module",
         registry_module="src/inspect_evals/_registry.py",
-        non_eval_dirs=frozenset({"utils"}),
+        ignore_dirs=frozenset(),
         isolated_packages_dir="packages",
     ),
     # An upstream repo listed in the inspect_evals register: one evaluation,
@@ -121,6 +129,15 @@ PRESETS: dict[str, LintConfig] = {
 DEFAULT_PRESET = "template"
 
 _FIELD_NAMES = {f.name for f in fields(LintConfig)}
+
+# Keys removed from the table, with the message that points at their replacement.
+_REMOVED_KEYS: dict[str, str] = {
+    "non_eval_dirs": (
+        "'non-eval-dirs' was replaced in 0.2.0: list shared-code packages in 'helper-dirs' "
+        "(linted with the helper scope) and directories to leave alone in 'ignore-dirs'. "
+        "Directories without an __init__.py are never linted and need no entry."
+    ),
+}
 
 
 def _expect(value: object, kind: type, key: str) -> Any:
@@ -142,7 +159,7 @@ def _str_list(value: object, key: str) -> list[str]:
 
 
 def _coerce(key: str, value: object) -> object:
-    if key in ("non_eval_dirs", "disabled_checks"):
+    if key in ("helper_dirs", "ignore_dirs", "disabled_checks"):
         return frozenset(_str_list(value, key))
     if key == "eval_yaml_required_fields":
         return tuple(_str_list(value, key))
@@ -179,6 +196,8 @@ def config_from_table(table: Mapping[str, Any]) -> LintConfig:
 
     overrides: dict[str, object] = {}
     for key, value in normalised.items():
+        if key in _REMOVED_KEYS:
+            raise ConfigError(_REMOVED_KEYS[key])
         if key not in _FIELD_NAMES:
             raise ConfigError(f"Unknown [tool.{TOOL_TABLE}] key {key!r}")
         overrides[key] = _coerce(key, value)
