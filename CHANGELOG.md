@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-19
+
 This release is the refactor specified in [#13](https://github.com/Generality-Labs/inspect-evals-lint/issues/13). It is a breaking release: names, configuration keys, the suppression syntax and the output document change, and nothing old is aliased. Both known consumers pin 0.2.1 and get an update PR.
 
 ### Changed
