@@ -7,13 +7,16 @@ import functools
 import re
 import sys
 import tomllib
+from collections.abc import Iterable
 from importlib.metadata import packages_distributions
 from pathlib import Path
 from typing import Any, cast
 
-from inspect_evals_lint.checks.utils import add_parse_errors_to_report, iter_python_files
 from inspect_evals_lint.config import LintConfig
-from inspect_evals_lint.models import LintReport, LintResult, PackageKind
+from inspect_evals_lint.context import LintContext
+from inspect_evals_lint.models import LintResult
+from inspect_evals_lint.registry import rule
+from inspect_evals_lint.rules._ast import iter_python_files, parse_error_result
 
 
 def _normalize_name(name: str) -> str:
@@ -279,10 +282,9 @@ def _check_helper_dependencies(
     eval_name: str,
     eval_path: Path,
     config: LintConfig,
-    report: LintReport,
     eager: set[str],
     lazy: set[str],
-) -> None:
+) -> Iterable[LintResult]:
     """The helper rule: module-level imports must be core dependencies; lazy ones need some group.
 
     A helper package is imported by every evaluation that uses it, so anything it
@@ -293,85 +295,82 @@ def _check_helper_dependencies(
     """
     external_eager = _external_imports(eager, eval_path, repo_root, config)
     if external_eager:
-        report.add(
-            LintResult(
-                name="external_dependencies",
-                status="fail",
-                message=(
-                    "Module-level third-party imports in a helper package must be in "
-                    "[project].dependencies, because every evaluation that imports the "
-                    f"helper loads them: {sorted(external_eager)[:5]}. Move the import inside "
-                    "the function that needs it if only some evaluations do."
-                ),
-            )
+        yield LintResult(
+            name="external_dependencies",
+            status="fail",
+            message=(
+                "Module-level third-party imports in a helper package must be in "
+                "[project].dependencies, because every evaluation that imports the "
+                f"helper loads them: {sorted(external_eager)[:5]}. Move the import inside "
+                "the function that needs it if only some evaluations do."
+            ),
         )
+
         return
 
     external_lazy = _external_imports(lazy, eval_path, repo_root, config)
     if not external_lazy:
-        report.add(
-            LintResult(
-                name="external_dependencies",
-                status="pass",
-                message="No external dependencies detected beyond core requirements",
-            )
+        yield LintResult(
+            name="external_dependencies",
+            status="pass",
+            message="No external dependencies detected beyond core requirements",
         )
+
         return
 
     missing = _undeclared(external_lazy, _all_declared_optional(repo_root, config))
     if missing:
-        report.add(
-            LintResult(
-                name="external_dependencies",
-                status="fail",
-                message=(
-                    "Lazily imported packages must still be declared in some pyproject.toml "
-                    f"optional-dependency group: {missing[:5]}"
-                ),
-            )
+        yield LintResult(
+            name="external_dependencies",
+            status="fail",
+            message=(
+                "Lazily imported packages must still be declared in some pyproject.toml "
+                f"optional-dependency group: {missing[:5]}"
+            ),
         )
+
     else:
-        report.add(
-            LintResult(
-                name="external_dependencies",
-                status="pass",
-                message=(
-                    f"Lazy external dependencies appear to be declared (imports: {len(external_lazy)})"
-                ),
-            )
+        yield LintResult(
+            name="external_dependencies",
+            status="pass",
+            message=(
+                f"Lazy external dependencies appear to be declared (imports: {len(external_lazy)})"
+            ),
         )
 
 
-def check_external_dependencies(
-    repo_root: Path,
-    eval_name: str,
-    eval_path: Path,
-    config: LintConfig,
-    report: LintReport,
-    kind: PackageKind = "eval",
-) -> None:
+@rule(
+    code="IECQ004",
+    name="external_dependencies",
+    category="code_quality",
+    scopes=("eval", "helper"),
+    summary="Third-party imports are declared in pyproject.toml",
+)
+def external_dependencies(ctx: LintContext) -> Iterable[LintResult]:
     """Check third-party imports are declared in an optional-dependency group (or isolated package).
 
     For ``kind="helper"`` the rule changes: see :func:`_check_helper_dependencies`.
     """
+    repo_root, eval_name, eval_path = ctx.root, ctx.name, ctx.path
+    config, kind = ctx.config, ctx.kind
     eager, lazy, syntax_error_files = _get_all_imports_from_eval(eval_path)
-    if add_parse_errors_to_report("external_dependencies", syntax_error_files, report):
+    if failed := parse_error_result("external_dependencies", syntax_error_files):
+        yield failed
         return
 
     if kind == "helper":
-        _check_helper_dependencies(repo_root, eval_name, eval_path, config, report, eager, lazy)
+        yield from _check_helper_dependencies(repo_root, eval_name, eval_path, config, eager, lazy)
         return
 
     external_imports = _external_imports(eager | lazy, eval_path, repo_root, config)
 
     if not external_imports:
-        report.add(
-            LintResult(
-                name="external_dependencies",
-                status="pass",
-                message="No external dependencies detected beyond core requirements",
-            )
+        yield LintResult(
+            name="external_dependencies",
+            status="pass",
+            message="No external dependencies detected beyond core requirements",
         )
+
         return
 
     optional_deps = _load_pyproject_optional_deps(repo_root)
@@ -392,26 +391,22 @@ def check_external_dependencies(
     missing_deps = _undeclared(external_imports, all_optional_deps)
 
     if missing_deps:
-        report.add(
-            LintResult(
-                name="external_dependencies",
-                status="fail",
-                message=f"External imports may need pyproject.toml optional-dependencies: {missing_deps[:5]}",
-            )
+        yield LintResult(
+            name="external_dependencies",
+            status="fail",
+            message=f"External imports may need pyproject.toml optional-dependencies: {missing_deps[:5]}",
         )
+
     elif not is_isolated and eval_name not in optional_deps:
-        report.add(
-            LintResult(
-                name="external_dependencies",
-                status="fail",
-                message=f"Evaluation uses external packages ({list(external_imports)[:3]}...) but has no dedicated optional-dependency group",
-            )
+        yield LintResult(
+            name="external_dependencies",
+            status="fail",
+            message=f"Evaluation uses external packages ({list(external_imports)[:3]}...) but has no dedicated optional-dependency group",
         )
+
     else:
-        report.add(
-            LintResult(
-                name="external_dependencies",
-                status="pass",
-                message=f"External dependencies appear to be declared (imports: {len(external_imports)})",
-            )
+        yield LintResult(
+            name="external_dependencies",
+            status="pass",
+            message=f"External dependencies appear to be declared (imports: {len(external_imports)})",
         )

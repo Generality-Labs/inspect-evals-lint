@@ -3,23 +3,34 @@
 from __future__ import annotations
 
 import ast
-from pathlib import Path
+from collections.abc import Iterable
 
-from inspect_evals_lint.checks.utils import (
+from inspect_evals_lint.context import LintContext
+from inspect_evals_lint.models import LintResult
+from inspect_evals_lint.registry import rule
+from inspect_evals_lint.rules._ast import (
     Issue,
-    add_parse_errors_to_report,
     get_call_name,
+    parse_error_result,
     parse_python_files,
 )
-from inspect_evals_lint.models import LintReport, LintResult
 
 SCORE_LITERALS = ("C", "I", "CORRECT", "INCORRECT")
 
 
-def check_private_api_imports(eval_path: Path, report: LintReport) -> None:
+@rule(
+    code="IECQ001",
+    name="private_api_imports",
+    category="code_quality",
+    scopes=("eval", "helper"),
+    summary="No imports from private inspect_ai modules",
+)
+def private_api_imports(ctx: LintContext) -> Iterable[LintResult]:
     """Fail on ``from inspect_ai.<...>._<private> import ...``; one result per import site."""
+    eval_path = ctx.path
     parse_results = parse_python_files(eval_path)
-    if add_parse_errors_to_report("private_api_imports", parse_results.failed_paths, report):
+    if failed := parse_error_result("private_api_imports", parse_results.failed_paths):
+        yield failed
         return
 
     issues: list[Issue] = []
@@ -35,29 +46,35 @@ def check_private_api_imports(eval_path: Path, report: LintReport) -> None:
 
     if issues:
         for issue in issues:
-            report.add(
-                LintResult(
-                    name="private_api_imports",
-                    status="fail",
-                    message=f"Import from private inspect_ai module: {issue.detail}",
-                    file=issue.file,
-                    line=issue.line,
-                )
-            )
-    else:
-        report.add(
-            LintResult(
+            yield LintResult(
                 name="private_api_imports",
-                status="pass",
-                message="No private API imports found",
+                status="fail",
+                message=f"Import from private inspect_ai module: {issue.detail}",
+                file=issue.file,
+                line=issue.line,
             )
+
+    else:
+        yield LintResult(
+            name="private_api_imports",
+            status="pass",
+            message="No private API imports found",
         )
 
 
-def check_score_constants(eval_path: Path, report: LintReport) -> None:
+@rule(
+    code="IECQ002",
+    name="score_constants",
+    category="code_quality",
+    scopes=("eval", "helper"),
+    summary="Score() values use the CORRECT/INCORRECT constants, not string literals",
+)
+def score_constants(ctx: LintContext) -> Iterable[LintResult]:
     """Fail when ``Score(value="C")``-style literals are used instead of ``CORRECT``/``INCORRECT``."""
+    eval_path = ctx.path
     parse_results = parse_python_files(eval_path)
-    if add_parse_errors_to_report("score_constants", parse_results.failed_paths, report):
+    if failed := parse_error_result("score_constants", parse_results.failed_paths):
+        yield failed
         return
 
     issues: list[Issue] = []
@@ -74,20 +91,17 @@ def check_score_constants(eval_path: Path, report: LintReport) -> None:
                     issues.append(Issue(str(parsed.path), node.lineno))
 
     if issues:
-        report.add(
-            LintResult(
-                name="score_constants",
-                status="fail",
-                message=f"Found {len(issues)} Score() calls with literal strings - consider using CORRECT/INCORRECT constants",
-            )
+        yield LintResult(
+            name="score_constants",
+            status="fail",
+            message=f"Found {len(issues)} Score() calls with literal strings - consider using CORRECT/INCORRECT constants",
         )
+
     else:
-        report.add(
-            LintResult(
-                name="score_constants",
-                status="pass",
-                message="Score() calls appear to use constants or computed values",
-            )
+        yield LintResult(
+            name="score_constants",
+            status="pass",
+            message="Score() calls appear to use constants or computed values",
         )
 
 
@@ -122,7 +136,14 @@ def _has_reason(call: ast.Call) -> bool:
     return False
 
 
-def check_unscored_reason(eval_path: Path, report: LintReport) -> None:
+@rule(
+    code="IECQ003",
+    name="unscored_reason",
+    category="code_quality",
+    scopes=("eval", "helper"),
+    summary="Score.unscored() passes a reason= and the legacy unscored_reason metadata key is gone",
+)
+def unscored_reason(ctx: LintContext) -> Iterable[LintResult]:
     """Fail on ``Score.unscored()`` without ``reason=`` and on the legacy ``"unscored_reason"`` metadata key.
 
     ``Score.reason`` (inspect_ai 0.3.261) is the first-class place to record why a
@@ -131,8 +152,10 @@ def check_unscored_reason(eval_path: Path, report: LintReport) -> None:
     attribute calls (``Score.unscored(...)``) count, so a locally defined metric
     named ``unscored()`` is not mistaken for the constructor. One result per site.
     """
+    eval_path = ctx.path
     parse_results = parse_python_files(eval_path)
-    if add_parse_errors_to_report(UNSCORED_REASON_CHECK, parse_results.failed_paths, report):
+    if failed := parse_error_result(UNSCORED_REASON_CHECK, parse_results.failed_paths):
+        yield failed
         return
 
     total_calls = 0
@@ -158,46 +181,41 @@ def check_unscored_reason(eval_path: Path, report: LintReport) -> None:
 
     # ast.walk is breadth-first, so sort to report sites in source order.
     for issue in sorted(missing_reason, key=lambda i: (i.file, i.line)):
-        report.add(
-            LintResult(
-                name=UNSCORED_REASON_CHECK,
-                status="fail",
-                message=(
-                    "Score.unscored() without reason=; pass reason= (e.g. 'grader_failed') "
-                    "so the sample records why it was left unscored"
-                ),
-                file=issue.file,
-                line=issue.line,
-            )
+        yield LintResult(
+            name=UNSCORED_REASON_CHECK,
+            status="fail",
+            message=(
+                "Score.unscored() without reason=; pass reason= (e.g. 'grader_failed') "
+                "so the sample records why it was left unscored"
+            ),
+            file=issue.file,
+            line=issue.line,
         )
+
     for issue in sorted(legacy_keys, key=lambda i: (i.file, i.line)):
-        report.add(
-            LintResult(
-                name=UNSCORED_REASON_CHECK,
-                status="fail",
-                message=(
-                    f"'{LEGACY_UNSCORED_KEY}' metadata key is superseded by Score.reason "
-                    "(inspect_ai >= 0.3.261); pass reason= to Score.unscored() and read score.reason"
-                ),
-                file=issue.file,
-                line=issue.line,
-            )
+        yield LintResult(
+            name=UNSCORED_REASON_CHECK,
+            status="fail",
+            message=(
+                f"'{LEGACY_UNSCORED_KEY}' metadata key is superseded by Score.reason "
+                "(inspect_ai >= 0.3.261); pass reason= to Score.unscored() and read score.reason"
+            ),
+            file=issue.file,
+            line=issue.line,
         )
+
     if missing_reason or legacy_keys:
         return
     if total_calls == 0:
-        report.add(
-            LintResult(
-                name=UNSCORED_REASON_CHECK,
-                status="skip",
-                message="No Score.unscored() calls found",
-            )
+        yield LintResult(
+            name=UNSCORED_REASON_CHECK,
+            status="skip",
+            message="No Score.unscored() calls found",
         )
+
     else:
-        report.add(
-            LintResult(
-                name=UNSCORED_REASON_CHECK,
-                status="pass",
-                message=f"All {total_calls} Score.unscored() call(s) give a reason",
-            )
+        yield LintResult(
+            name=UNSCORED_REASON_CHECK,
+            status="pass",
+            message=f"All {total_calls} Score.unscored() call(s) give a reason",
         )

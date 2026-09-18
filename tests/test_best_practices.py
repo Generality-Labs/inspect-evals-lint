@@ -1,21 +1,23 @@
 """Tests for the best-practice AST visitors, ported from inspect_evals."""
 
 import ast
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from inspect_evals_lint.checks.best_practices import (
+from inspect_evals_lint.config import PRESETS
+from inspect_evals_lint.rules._ast import get_call_name, get_decorator_name
+from inspect_evals_lint.rules.best_practices import (
     GetModelVisitor,
     ModelRoleVisitor,
     SampleIdVisitor,
     TaskDefaultsVisitor,
     TaskParameterVisitor,
-    check_model_role_resolution,
+    model_role_resolution,
 )
-from inspect_evals_lint.checks.utils import get_call_name, get_decorator_name
-from inspect_evals_lint.models import LintReport
 from inspect_evals_lint.suppressions import apply_suppressions, load_suppressions
+from tests.conftest import context_for
 
 
 class TestGetDecoratorName:
@@ -451,9 +453,8 @@ class TestCheckModelRoleResolution:
     def _run(eval_dir: Path, source: str, allowlist: frozenset[tuple[str, str]] = frozenset()):
         eval_dir.mkdir(exist_ok=True)
         (eval_dir / "scorer.py").write_text(source, encoding="utf-8")
-        report = LintReport(eval_name=eval_dir.name)
-        check_model_role_resolution(eval_dir, report, allowlist)
-        return report.results
+        config = replace(PRESETS["template"], model_role_allowlist=allowlist)
+        return list(model_role_resolution(context_for(eval_dir, config)))
 
     def test_skips_when_no_role_calls(self, tmp_path: Path):
         results = self._run(tmp_path / "alpha", "x = get_model()")

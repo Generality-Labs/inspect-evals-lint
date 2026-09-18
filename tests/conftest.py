@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from inspect_evals_lint.config import PRESETS, LintConfig
+from inspect_evals_lint.context import LintContext
 
 EVAL_MAIN = """
 from inspect_ai import Task, task
@@ -53,6 +54,22 @@ def test_record_to_sample():
     from {module}.{name} import record_to_sample
     assert record_to_sample({{"q": "a", "a": "b", "id": "x"}}).id == "x"
 """
+
+
+def context_for(package_dir: Path, config: LintConfig | None = None) -> LintContext:
+    """A context for a bare package directory, for unit-testing one rule in isolation.
+
+    The directory's parent stands in for the repository root; there is no test tree.
+    """
+    return LintContext(
+        root=package_dir.parent,
+        name=package_dir.name,
+        path=package_dir,
+        kind="eval",
+        config=config or PRESETS["template"],
+        test_path=None,
+        test_search_path=None,
+    )
 
 
 def write(path: Path, content: str) -> Path:

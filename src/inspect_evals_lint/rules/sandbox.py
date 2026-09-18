@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from collections.abc import Iterable
 from typing import Any, cast
 
 import yaml
 
-from inspect_evals_lint.models import LintReport, LintResult
+from inspect_evals_lint.context import LintContext
+from inspect_evals_lint.models import LintResult
+from inspect_evals_lint.registry import rule
 
 CHECK_NAME = "sandbox_image_pinning"
 
@@ -28,11 +30,15 @@ def _is_pinned(image: str) -> bool:
     return tag is not None and tag != "latest"
 
 
-def check_sandbox_image_pinning(
-    eval_path: Path,
-    report: LintReport,
-    allowlist: frozenset[tuple[str, str]] = frozenset(),
-) -> None:
+@rule(
+    code="IEBP005",
+    name="sandbox_image_pinning",
+    category="best_practices",
+    scopes=("eval", "helper"),
+    allowlist=True,
+    summary="Registry images in compose files use an immutable tag or digest",
+)
+def sandbox_image_pinning(ctx: LintContext) -> Iterable[LintResult]:
     """Fail on untagged or ``:latest`` images in ``compose*.y*ml`` files under ``eval_path``.
 
     A floating reference resolves to whatever the registry currently holds, so a
@@ -41,10 +47,11 @@ def check_sandbox_image_pinning(
     ``allowlist`` entries ``(eval_name, image)`` warn instead of failing, and a
     stale entry warns so it gets removed.
     """
+    eval_path, allowlist = ctx.path, ctx.config.sandbox_image_allowlist
     eval_name = eval_path.name
     compose_files = sorted(eval_path.rglob("compose*.y*ml"))
     if not compose_files:
-        report.add(LintResult(name=CHECK_NAME, status="skip", message="No compose files found"))
+        yield LintResult(name=CHECK_NAME, status="skip", message="No compose files found")
         return
 
     seen_allowlisted: set[tuple[str, str]] = set()
@@ -54,14 +61,13 @@ def check_sandbox_image_pinning(
         try:
             compose: Any = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
         except yaml.YAMLError as e:
-            report.add(
-                LintResult(
-                    name=CHECK_NAME,
-                    status="warn",
-                    message=f"Could not parse compose file: {e}",
-                    file=str(compose_file),
-                )
+            yield LintResult(
+                name=CHECK_NAME,
+                status="warn",
+                message=f"Could not parse compose file: {e}",
+                file=str(compose_file),
             )
+
             failed = True
             continue
         if not isinstance(compose, dict):
@@ -86,56 +92,49 @@ def check_sandbox_image_pinning(
             checked_images += 1
             if (eval_name, image) in allowlist:
                 seen_allowlisted.add((eval_name, image))
-                report.add(
-                    LintResult(
-                        name=CHECK_NAME,
-                        status="warn",
-                        message=(
-                            f"Service '{service_name}' uses allowlisted unpinned "
-                            f"image '{image}'; {PIN_ADVICE}, then remove the "
-                            "allowlist entry"
-                        ),
-                        file=str(compose_file),
-                    )
-                )
-                continue
-            failed = True
-            report.add(
-                LintResult(
+                yield LintResult(
                     name=CHECK_NAME,
-                    status="fail",
+                    status="warn",
                     message=(
-                        f"Service '{service_name}' image '{image}' is untagged or "
-                        f":latest, so registry pushes silently change the eval "
-                        f"environment; {PIN_ADVICE}"
+                        f"Service '{service_name}' uses allowlisted unpinned "
+                        f"image '{image}'; {PIN_ADVICE}, then remove the "
+                        "allowlist entry"
                     ),
                     file=str(compose_file),
                 )
+
+                continue
+            failed = True
+            yield LintResult(
+                name=CHECK_NAME,
+                status="fail",
+                message=(
+                    f"Service '{service_name}' image '{image}' is untagged or "
+                    f":latest, so registry pushes silently change the eval "
+                    f"environment; {PIN_ADVICE}"
+                ),
+                file=str(compose_file),
             )
 
     stale = {(name, image) for (name, image) in allowlist if name == eval_name} - seen_allowlisted
     for _, image in sorted(stale):
-        report.add(
-            LintResult(
-                name=CHECK_NAME,
-                status="warn",
-                message=(
-                    f"Allowlist entry for image '{image}' is no longer needed; "
-                    f"remove it from {ALLOWLIST_LOCATION}"
-                ),
-            )
+        yield LintResult(
+            name=CHECK_NAME,
+            status="warn",
+            message=(
+                f"Allowlist entry for image '{image}' is no longer needed; "
+                f"remove it from {ALLOWLIST_LOCATION}"
+            ),
         )
 
     if not failed and not seen_allowlisted:
-        report.add(
-            LintResult(
-                name=CHECK_NAME,
-                status="pass",
-                message=(
-                    f"All {checked_images} registry image reference(s) in "
-                    f"{len(compose_files)} compose file(s) are pinned"
-                ),
-            )
+        yield LintResult(
+            name=CHECK_NAME,
+            status="pass",
+            message=(
+                f"All {checked_images} registry image reference(s) in "
+                f"{len(compose_files)} compose file(s) are pinned"
+            ),
         )
 
 
@@ -160,7 +159,13 @@ def _requires_gpu(data: dict[str, Any]) -> bool:
     return gpu is True or isinstance(gpu, dict)
 
 
-def check_gpu_sandbox_check(eval_path: Path, report: LintReport) -> None:
+@rule(
+    code="IEBP006",
+    name="gpu_sandbox_check",
+    category="best_practices",
+    summary="An evaluation requiring a GPU ships a maintenance sandbox check task",
+)
+def gpu_sandbox_check(ctx: LintContext) -> Iterable[LintResult]:
     """An eval that declares ``metadata.requires.gpu`` ships a sandbox check task.
 
     GPU sandbox images cannot be exercised in ordinary CI, so a broken image
@@ -170,36 +175,34 @@ def check_gpu_sandbox_check(eval_path: Path, report: LintReport) -> None:
     a name ending ``_sandbox_check`` and ``kind: maintenance``, so listings and
     reports do not present its accuracy as a model result.
     """
+    eval_path = ctx.path
     eval_yaml_file = eval_path / "eval.yaml"
     if not eval_yaml_file.exists():
-        report.add(
-            LintResult(
-                name=GPU_CHECK_NAME,
-                status="skip",
-                message="No eval.yaml to read a GPU requirement from",
-            )
+        yield LintResult(
+            name=GPU_CHECK_NAME,
+            status="skip",
+            message="No eval.yaml to read a GPU requirement from",
         )
+
         return
     try:
         data: Any = yaml.safe_load(eval_yaml_file.read_text(encoding="utf-8"))
     except yaml.YAMLError as e:
-        report.add(
-            LintResult(
-                name=GPU_CHECK_NAME,
-                status="warn",
-                message=f"Could not parse eval.yaml: {e}",
-                file=str(eval_yaml_file),
-            )
+        yield LintResult(
+            name=GPU_CHECK_NAME,
+            status="warn",
+            message=f"Could not parse eval.yaml: {e}",
+            file=str(eval_yaml_file),
         )
+
         return
     if not isinstance(data, dict) or not _requires_gpu(cast(dict[str, Any], data)):
-        report.add(
-            LintResult(
-                name=GPU_CHECK_NAME,
-                status="skip",
-                message="No GPU requirement declared under metadata.requires",
-            )
+        yield LintResult(
+            name=GPU_CHECK_NAME,
+            status="skip",
+            message="No GPU requirement declared under metadata.requires",
         )
+
         return
 
     tasks: Any = cast(dict[str, Any], data).get("tasks")
@@ -211,13 +214,12 @@ def check_gpu_sandbox_check(eval_path: Path, report: LintReport) -> None:
     maintenance = [t for t in check_tasks if t.get("kind") == "maintenance"]
     if maintenance:
         names = ", ".join(str(t["name"]) for t in maintenance)
-        report.add(
-            LintResult(
-                name=GPU_CHECK_NAME,
-                status="pass",
-                message=f"GPU eval ships sandbox check task(s): {names}",
-            )
+        yield LintResult(
+            name=GPU_CHECK_NAME,
+            status="pass",
+            message=f"GPU eval ships sandbox check task(s): {names}",
         )
+
         return
     if check_tasks:
         names = ", ".join(str(t["name"]) for t in check_tasks)
@@ -227,6 +229,4 @@ def check_gpu_sandbox_check(eval_path: Path, report: LintReport) -> None:
         )
     else:
         message = f"eval.yaml declares metadata.requires.gpu but no sandbox check task; {GPU_CHECK_ADVICE}"
-    report.add(
-        LintResult(name=GPU_CHECK_NAME, status="fail", message=message, file=str(eval_yaml_file))
-    )
+    yield LintResult(name=GPU_CHECK_NAME, status="fail", message=message, file=str(eval_yaml_file))

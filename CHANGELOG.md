@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+This release is the refactor specified in [#13](https://github.com/Generality-Labs/inspect-evals-lint/issues/13). It is a breaking release: names, configuration keys, the suppression syntax and the output document change, and nothing old is aliased. Both known consumers pin 0.2.1 and get an update PR.
+
+### Changed
+
+- Every check is now a *rule*: a function taking a `LintContext` and yielding results, declared once with the `@rule` decorator next to its implementation, which records its code, name, category, scopes and one-line summary. The registry (`inspect_evals_lint.registry`) replaces the four hand-maintained tables the runner used to carry, and its invariants (unique codes and names, category prefixes, documentation present) are tests. `checks/` is now `rules/`, and `LintContext` lives in `inspect_evals_lint.context` alongside package discovery.
+- Rules have codes: `IE` for inspect-evals-lint, then the category, then a number (`IEFS001` file structure, `IECQ001` code quality, `IETS001` tests, `IEBP001` best practices). The `IE` namespace keeps them distinct from ruff's rule codes. `--check` and `lint_evaluation(check=...)` accept a code as well as a name.
+- Rules run in category-then-code order rather than in a hand-maintained sequence, so the order results are reported in is now defined by the codes.
+
 ### Added
 
 - `gpu_sandbox_check` (best practices): an evaluation whose `eval.yaml` declares `metadata.requires.gpu` must list a `tasks` entry named `<eval>_sandbox_check` with `kind: maintenance`, the task that certifies its sandbox image on GPU hardware through the eval's own scorer. Skips when no GPU requirement is declared. Follows the `metadata.requires` and per-task `kind` fields added to `eval.yaml` in [UKGovernmentBEIS/inspect_evals#2470](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2470) and the check pattern from [#2469](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2469) and [#2472](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2472).

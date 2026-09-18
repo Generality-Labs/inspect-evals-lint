@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import ast
-from pathlib import Path
+from collections.abc import Iterable
 
-from inspect_evals_lint.checks.utils import (
+from inspect_evals_lint.context import LintContext
+from inspect_evals_lint.models import LintResult
+from inspect_evals_lint.registry import rule
+from inspect_evals_lint.rules._ast import (
     Issue,
-    add_parse_errors_to_report,
     get_call_name,
     get_decorator_name,
+    parse_error_result,
     parse_python_files,
 )
-from inspect_evals_lint.models import LintReport, LintResult
 
 
 class GetModelVisitor(ast.NodeVisitor):
@@ -46,13 +48,22 @@ class GetModelVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def check_get_model_location(eval_path: Path, report: LintReport) -> None:
+@rule(
+    code="IEBP001",
+    name="get_model_location",
+    category="best_practices",
+    scopes=("eval", "helper"),
+    summary="get_model() is only called inside @solver or @scorer functions",
+)
+def get_model_location(ctx: LintContext) -> Iterable[LintResult]:
     """Warn when ``get_model()`` is called outside a ``@solver`` or ``@scorer``.
 
     Resolving concrete models late keeps tasks declarative and configurable.
     """
+    eval_path = ctx.path
     parse_results = parse_python_files(eval_path)
-    if add_parse_errors_to_report("get_model_location", parse_results.failed_paths, report):
+    if failed := parse_error_result("get_model_location", parse_results.failed_paths):
+        yield failed
         return
 
     issues: list[Issue] = []
@@ -68,26 +79,23 @@ def check_get_model_location(eval_path: Path, report: LintReport) -> None:
     if issues:
         # One result per call site so a line-level `# noautolint: get_model_location` works.
         for issue in issues:
-            report.add(
-                LintResult(
-                    name="get_model_location",
-                    status="warn",
-                    message=(
-                        "get_model() called outside @solver/@scorer. "
-                        "Resolve models inside @solver/@scorer so tasks stay declarative."
-                        + (f" ({issue.detail})" if issue.detail else "")
-                    ),
-                    file=issue.file,
-                    line=issue.line,
-                )
-            )
-    else:
-        report.add(
-            LintResult(
+            yield LintResult(
                 name="get_model_location",
-                status="pass",
-                message="get_model() calls are properly inside @solver/@scorer decorated functions",
+                status="warn",
+                message=(
+                    "get_model() called outside @solver/@scorer. "
+                    "Resolve models inside @solver/@scorer so tasks stay declarative."
+                    + (f" ({issue.detail})" if issue.detail else "")
+                ),
+                file=issue.file,
+                line=issue.line,
             )
+
+    else:
+        yield LintResult(
+            name="get_model_location",
+            status="pass",
+            message="get_model() calls are properly inside @solver/@scorer decorated functions",
         )
 
 
@@ -118,10 +126,19 @@ class SampleIdVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def check_sample_ids(eval_path: Path, report: LintReport) -> None:
+@rule(
+    code="IEBP003",
+    name="sample_ids",
+    category="best_practices",
+    scopes=("eval", "helper"),
+    summary="Every Sample() passes id=",
+)
+def sample_ids(ctx: LintContext) -> Iterable[LintResult]:
     """Fail when a ``Sample()`` call omits ``id=``; stable IDs survive shuffles and reruns."""
+    eval_path = ctx.path
     parse_results = parse_python_files(eval_path)
-    if add_parse_errors_to_report("sample_ids", parse_results.failed_paths, report):
+    if failed := parse_error_result("sample_ids", parse_results.failed_paths):
+        yield failed
         return
 
     samples_without_id: list[tuple[str, int]] = []
@@ -135,24 +152,21 @@ def check_sample_ids(eval_path: Path, report: LintReport) -> None:
                 samples_without_id.append((parsed.path.name, line))
 
     if total_samples == 0:
-        report.add(LintResult(name="sample_ids", status="skip", message="No Sample() calls found"))
+        yield LintResult(name="sample_ids", status="skip", message="No Sample() calls found")
         return
 
     if samples_without_id:
-        report.add(
-            LintResult(
-                name="sample_ids",
-                status="fail",
-                message=f"Sample() calls without id= parameter: {samples_without_id[:5]}",
-            )
+        yield LintResult(
+            name="sample_ids",
+            status="fail",
+            message=f"Sample() calls without id= parameter: {samples_without_id[:5]}",
         )
+
     else:
-        report.add(
-            LintResult(
-                name="sample_ids",
-                status="pass",
-                message=f"All {total_samples} Sample() calls include id parameter",
-            )
+        yield LintResult(
+            name="sample_ids",
+            status="pass",
+            message=f"All {total_samples} Sample() calls include id parameter",
         )
 
 
@@ -183,10 +197,19 @@ class TaskDefaultsVisitor(ast.NodeVisitor):
 OVERRIDABLE_PARAMS = {"solver", "scorer", "metric", "metrics", "grader", "model"}
 
 
-def check_task_overridable_defaults(eval_path: Path, report: LintReport) -> None:
+@rule(
+    code="IEBP004",
+    name="task_overridable_defaults",
+    category="best_practices",
+    scopes=("eval", "helper"),
+    summary="@task parameters naming a solver, scorer, metric, grader or model have defaults",
+)
+def task_overridable_defaults(ctx: LintContext) -> Iterable[LintResult]:
     """Fail when a ``@task`` parameter naming a solver, scorer, metric, grader or model lacks a default."""
+    eval_path = ctx.path
     parse_results = parse_python_files(eval_path)
-    if add_parse_errors_to_report("task_overridable_defaults", parse_results.failed_paths, report):
+    if failed := parse_error_result("task_overridable_defaults", parse_results.failed_paths):
+        yield failed
         return
 
     issues: list[tuple[str, list[str]]] = []
@@ -206,30 +229,26 @@ def check_task_overridable_defaults(eval_path: Path, report: LintReport) -> None
                 issues.append((task_name, missing_defaults))
 
     if total_tasks == 0:
-        report.add(
-            LintResult(
-                name="task_overridable_defaults",
-                status="skip",
-                message="No @task decorated functions found",
-            )
+        yield LintResult(
+            name="task_overridable_defaults",
+            status="skip",
+            message="No @task decorated functions found",
         )
+
         return
 
     if issues:
-        report.add(
-            LintResult(
-                name="task_overridable_defaults",
-                status="fail",
-                message=f"Tasks with overridable params lacking defaults: {issues[:3]}",
-            )
+        yield LintResult(
+            name="task_overridable_defaults",
+            status="fail",
+            message=f"Tasks with overridable params lacking defaults: {issues[:3]}",
         )
+
     else:
-        report.add(
-            LintResult(
-                name="task_overridable_defaults",
-                status="pass",
-                message="Tasks provide defaults for overridable parameters",
-            )
+        yield LintResult(
+            name="task_overridable_defaults",
+            status="pass",
+            message="Tasks provide defaults for overridable parameters",
         )
 
 
@@ -314,11 +333,15 @@ _MODEL_ROLE_ADVICE = (
 )
 
 
-def check_model_role_resolution(
-    eval_path: Path,
-    report: LintReport,
-    allowlist: frozenset[tuple[str, str]] = frozenset(),
-) -> None:
+@rule(
+    code="IEBP002",
+    name="model_role_resolution",
+    category="best_practices",
+    scopes=("eval", "helper"),
+    allowlist=True,
+    summary="get_model(role=...) resolves deliberately: an explicit model, default= or required=True",
+)
+def model_role_resolution(ctx: LintContext) -> Iterable[LintResult]:
     """Fail on ``get_model(role=...)`` calls with no explicit model, no ``default=`` and no ``required=True``.
 
     Such a role falls back to the model under evaluation when it isn't bound at
@@ -327,9 +350,11 @@ def check_model_role_resolution(
     can be burned down while new violations are blocked, and a stale entry warns
     so it gets removed. One result per call site so line-level suppression works.
     """
+    eval_path, allowlist = ctx.path, ctx.config.model_role_allowlist
     eval_name = eval_path.name
     parse_results = parse_python_files(eval_path)
-    if add_parse_errors_to_report(MODEL_ROLE_CHECK, parse_results.failed_paths, report):
+    if failed := parse_error_result(MODEL_ROLE_CHECK, parse_results.failed_paths):
+        yield failed
         return
 
     total_role_calls = 0
@@ -348,60 +373,52 @@ def check_model_role_resolution(
     for issue, role in issues:
         if (eval_name, role) in allowlist:
             seen_allowlisted.add((eval_name, role))
-            report.add(
-                LintResult(
-                    name=MODEL_ROLE_CHECK,
-                    status="warn",
-                    message=(
-                        f"Allowlisted get_model(role={role!r}) has no deliberate resolution; "
-                        f"{_MODEL_ROLE_ADVICE}, then remove the allowlist entry"
-                    ),
-                    file=issue.file,
-                    line=issue.line,
-                )
+            yield LintResult(
+                name=MODEL_ROLE_CHECK,
+                status="warn",
+                message=(
+                    f"Allowlisted get_model(role={role!r}) has no deliberate resolution; "
+                    f"{_MODEL_ROLE_ADVICE}, then remove the allowlist entry"
+                ),
+                file=issue.file,
+                line=issue.line,
             )
+
         else:
-            report.add(
-                LintResult(
-                    name=MODEL_ROLE_CHECK,
-                    status="fail",
-                    message=(
-                        f"get_model(role={role!r}) has no model, no default= and no "
-                        f"required=True; {_MODEL_ROLE_ADVICE}"
-                    ),
-                    file=issue.file,
-                    line=issue.line,
-                )
+            yield LintResult(
+                name=MODEL_ROLE_CHECK,
+                status="fail",
+                message=(
+                    f"get_model(role={role!r}) has no model, no default= and no "
+                    f"required=True; {_MODEL_ROLE_ADVICE}"
+                ),
+                file=issue.file,
+                line=issue.line,
             )
 
     stale = {(name, role) for (name, role) in allowlist if name == eval_name} - seen_allowlisted
     for _, role in sorted(stale):
-        report.add(
-            LintResult(
-                name=MODEL_ROLE_CHECK,
-                status="warn",
-                message=(
-                    f"Allowlist entry for role {role!r} is no longer needed; "
-                    f"remove it from {MODEL_ROLE_ALLOWLIST_LOCATION}"
-                ),
-            )
+        yield LintResult(
+            name=MODEL_ROLE_CHECK,
+            status="warn",
+            message=(
+                f"Allowlist entry for role {role!r} is no longer needed; "
+                f"remove it from {MODEL_ROLE_ALLOWLIST_LOCATION}"
+            ),
         )
 
     if issues or stale:
         return
     if total_role_calls == 0:
-        report.add(
-            LintResult(
-                name=MODEL_ROLE_CHECK,
-                status="skip",
-                message="No get_model(role=...) calls found",
-            )
+        yield LintResult(
+            name=MODEL_ROLE_CHECK,
+            status="skip",
+            message="No get_model(role=...) calls found",
         )
+
     else:
-        report.add(
-            LintResult(
-                name=MODEL_ROLE_CHECK,
-                status="pass",
-                message=f"All {total_role_calls} model role call(s) resolve deliberately",
-            )
+        yield LintResult(
+            name=MODEL_ROLE_CHECK,
+            status="pass",
+            message=f"All {total_role_calls} model role call(s) resolve deliberately",
         )
