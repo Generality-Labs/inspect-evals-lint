@@ -1,4 +1,4 @@
-"""Code-quality checks: private inspect_ai imports, literal score values, unscored reasons."""
+"""Code-quality rules: private inspect_ai imports, literal score values, unscored reasons."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ import ast
 from collections.abc import Iterable
 
 from inspect_evals_lint.context import LintContext
-from inspect_evals_lint.models import LintResult
+from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
 from inspect_evals_lint.registry import rule
 from inspect_evals_lint.rules._ast import (
-    Issue,
+    column_of,
     get_call_name,
-    parse_error_result,
+    parse_failures,
     parse_python_files,
 )
 
@@ -25,16 +25,19 @@ SCORE_LITERALS = ("C", "I", "CORRECT", "INCORRECT")
     scopes=("eval", "helper"),
     summary="No imports from private inspect_ai modules",
 )
-def private_api_imports(ctx: LintContext) -> Iterable[LintResult]:
-    """Fail on ``from inspect_ai.<...>._<private> import ...``; one result per import site."""
-    eval_path = ctx.path
-    parse_results = parse_python_files(eval_path)
-    if failed := parse_error_result("private_api_imports", parse_results.failed_paths):
-        yield failed
+def private_api_imports(ctx: LintContext) -> Iterable[Finding]:
+    """Fail on ``from inspect_ai.<...>._<private> import ...``.
+
+    Private modules, any dotted segment starting with ``_``, change without
+    notice. One diagnostic per import site.
+    """
+    parsed_files = parse_python_files(ctx.path)
+    if parsed_files.failed:
+        yield from parse_failures(parsed_files)
         return
 
-    issues: list[Issue] = []
-    for parsed in parse_results.parsed:
+    found = False
+    for parsed in parsed_files.parsed:
         for node in ast.walk(parsed.tree):
             if (
                 isinstance(node, ast.ImportFrom)
@@ -42,24 +45,15 @@ def private_api_imports(ctx: LintContext) -> Iterable[LintResult]:
                 and node.module.startswith("inspect_ai.")
                 and "._" in node.module
             ):
-                issues.append(Issue(str(parsed.path), node.lineno, node.module))
-
-    if issues:
-        for issue in issues:
-            yield LintResult(
-                name="private_api_imports",
-                status="fail",
-                message=f"Import from private inspect_ai module: {issue.detail}",
-                file=issue.file,
-                line=issue.line,
-            )
-
-    else:
-        yield LintResult(
-            name="private_api_imports",
-            status="pass",
-            message="No private API imports found",
-        )
+                found = True
+                yield Diagnostic(
+                    f"Import from private inspect_ai module: {node.module}",
+                    file=parsed.path,
+                    line=node.lineno,
+                    column=column_of(node),
+                )
+    if not found:
+        yield Outcome("pass", "No private API imports found")
 
 
 @rule(
@@ -69,16 +63,20 @@ def private_api_imports(ctx: LintContext) -> Iterable[LintResult]:
     scopes=("eval", "helper"),
     summary="Score() values use the CORRECT/INCORRECT constants, not string literals",
 )
-def score_constants(ctx: LintContext) -> Iterable[LintResult]:
-    """Fail when ``Score(value="C")``-style literals are used instead of ``CORRECT``/``INCORRECT``."""
-    eval_path = ctx.path
-    parse_results = parse_python_files(eval_path)
-    if failed := parse_error_result("score_constants", parse_results.failed_paths):
-        yield failed
+def score_constants(ctx: LintContext) -> Iterable[Finding]:
+    """Fail on ``Score(value="C")``-style literals.
+
+    The ``CORRECT`` / ``INCORRECT`` constants are what inspect_ai's metrics
+    compare against; a literal that drifts from them scores silently wrong.
+    One diagnostic per ``Score()`` call.
+    """
+    parsed_files = parse_python_files(ctx.path)
+    if parsed_files.failed:
+        yield from parse_failures(parsed_files)
         return
 
-    issues: list[Issue] = []
-    for parsed in parse_results.parsed:
+    found = False
+    for parsed in parsed_files.parsed:
         for node in ast.walk(parsed.tree):
             if not (isinstance(node, ast.Call) and get_call_name(node) == "Score"):
                 continue
@@ -88,24 +86,18 @@ def score_constants(ctx: LintContext) -> Iterable[LintResult]:
                     and isinstance(keyword.value, ast.Constant)
                     and keyword.value.value in SCORE_LITERALS
                 ):
-                    issues.append(Issue(str(parsed.path), node.lineno))
-
-    if issues:
-        yield LintResult(
-            name="score_constants",
-            status="fail",
-            message=f"Found {len(issues)} Score() calls with literal strings - consider using CORRECT/INCORRECT constants",
-        )
-
-    else:
-        yield LintResult(
-            name="score_constants",
-            status="pass",
-            message="Score() calls appear to use constants or computed values",
-        )
+                    found = True
+                    yield Diagnostic(
+                        f"Score(value={keyword.value.value!r}) uses a string literal",
+                        file=parsed.path,
+                        line=node.lineno,
+                        column=column_of(node),
+                        hint="use the CORRECT / INCORRECT constants from inspect_ai.scorer",
+                    )
+    if not found:
+        yield Outcome("pass", "Score() calls appear to use constants or computed values")
 
 
-UNSCORED_REASON_CHECK = "unscored_reason"
 LEGACY_UNSCORED_KEY = "unscored_reason"
 
 
@@ -143,25 +135,24 @@ def _has_reason(call: ast.Call) -> bool:
     scopes=("eval", "helper"),
     summary="Score.unscored() passes a reason= and the legacy unscored_reason metadata key is gone",
 )
-def unscored_reason(ctx: LintContext) -> Iterable[LintResult]:
+def unscored_reason(ctx: LintContext) -> Iterable[Finding]:
     """Fail on ``Score.unscored()`` without ``reason=`` and on the legacy ``"unscored_reason"`` metadata key.
 
     ``Score.reason`` (inspect_ai 0.3.261) is the first-class place to record why a
     sample was left unscored; metrics and log tooling read it there, and the
     interim ``metadata["unscored_reason"]`` convention is superseded. Only
     attribute calls (``Score.unscored(...)``) count, so a locally defined metric
-    named ``unscored()`` is not mistaken for the constructor. One result per site.
+    named ``unscored()`` is not mistaken for the constructor; docstrings
+    mentioning the old key are ignored. One diagnostic per site.
     """
-    eval_path = ctx.path
-    parse_results = parse_python_files(eval_path)
-    if failed := parse_error_result(UNSCORED_REASON_CHECK, parse_results.failed_paths):
-        yield failed
+    parsed_files = parse_python_files(ctx.path)
+    if parsed_files.failed:
+        yield from parse_failures(parsed_files)
         return
 
     total_calls = 0
-    missing_reason: list[Issue] = []
-    legacy_keys: list[Issue] = []
-    for parsed in parse_results.parsed:
+    sites: list[Diagnostic] = []
+    for parsed in parsed_files.parsed:
         docstrings = _docstring_nodes(parsed.tree)
         for node in ast.walk(parsed.tree):
             if (
@@ -171,51 +162,35 @@ def unscored_reason(ctx: LintContext) -> Iterable[LintResult]:
             ):
                 total_calls += 1
                 if not _has_reason(node):
-                    missing_reason.append(Issue(str(parsed.path), node.lineno))
+                    sites.append(
+                        Diagnostic(
+                            "Score.unscored() without reason=",
+                            file=parsed.path,
+                            line=node.lineno,
+                            column=column_of(node),
+                            hint="pass reason= (e.g. 'grader_failed') so the sample records why it was left unscored",
+                        )
+                    )
             elif (
                 isinstance(node, ast.Constant)
                 and node.value == LEGACY_UNSCORED_KEY
                 and id(node) not in docstrings
             ):
-                legacy_keys.append(Issue(str(parsed.path), node.lineno))
+                sites.append(
+                    Diagnostic(
+                        f"'{LEGACY_UNSCORED_KEY}' metadata key is superseded by Score.reason (inspect_ai >= 0.3.261)",
+                        file=parsed.path,
+                        line=node.lineno,
+                        column=column_of(node),
+                        hint="pass reason= to Score.unscored() and read score.reason",
+                    )
+                )
 
     # ast.walk is breadth-first, so sort to report sites in source order.
-    for issue in sorted(missing_reason, key=lambda i: (i.file, i.line)):
-        yield LintResult(
-            name=UNSCORED_REASON_CHECK,
-            status="fail",
-            message=(
-                "Score.unscored() without reason=; pass reason= (e.g. 'grader_failed') "
-                "so the sample records why it was left unscored"
-            ),
-            file=issue.file,
-            line=issue.line,
-        )
-
-    for issue in sorted(legacy_keys, key=lambda i: (i.file, i.line)):
-        yield LintResult(
-            name=UNSCORED_REASON_CHECK,
-            status="fail",
-            message=(
-                f"'{LEGACY_UNSCORED_KEY}' metadata key is superseded by Score.reason "
-                "(inspect_ai >= 0.3.261); pass reason= to Score.unscored() and read score.reason"
-            ),
-            file=issue.file,
-            line=issue.line,
-        )
-
-    if missing_reason or legacy_keys:
+    yield from sorted(sites, key=lambda d: (str(d.file), d.line or 0, d.column or 0))
+    if sites:
         return
     if total_calls == 0:
-        yield LintResult(
-            name=UNSCORED_REASON_CHECK,
-            status="skip",
-            message="No Score.unscored() calls found",
-        )
-
+        yield Outcome("skip", "No Score.unscored() calls found")
     else:
-        yield LintResult(
-            name=UNSCORED_REASON_CHECK,
-            status="pass",
-            message=f"All {total_calls} Score.unscored() call(s) give a reason",
-        )
+        yield Outcome("pass", f"All {total_calls} Score.unscored() call(s) give a reason")

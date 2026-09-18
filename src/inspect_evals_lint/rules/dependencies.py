@@ -14,9 +14,9 @@ from typing import Any, cast
 
 from inspect_evals_lint.config import LintConfig
 from inspect_evals_lint.context import LintContext
-from inspect_evals_lint.models import LintResult
+from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
 from inspect_evals_lint.registry import rule
-from inspect_evals_lint.rules._ast import iter_python_files, parse_error_result
+from inspect_evals_lint.rules._ast import iter_python_files
 
 
 def _normalize_name(name: str) -> str:
@@ -96,30 +96,37 @@ def _get_import_to_package_map() -> dict[str, str]:
     return mapping
 
 
+Site = tuple[int, int | None]
+"""Line and column of an import statement."""
+
+
 class _ImportVisitor(ast.NodeVisitor):
     """Collect top-level module names, split by whether the import runs when the module loads.
 
     An import is *eager* when it sits at module scope outside any ``try`` block
     and any ``if TYPE_CHECKING:`` block. Imports inside a function body, a
     ``try`` statement or a type-checking block are *lazy*: they run later,
-    conditionally, or never.
+    conditionally, or never. The first site of each name is kept.
     """
 
     def __init__(self) -> None:
-        self.eager: set[str] = set()
-        self.lazy: set[str] = set()
+        self.eager: dict[str, Site] = {}
+        self.lazy: dict[str, Site] = {}
         self._depth = 0
 
-    def _record(self, name: str) -> None:
-        (self.lazy if self._depth else self.eager).add(name.split(".")[0])
+    def _record(self, name: str, node: ast.AST) -> None:
+        target = self.lazy if self._depth else self.eager
+        top = name.split(".")[0]
+        if top not in target:
+            target[top] = (getattr(node, "lineno", 1), _column(node))
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
-            self._record(alias.name)
+            self._record(alias.name, node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         if node.module:
-            self._record(node.module)
+            self._record(node.module, node)
 
     def _visit_guarded(self, node: ast.AST) -> None:
         self._depth += 1
@@ -139,36 +146,52 @@ class _ImportVisitor(ast.NodeVisitor):
             self.generic_visit(node)
 
 
+def _column(node: ast.AST) -> int | None:
+    offset = getattr(node, "col_offset", None)
+    return offset + 1 if isinstance(offset, int) else None
+
+
 def _is_type_checking(test: ast.expr) -> bool:
     return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
         isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
     )
 
 
-def _get_imports_from_file(file_path: Path) -> tuple[set[str], set[str], str | None]:
-    """``(eager, lazy)`` top-level module names imported by ``file_path``, plus a syntax-error message if any."""
+def _get_imports_from_file(
+    file_path: Path,
+) -> tuple[dict[str, Site], dict[str, Site], str | None]:
+    """``(eager, lazy)`` top-level module names with their first site, plus a syntax-error message if any."""
     try:
         tree = ast.parse(file_path.read_text(encoding="utf-8"))
     except SyntaxError as e:
-        return set(), set(), str(e)
+        return {}, {}, str(e)
     visitor = _ImportVisitor()
     visitor.visit(tree)
     return visitor.eager, visitor.lazy, None
 
 
-def _get_all_imports_from_eval(eval_path: Path) -> tuple[set[str], set[str], list[str]]:
-    """``(eager, lazy, unparsable files)`` across the package; a name eager anywhere counts as eager."""
-    eager: set[str] = set()
-    lazy: set[str] = set()
-    syntax_error_files: list[str] = []
-    for py_file in iter_python_files(eval_path):
+Location = tuple[Path, int, int | None]
+
+
+def _get_all_imports_from_package(
+    package_path: Path,
+) -> tuple[dict[str, Location], dict[str, Location], list[Diagnostic]]:
+    """``(eager, lazy, parse diagnostics)`` across the package; a name eager anywhere counts as eager."""
+    eager: dict[str, Location] = {}
+    lazy: dict[str, Location] = {}
+    failures: list[Diagnostic] = []
+    for py_file in iter_python_files(package_path):
         file_eager, file_lazy, error = _get_imports_from_file(py_file)
         if error:
-            syntax_error_files.append(str(py_file))
-        else:
-            eager.update(file_eager)
-            lazy.update(file_lazy)
-    return eager, lazy - eager, syntax_error_files
+            failures.append(Diagnostic(f"Could not parse file: {error}", file=py_file, line=1))
+            continue
+        for name, (line, column) in file_eager.items():
+            eager.setdefault(name, (py_file, line, column))
+        for name, (line, column) in file_lazy.items():
+            lazy.setdefault(name, (py_file, line, column))
+    for name in eager:
+        lazy.pop(name, None)
+    return eager, lazy, failures
 
 
 def _get_local_modules(eval_path: Path) -> set[str]:
@@ -218,20 +241,20 @@ def _load_isolated_package_deps(pyproject_path: Path) -> frozenset[str] | None:
 
 
 def _external_imports(
-    imports: set[str],
-    eval_path: Path,
+    imports: dict[str, Location],
+    package_path: Path,
     repo_root: Path,
     config: LintConfig,
-) -> set[str]:
+) -> dict[str, Location]:
     """The imports that are neither standard library, core dependencies, the repo's own package nor local."""
-    local_modules = _get_local_modules(eval_path)
+    local_modules = _get_local_modules(package_path)
     stdlib_modules = _get_stdlib_modules()
     core_deps = _get_core_dependencies(repo_root)
     import_to_package = _get_import_to_package_map()
     own_package = config.import_prefix.split(".")[0] if config.import_prefix else None
 
-    external: set[str] = set()
-    for imp in imports:
+    external: dict[str, Location] = {}
+    for imp, location in imports.items():
         imp_lower = imp.lower()
         package_name = import_to_package.get(imp, _normalize_name(imp))
         if (
@@ -241,19 +264,21 @@ def _external_imports(
             and imp not in local_modules
             and imp_lower not in local_modules
         ):
-            external.add(imp)
+            external[imp] = location
     return external
 
 
-def _undeclared(external_imports: set[str], declared: set[str]) -> list[str]:
-    """``"import (package: dist)"`` for each external import not covered by ``declared``."""
-    import_to_package = _get_import_to_package_map()
-    missing: list[str] = []
-    for imp in sorted(external_imports):
-        package_name = import_to_package.get(imp, _normalize_name(imp))
-        if package_name not in declared and _normalize_name(imp) not in declared:
-            missing.append(f"{imp} (package: {package_name})")
-    return missing
+def _distribution(imp: str) -> str:
+    return _get_import_to_package_map().get(imp, _normalize_name(imp))
+
+
+def _undeclared(external: dict[str, Location], declared: set[str]) -> dict[str, Location]:
+    """The external imports not covered by ``declared``."""
+    return {
+        imp: loc
+        for imp, loc in external.items()
+        if _distribution(imp) not in declared and _normalize_name(imp) not in declared
+    }
 
 
 def _all_declared_optional(repo_root: Path, config: LintConfig) -> set[str]:
@@ -277,15 +302,23 @@ def _all_declared_optional(repo_root: Path, config: LintConfig) -> set[str]:
     return declared
 
 
-def _check_helper_dependencies(
-    repo_root: Path,
-    eval_name: str,
-    eval_path: Path,
-    config: LintConfig,
-    eager: set[str],
-    lazy: set[str],
-) -> Iterable[LintResult]:
-    """The helper rule: module-level imports must be core dependencies; lazy ones need some group.
+def _undeclared_diagnostics(
+    undeclared: dict[str, Location], message: str, hint: str
+) -> Iterable[Diagnostic]:
+    for imp, (file, line, column) in sorted(undeclared.items(), key=lambda kv: kv[0]):
+        yield Diagnostic(
+            message.format(imp=imp, dist=_distribution(imp)),
+            file=file,
+            line=line,
+            column=column,
+            hint=hint,
+        )
+
+
+def _helper_dependencies(
+    ctx: LintContext, eager: dict[str, Location], lazy: dict[str, Location]
+) -> Iterable[Finding]:
+    """The helper rule: module-level imports must be core dependencies; lazy ones need some declaration.
 
     A helper package is imported by every evaluation that uses it, so anything it
     imports at module load has to be installed everywhere, which only
@@ -293,49 +326,33 @@ def _check_helper_dependencies(
     ``try`` block or an ``if TYPE_CHECKING:`` block is deferred or guarded and
     only needs to be declared somewhere.
     """
-    external_eager = _external_imports(eager, eval_path, repo_root, config)
+    external_eager = _external_imports(eager, ctx.path, ctx.root, ctx.config)
     if external_eager:
-        yield LintResult(
-            name="external_dependencies",
-            status="fail",
-            message=(
-                "Module-level third-party imports in a helper package must be in "
-                "[project].dependencies, because every evaluation that imports the "
-                f"helper loads them: {sorted(external_eager)[:5]}. Move the import inside "
-                "the function that needs it if only some evaluations do."
-            ),
+        yield from _undeclared_diagnostics(
+            external_eager,
+            "Module-level import of third-party package {imp!r} (package: {dist}) in a helper "
+            "must be in [project].dependencies, because every evaluation that imports the helper loads it",
+            "add it to [project].dependencies, or move the import inside the function that needs it",
         )
-
         return
 
-    external_lazy = _external_imports(lazy, eval_path, repo_root, config)
+    external_lazy = _external_imports(lazy, ctx.path, ctx.root, ctx.config)
     if not external_lazy:
-        yield LintResult(
-            name="external_dependencies",
-            status="pass",
-            message="No external dependencies detected beyond core requirements",
-        )
-
+        yield Outcome("pass", "No external dependencies detected beyond core requirements")
         return
 
-    missing = _undeclared(external_lazy, _all_declared_optional(repo_root, config))
+    missing = _undeclared(external_lazy, _all_declared_optional(ctx.root, ctx.config))
     if missing:
-        yield LintResult(
-            name="external_dependencies",
-            status="fail",
-            message=(
-                "Lazily imported packages must still be declared in some pyproject.toml "
-                f"optional-dependency group: {missing[:5]}"
-            ),
+        yield from _undeclared_diagnostics(
+            missing,
+            "Lazily imported package {imp!r} (package: {dist}) is not declared in any "
+            "pyproject.toml optional-dependency group or isolated package",
+            "declare it in the group of the evaluation that calls this code",
         )
-
     else:
-        yield LintResult(
-            name="external_dependencies",
-            status="pass",
-            message=(
-                f"Lazy external dependencies appear to be declared (imports: {len(external_lazy)})"
-            ),
+        yield Outcome(
+            "pass",
+            f"Lazy external dependencies appear to be declared (imports: {len(external_lazy)})",
         )
 
 
@@ -346,67 +363,69 @@ def _check_helper_dependencies(
     scopes=("eval", "helper"),
     summary="Third-party imports are declared in pyproject.toml",
 )
-def external_dependencies(ctx: LintContext) -> Iterable[LintResult]:
+def external_dependencies(ctx: LintContext) -> Iterable[Finding]:
     """Check third-party imports are declared in an optional-dependency group (or isolated package).
 
-    For ``kind="helper"`` the rule changes: see :func:`_check_helper_dependencies`.
+    An import counts as external when it is not in the standard library, not in
+    ``[project].dependencies``, not a module local to the package and not the
+    repository's own package. Each must appear in some
+    ``[project.optional-dependencies]`` group or ``[dependency-groups]`` entry
+    (other than ``dev``), or in the isolated package's ``pyproject.toml`` when
+    ``isolated-packages-dir`` is set. An evaluation with external imports must
+    also own a group named after itself unless it is isolated. Import-to-distribution
+    mapping uses the packages installed in the current environment plus a few
+    static aliases, so results depend on the environment the linter runs in.
+    Names are compared in PEP 503 normalised form.
+
+    For a helper package the rule is different, because every evaluation that
+    imports the helper loads whatever it imports at module level: those imports
+    must be in ``[project].dependencies``, while imports inside a function, a
+    ``try`` block or an ``if TYPE_CHECKING:`` block only need to be declared in
+    some group or in any isolated package. Helpers need no group of their own.
+    One diagnostic per import, at its first site.
     """
-    repo_root, eval_name, eval_path = ctx.root, ctx.name, ctx.path
-    config, kind = ctx.config, ctx.kind
-    eager, lazy, syntax_error_files = _get_all_imports_from_eval(eval_path)
-    if failed := parse_error_result("external_dependencies", syntax_error_files):
-        yield failed
+    eager, lazy, failures = _get_all_imports_from_package(ctx.path)
+    if failures:
+        yield from failures
         return
 
-    if kind == "helper":
-        yield from _check_helper_dependencies(repo_root, eval_name, eval_path, config, eager, lazy)
+    if ctx.kind == "helper":
+        yield from _helper_dependencies(ctx, eager, lazy)
         return
 
-    external_imports = _external_imports(eager | lazy, eval_path, repo_root, config)
-
-    if not external_imports:
-        yield LintResult(
-            name="external_dependencies",
-            status="pass",
-            message="No external dependencies detected beyond core requirements",
-        )
-
+    external = _external_imports({**lazy, **eager}, ctx.path, ctx.root, ctx.config)
+    if not external:
+        yield Outcome("pass", "No external dependencies detected beyond core requirements")
         return
 
-    optional_deps = _load_pyproject_optional_deps(repo_root)
-
+    optional_deps = _load_pyproject_optional_deps(ctx.root)
     isolated_deps: frozenset[str] | None = None
-    if config.isolated_packages_dir:
+    if ctx.config.isolated_packages_dir:
         isolated_deps = _load_isolated_package_deps(
-            repo_root / config.isolated_packages_dir / eval_name / "pyproject.toml"
+            ctx.root / ctx.config.isolated_packages_dir / ctx.name / "pyproject.toml"
         )
-    is_isolated = isolated_deps is not None
 
-    all_optional_deps: set[str] = set()
+    declared: set[str] = set()
     for deps in optional_deps.values():
-        all_optional_deps.update(deps)
+        declared.update(deps)
     if isolated_deps is not None:
-        all_optional_deps.update(isolated_deps)
+        declared.update(isolated_deps)
 
-    missing_deps = _undeclared(external_imports, all_optional_deps)
-
-    if missing_deps:
-        yield LintResult(
-            name="external_dependencies",
-            status="fail",
-            message=f"External imports may need pyproject.toml optional-dependencies: {missing_deps[:5]}",
+    missing = _undeclared(external, declared)
+    if missing:
+        yield from _undeclared_diagnostics(
+            missing,
+            "Import {imp!r} (package: {dist}) is not declared in any pyproject.toml optional-dependency group",
+            f"add it to the [project.optional-dependencies] group named {ctx.name!r}",
         )
-
-    elif not is_isolated and eval_name not in optional_deps:
-        yield LintResult(
-            name="external_dependencies",
-            status="fail",
-            message=f"Evaluation uses external packages ({list(external_imports)[:3]}...) but has no dedicated optional-dependency group",
+    elif isolated_deps is None and ctx.name not in optional_deps:
+        yield Diagnostic(
+            f"Evaluation uses external packages ({sorted(external)[:3]}) but has no dedicated "
+            "optional-dependency group",
+            file=ctx.root / "pyproject.toml",
+            hint=f"add a [project.optional-dependencies] group named {ctx.name!r}",
         )
-
     else:
-        yield LintResult(
-            name="external_dependencies",
-            status="pass",
-            message=f"External dependencies appear to be declared (imports: {len(external_imports)})",
+        yield Outcome(
+            "pass", f"External dependencies appear to be declared (imports: {len(external)})"
         )

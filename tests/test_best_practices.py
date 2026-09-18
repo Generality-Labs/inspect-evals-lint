@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from inspect_evals_lint.config import PRESETS
+from inspect_evals_lint.registry import get_rule
 from inspect_evals_lint.rules._ast import get_call_name, get_decorator_name
 from inspect_evals_lint.rules.best_practices import (
     GetModelVisitor,
@@ -470,8 +471,8 @@ class TestCheckModelRoleResolution:
         results = self._run(tmp_path / "alpha", source)
         assert [r.status for r in results] == ["fail", "fail"]
         assert [r.line for r in results] == [1, 2]
-        assert results[0].file is not None
-        assert results[0].file.endswith("scorer.py")
+        assert results[0].file.name == "scorer.py"
+        assert results[0].column == 5
         assert "role='grader'" in results[0].message
         assert "role='judge'" in results[1].message
 
@@ -482,7 +483,7 @@ class TestCheckModelRoleResolution:
             allowlist=frozenset({("alpha", "grader")}),
         )
         assert [(r.status, r.line) for r in results] == [("warn", 1), ("fail", 2)]
-        assert "remove the allowlist entry" in results[0].message
+        assert "remove the allowlist entry" in (results[0].hint or "")
 
     def test_allowlist_is_scoped_to_the_eval(self, tmp_path: Path):
         results = self._run(
@@ -506,5 +507,7 @@ class TestCheckModelRoleResolution:
         results = self._run(
             eval_dir, 'x = get_model(role="grader")  # noautolint: model_role_resolution\n'
         )
+        for r in results:
+            r.rule = get_rule("model_role_resolution")
         apply_suppressions(results, load_suppressions(eval_dir))
         assert [r.status for r in results] == ["suppressed"]

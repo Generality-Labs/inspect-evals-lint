@@ -1,4 +1,4 @@
-"""Best-practice checks: late model resolution, stable sample IDs, overridable task parameters."""
+"""Best-practice rules: late model resolution, deliberate model roles, stable sample IDs, overridable task parameters."""
 
 from __future__ import annotations
 
@@ -6,13 +6,13 @@ import ast
 from collections.abc import Iterable
 
 from inspect_evals_lint.context import LintContext
-from inspect_evals_lint.models import LintResult
+from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
 from inspect_evals_lint.registry import rule
 from inspect_evals_lint.rules._ast import (
-    Issue,
+    column_of,
     get_call_name,
     get_decorator_name,
-    parse_error_result,
+    parse_failures,
     parse_python_files,
 )
 
@@ -22,6 +22,7 @@ class GetModelVisitor(ast.NodeVisitor):
 
     def __init__(self) -> None:
         self.calls: list[tuple[int, str, bool]] = []  # (line, context, is_valid)
+        self.nodes: list[ast.Call] = []
         self._in_solver_or_scorer = False
         self._current_context = "module"
 
@@ -45,6 +46,7 @@ class GetModelVisitor(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         if get_call_name(node) == "get_model":
             self.calls.append((node.lineno, self._current_context, self._in_solver_or_scorer))
+            self.nodes.append(node)
         self.generic_visit(node)
 
 
@@ -55,47 +57,36 @@ class GetModelVisitor(ast.NodeVisitor):
     scopes=("eval", "helper"),
     summary="get_model() is only called inside @solver or @scorer functions",
 )
-def get_model_location(ctx: LintContext) -> Iterable[LintResult]:
+def get_model_location(ctx: LintContext) -> Iterable[Finding]:
     """Warn when ``get_model()`` is called outside a ``@solver`` or ``@scorer``.
 
-    Resolving concrete models late keeps tasks declarative and configurable.
+    Resolving concrete models late keeps tasks declarative and lets callers
+    override the model. One diagnostic per call site.
     """
-    eval_path = ctx.path
-    parse_results = parse_python_files(eval_path)
-    if failed := parse_error_result("get_model_location", parse_results.failed_paths):
-        yield failed
+    parsed_files = parse_python_files(ctx.path)
+    if parsed_files.failed:
+        yield from parse_failures(parsed_files)
         return
 
-    issues: list[Issue] = []
-    for parsed in parse_results.parsed:
+    found = False
+    for parsed in parsed_files.parsed:
         visitor = GetModelVisitor()
         visitor.visit(parsed.tree)
-        issues.extend(
-            Issue(str(parsed.path), line, context)
-            for line, context, is_valid in visitor.calls
-            if not is_valid
-        )
-
-    if issues:
-        # One result per call site so a line-level `# noautolint: get_model_location` works.
-        for issue in issues:
-            yield LintResult(
-                name="get_model_location",
-                status="warn",
-                message=(
-                    "get_model() called outside @solver/@scorer. "
-                    "Resolve models inside @solver/@scorer so tasks stay declarative."
-                    + (f" ({issue.detail})" if issue.detail else "")
-                ),
-                file=issue.file,
-                line=issue.line,
+        for (line, context, is_valid), node in zip(visitor.calls, visitor.nodes, strict=True):
+            if is_valid:
+                continue
+            found = True
+            yield Diagnostic(
+                f"get_model() called outside @solver/@scorer (in {context})",
+                file=parsed.path,
+                line=line,
+                column=column_of(node),
+                severity="warning",
+                hint="resolve models inside @solver/@scorer so tasks stay declarative",
             )
-
-    else:
-        yield LintResult(
-            name="get_model_location",
-            status="pass",
-            message="get_model() calls are properly inside @solver/@scorer decorated functions",
+    if not found:
+        yield Outcome(
+            "pass", "get_model() calls are properly inside @solver/@scorer decorated functions"
         )
 
 
@@ -118,11 +109,13 @@ class SampleIdVisitor(ast.NodeVisitor):
 
     def __init__(self) -> None:
         self.samples: list[tuple[int, bool]] = []  # (line, has_id)
+        self.nodes: list[ast.Call] = []
 
     def visit_Call(self, node: ast.Call) -> None:
         if get_call_name(node) == "Sample":
             has_id = any(keyword.arg == "id" for keyword in node.keywords)
             self.samples.append((node.lineno, has_id))
+            self.nodes.append(node)
         self.generic_visit(node)
 
 
@@ -133,41 +126,39 @@ class SampleIdVisitor(ast.NodeVisitor):
     scopes=("eval", "helper"),
     summary="Every Sample() passes id=",
 )
-def sample_ids(ctx: LintContext) -> Iterable[LintResult]:
-    """Fail when a ``Sample()`` call omits ``id=``; stable IDs survive shuffles and reruns."""
-    eval_path = ctx.path
-    parse_results = parse_python_files(eval_path)
-    if failed := parse_error_result("sample_ids", parse_results.failed_paths):
-        yield failed
+def sample_ids(ctx: LintContext) -> Iterable[Finding]:
+    """Fail when a ``Sample()`` call omits ``id=``.
+
+    Stable IDs keep samples comparable across shuffles, reruns and dataset
+    updates. One diagnostic per call.
+    """
+    parsed_files = parse_python_files(ctx.path)
+    if parsed_files.failed:
+        yield from parse_failures(parsed_files)
         return
 
-    samples_without_id: list[tuple[str, int]] = []
-    total_samples = 0
-    for parsed in parse_results.parsed:
+    total = 0
+    missing = 0
+    for parsed in parsed_files.parsed:
         visitor = SampleIdVisitor()
         visitor.visit(parsed.tree)
-        for line, has_id in visitor.samples:
-            total_samples += 1
-            if not has_id:
-                samples_without_id.append((parsed.path.name, line))
+        for (line, has_id), node in zip(visitor.samples, visitor.nodes, strict=True):
+            total += 1
+            if has_id:
+                continue
+            missing += 1
+            yield Diagnostic(
+                "Sample() call without id=",
+                file=parsed.path,
+                line=line,
+                column=column_of(node),
+                hint="pass a stable id= so the sample survives shuffles and reruns",
+            )
 
-    if total_samples == 0:
-        yield LintResult(name="sample_ids", status="skip", message="No Sample() calls found")
-        return
-
-    if samples_without_id:
-        yield LintResult(
-            name="sample_ids",
-            status="fail",
-            message=f"Sample() calls without id= parameter: {samples_without_id[:5]}",
-        )
-
-    else:
-        yield LintResult(
-            name="sample_ids",
-            status="pass",
-            message=f"All {total_samples} Sample() calls include id parameter",
-        )
+    if total == 0:
+        yield Outcome("skip", "No Sample() calls found")
+    elif missing == 0:
+        yield Outcome("pass", f"All {total} Sample() calls include id parameter")
 
 
 class TaskDefaultsVisitor(ast.NodeVisitor):
@@ -175,6 +166,7 @@ class TaskDefaultsVisitor(ast.NodeVisitor):
 
     def __init__(self) -> None:
         self.tasks: list[tuple[str, int, dict[str, bool]]] = []  # (name, line, param_defaults)
+        self.nodes: list[ast.FunctionDef] = []
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         if any(get_decorator_name(d) == "task" for d in node.decorator_list):
@@ -191,6 +183,7 @@ class TaskDefaultsVisitor(ast.NodeVisitor):
                 param_defaults[arg.arg] = node.args.kw_defaults[i] is not None
 
             self.tasks.append((node.name, node.lineno, param_defaults))
+            self.nodes.append(node)
         self.generic_visit(node)
 
 
@@ -204,52 +197,42 @@ OVERRIDABLE_PARAMS = {"solver", "scorer", "metric", "metrics", "grader", "model"
     scopes=("eval", "helper"),
     summary="@task parameters naming a solver, scorer, metric, grader or model have defaults",
 )
-def task_overridable_defaults(ctx: LintContext) -> Iterable[LintResult]:
-    """Fail when a ``@task`` parameter naming a solver, scorer, metric, grader or model lacks a default."""
-    eval_path = ctx.path
-    parse_results = parse_python_files(eval_path)
-    if failed := parse_error_result("task_overridable_defaults", parse_results.failed_paths):
-        yield failed
+def task_overridable_defaults(ctx: LintContext) -> Iterable[Finding]:
+    """Fail when a ``@task`` parameter naming a solver, scorer, metric, grader or model lacks a default.
+
+    With defaults the task runs unconfigured and each piece can still be
+    overridden. One diagnostic per parameter.
+    """
+    parsed_files = parse_python_files(ctx.path)
+    if parsed_files.failed:
+        yield from parse_failures(parsed_files)
         return
 
-    issues: list[tuple[str, list[str]]] = []
     total_tasks = 0
-    for parsed in parse_results.parsed:
+    found = False
+    for parsed in parsed_files.parsed:
         visitor = TaskDefaultsVisitor()
         visitor.visit(parsed.tree)
-        for task_name, _, param_defaults in visitor.tasks:
+        for (task_name, line, param_defaults), node in zip(
+            visitor.tasks, visitor.nodes, strict=True
+        ):
             total_tasks += 1
-            missing_defaults = [
-                actual_param
-                for param_name in OVERRIDABLE_PARAMS
-                for actual_param, has_default in param_defaults.items()
-                if param_name in actual_param.lower() and not has_default
-            ]
-            if missing_defaults:
-                issues.append((task_name, missing_defaults))
+            for param, has_default in param_defaults.items():
+                if has_default or not any(key in param.lower() for key in OVERRIDABLE_PARAMS):
+                    continue
+                found = True
+                yield Diagnostic(
+                    f"@task {task_name}() parameter {param!r} has no default",
+                    file=parsed.path,
+                    line=line,
+                    column=column_of(node),
+                    hint="give overridable parameters a default so the task runs unconfigured",
+                )
 
     if total_tasks == 0:
-        yield LintResult(
-            name="task_overridable_defaults",
-            status="skip",
-            message="No @task decorated functions found",
-        )
-
-        return
-
-    if issues:
-        yield LintResult(
-            name="task_overridable_defaults",
-            status="fail",
-            message=f"Tasks with overridable params lacking defaults: {issues[:3]}",
-        )
-
-    else:
-        yield LintResult(
-            name="task_overridable_defaults",
-            status="pass",
-            message="Tasks provide defaults for overridable parameters",
-        )
+        yield Outcome("skip", "No @task decorated functions found")
+    elif not found:
+        yield Outcome("pass", "Tasks provide defaults for overridable parameters")
 
 
 class ModelRoleVisitor(ast.NodeVisitor):
@@ -257,6 +240,7 @@ class ModelRoleVisitor(ast.NodeVisitor):
 
     def __init__(self) -> None:
         self.calls: list[tuple[int, str, bool]] = []  # (line, role, resolves_deliberately)
+        self.nodes: list[ast.Call] = []
 
     def visit_Call(self, node: ast.Call) -> None:
         if get_call_name(node) == "get_model":
@@ -269,6 +253,7 @@ class ModelRoleVisitor(ast.NodeVisitor):
                         _resolves_deliberately(node, keywords),
                     )
                 )
+                self.nodes.append(node)
         self.generic_visit(node)
 
 
@@ -324,10 +309,9 @@ def _is_required(keywords: dict[str, ast.expr]) -> bool:
     return True
 
 
-MODEL_ROLE_CHECK = "model_role_resolution"
 MODEL_ROLE_ALLOWLIST_LOCATION = "[tool.inspect-evals-lint.model_role_allowlist] in pyproject.toml"
-_MODEL_ROLE_ADVICE = (
-    "pass an explicit model, pin a default=, or mark it required=True. An unbound "
+_MODEL_ROLE_HINT = (
+    "pass an explicit model, pin a default=, or mark it required=True; an unbound "
     "role otherwise falls back to the model under evaluation, so a grader can "
     "silently grade itself"
 )
@@ -341,84 +325,65 @@ _MODEL_ROLE_ADVICE = (
     allowlist=True,
     summary="get_model(role=...) resolves deliberately: an explicit model, default= or required=True",
 )
-def model_role_resolution(ctx: LintContext) -> Iterable[LintResult]:
+def model_role_resolution(ctx: LintContext) -> Iterable[Finding]:
     """Fail on ``get_model(role=...)`` calls with no explicit model, no ``default=`` and no ``required=True``.
 
     Such a role falls back to the model under evaluation when it isn't bound at
-    invocation, and the resulting scores still look plausible. ``allowlist``
-    entries ``(eval_name, role)`` warn instead of failing so an existing surface
-    can be burned down while new violations are blocked, and a stale entry warns
-    so it gets removed. One result per call site so line-level suppression works.
+    invocation, and the resulting scores still look plausible. A literal
+    ``default=None``, ``model=None`` or ``required=False`` changes nothing at
+    runtime and so does not count. Allowlist entries ``(package, role)`` warn
+    instead of failing so an existing surface can be burned down while new
+    violations are blocked, and a stale entry warns so it gets removed. One
+    diagnostic per call site.
     """
-    eval_path, allowlist = ctx.path, ctx.config.model_role_allowlist
-    eval_name = eval_path.name
-    parse_results = parse_python_files(eval_path)
-    if failed := parse_error_result(MODEL_ROLE_CHECK, parse_results.failed_paths):
-        yield failed
+    allowlist = ctx.config.model_role_allowlist
+    parsed_files = parse_python_files(ctx.path)
+    if parsed_files.failed:
+        yield from parse_failures(parsed_files)
         return
 
     total_role_calls = 0
-    issues: list[tuple[Issue, str]] = []
-    for parsed in parse_results.parsed:
+    issues = 0
+    seen_allowlisted: set[tuple[str, str]] = set()
+    for parsed in parsed_files.parsed:
         visitor = ModelRoleVisitor()
         visitor.visit(parsed.tree)
         total_role_calls += len(visitor.calls)
-        issues.extend(
-            (Issue(str(parsed.path), line, f"role={role!r}"), role)
-            for line, role, resolves_deliberately in visitor.calls
-            if not resolves_deliberately
-        )
+        for (line, role, resolves), node in zip(visitor.calls, visitor.nodes, strict=True):
+            if resolves:
+                continue
+            issues += 1
+            if (ctx.name, role) in allowlist:
+                seen_allowlisted.add((ctx.name, role))
+                yield Diagnostic(
+                    f"Allowlisted get_model(role={role!r}) has no deliberate resolution",
+                    file=parsed.path,
+                    line=line,
+                    column=column_of(node),
+                    severity="warning",
+                    hint=f"{_MODEL_ROLE_HINT}, then remove the allowlist entry",
+                )
+            else:
+                yield Diagnostic(
+                    f"get_model(role={role!r}) has no model, no default= and no required=True",
+                    file=parsed.path,
+                    line=line,
+                    column=column_of(node),
+                    hint=_MODEL_ROLE_HINT,
+                )
 
-    seen_allowlisted: set[tuple[str, str]] = set()
-    for issue, role in issues:
-        if (eval_name, role) in allowlist:
-            seen_allowlisted.add((eval_name, role))
-            yield LintResult(
-                name=MODEL_ROLE_CHECK,
-                status="warn",
-                message=(
-                    f"Allowlisted get_model(role={role!r}) has no deliberate resolution; "
-                    f"{_MODEL_ROLE_ADVICE}, then remove the allowlist entry"
-                ),
-                file=issue.file,
-                line=issue.line,
-            )
-
-        else:
-            yield LintResult(
-                name=MODEL_ROLE_CHECK,
-                status="fail",
-                message=(
-                    f"get_model(role={role!r}) has no model, no default= and no "
-                    f"required=True; {_MODEL_ROLE_ADVICE}"
-                ),
-                file=issue.file,
-                line=issue.line,
-            )
-
-    stale = {(name, role) for (name, role) in allowlist if name == eval_name} - seen_allowlisted
+    stale = {(name, role) for (name, role) in allowlist if name == ctx.name} - seen_allowlisted
     for _, role in sorted(stale):
-        yield LintResult(
-            name=MODEL_ROLE_CHECK,
-            status="warn",
-            message=(
-                f"Allowlist entry for role {role!r} is no longer needed; "
-                f"remove it from {MODEL_ROLE_ALLOWLIST_LOCATION}"
-            ),
+        yield Diagnostic(
+            f"Allowlist entry for role {role!r} is no longer needed",
+            file=ctx.root / "pyproject.toml",
+            severity="warning",
+            hint=f"remove it from {MODEL_ROLE_ALLOWLIST_LOCATION}",
         )
 
     if issues or stale:
         return
     if total_role_calls == 0:
-        yield LintResult(
-            name=MODEL_ROLE_CHECK,
-            status="skip",
-            message="No get_model(role=...) calls found",
-        )
-
+        yield Outcome("skip", "No get_model(role=...) calls found")
     else:
-        yield LintResult(
-            name=MODEL_ROLE_CHECK,
-            status="pass",
-            message=f"All {total_role_calls} model role call(s) resolve deliberately",
-        )
+        yield Outcome("pass", f"All {total_role_calls} model role call(s) resolve deliberately")

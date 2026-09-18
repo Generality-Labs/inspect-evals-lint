@@ -93,10 +93,11 @@ def test_json_single_eval(
     data = json.loads(captured.out)  # stdout is the document and nothing else
     assert data["passed"] is False
     assert data["root"] == str(root.resolve())
-    (evaluation,) = data["evaluations"]
-    assert evaluation["name"] == "alpha"
-    readme = next(r for r in evaluation["results"] if r["check"] == "readme")
+    (package,) = data["packages"]
+    assert package["name"] == "alpha"
+    (readme,) = [d for d in package["diagnostics"] if d["rule"] == "readme"]
     assert readme["status"] == "fail"
+    assert readme["code"] == "IEFS006"
     assert readme["file"] == "src/inspect_evals/alpha/README.md"
 
 
@@ -108,10 +109,11 @@ def test_json_all_evals_sends_progress_to_stderr(
     captured = capsys.readouterr()
     data = json.loads(captured.out)
     assert data["passed"] is True
-    assert data["evaluations_total"] == 2
-    assert [e["name"] for e in data["evaluations"]] == ["alpha", "beta"]
-    assert data["helpers_total"] == 1
-    assert [(h["name"], h["kind"]) for h in data["helpers"]] == [("utils", "helper")]
+    assert [(p["name"], p["kind"]) for p in data["packages"]] == [
+        ("alpha", "eval"),
+        ("beta", "eval"),
+        ("utils", "helper"),
+    ]
     assert "Linting 2 evaluations and 1 helper package" in captured.err
     assert "No [tool.inspect-evals-lint] table" in captured.err
 
@@ -145,7 +147,9 @@ def test_json_with_check_summary_still_emits_document(
     make_template_repo(tmp_path)
     assert run("--check-summary", "--root", str(tmp_path), "--json", "--check", "readme") == 0
     data = json.loads(capsys.readouterr().out)
-    assert {r["check"] for e in data["evaluations"] for r in e["results"]} == {"readme"}
+    assert {o["rule"] for p in data["packages"] for o in (*p["outcomes"], *p["diagnostics"])} == {
+        "readme"
+    }
 
 
 def test_missing_table_message_keeps_brackets(

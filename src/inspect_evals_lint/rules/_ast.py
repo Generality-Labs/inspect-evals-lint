@@ -6,7 +6,7 @@ import ast
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from inspect_evals_lint.models import LintResult
+from inspect_evals_lint.diagnostics import Diagnostic
 
 
 @dataclass
@@ -111,12 +111,15 @@ def parse_python_files(eval_path: Path) -> ParseResults:
     return results
 
 
-def parse_error_result(check_name: str, failed_paths: list[str]) -> LintResult | None:
-    """A failure result for unparsable files, or None when every file parsed."""
-    if not failed_paths:
-        return None
-    return LintResult(
-        name=check_name,
-        status="fail",
-        message=f"Could not parse {len(failed_paths)} file(s): {failed_paths}",
-    )
+def parse_failures(results: ParseResults) -> list[Diagnostic]:
+    """One diagnostic per file that could not be parsed."""
+    return [
+        Diagnostic(f"Could not parse file: {failure.error}", file=failure.path, line=1)
+        for failure in results.failed
+    ]
+
+
+def column_of(node: ast.AST) -> int | None:
+    """1-based column of an AST node, when it has one."""
+    offset = getattr(node, "col_offset", None)
+    return offset + 1 if isinstance(offset, int) else None

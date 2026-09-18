@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Literal, get_args
 
 from inspect_evals_lint.context import LintContext
-from inspect_evals_lint.models import LintResult, PackageKind
+from inspect_evals_lint.diagnostics import Finding, PackageKind
 
 Category = Literal["file_structure", "code_quality", "tests", "best_practices"]
 CATEGORIES: tuple[str, ...] = get_args(Category)
@@ -32,7 +32,7 @@ CATEGORY_PREFIX: dict[str, str] = {
 
 _CODE_PATTERN = re.compile(r"^IE(FS|CQ|TS|BP)\d{3}$")
 
-RuleFn = Callable[[LintContext], Iterable[LintResult]]
+RuleFn = Callable[[LintContext], Iterable[Finding]]
 
 
 class RegistrationError(ValueError):
@@ -59,6 +59,11 @@ class Rule:
 
     def applies_to(self, kind: PackageKind) -> bool:
         return kind in self.scopes
+
+    @property
+    def sort_key(self) -> str:
+        """Execution order: category order, then code."""
+        return f"{CATEGORIES.index(self.category)}:{self.code}"
 
 
 _RULES: dict[str, Rule] = {}
@@ -122,7 +127,7 @@ def rules() -> list[Rule]:
     ``main_file``) expresses that by its number.
     """
     _ensure_loaded()
-    return sorted(_RULES.values(), key=lambda r: (CATEGORIES.index(r.category), r.code))
+    return sorted(_RULES.values(), key=lambda r: r.sort_key)
 
 
 def rule_names() -> list[str]:

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from inspect_evals_lint.config import LintConfig, load_config
-from inspect_evals_lint.models import PackageKind
+from inspect_evals_lint.diagnostics import PackageKind
 
 
 def is_package(path: Path) -> bool:

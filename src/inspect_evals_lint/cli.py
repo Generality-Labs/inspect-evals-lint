@@ -20,6 +20,7 @@ from inspect_evals_lint.config import (
     load_config,
     read_tool_table,
 )
+from inspect_evals_lint.diagnostics import RunReport
 from inspect_evals_lint.output import (
     console,
     print_check_summary,
@@ -34,6 +35,7 @@ from inspect_evals_lint.runner import (
     get_all_eval_names,
     get_all_helper_names,
     lint_evaluation,
+    lint_repository,
 )
 
 
@@ -137,30 +139,30 @@ def main(argv: Sequence[str] | None = None) -> None:
             what += f" and {len(helper_names)} helper package{plural}"
         info.print(f"Linting {what}{check_msg}...\n", markup=False)
 
-        reports = [
-            lint_evaluation(repo_root, name, config, check=args.check)
-            for name in (*eval_names, *helper_names)
-        ]
+        run = lint_repository(
+            repo_root, config, names=[*eval_names, *helper_names], check=args.check
+        )
         if args.json:
-            sys.stdout.write(render_json(reports, repo_root))
-            sys.exit(0 if all(r.passed() for r in reports) else 1)
+            sys.stdout.write(render_json(run))
+            sys.exit(0 if run.passed() else 1)
         if not args.summary_only:
-            for report in reports:
-                print_report(report, config)
+            for report in run.packages:
+                print_report(report, config, root=repo_root)
 
         if args.check_summary:
-            print_check_summary(reports)
+            print_check_summary(run)
         else:
-            print_overall_summary(reports)
-        print_final_summary(reports)
+            print_overall_summary(run)
+        print_final_summary(run)
 
-        sys.exit(0 if all(r.passed() for r in reports) else 1)
+        sys.exit(0 if run.passed() else 1)
 
     report = lint_evaluation(repo_root, args.eval_name, config, check=args.check)
+    run = RunReport(root=repo_root, packages=[report])
     if args.json:
-        sys.stdout.write(render_json([report], repo_root))
+        sys.stdout.write(render_json(run))
     else:
-        print_report(report, config)
+        print_report(report, config, root=repo_root)
     sys.exit(0 if report.passed() else 1)
 
 

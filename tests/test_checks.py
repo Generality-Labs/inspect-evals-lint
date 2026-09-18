@@ -173,7 +173,7 @@ class TestCheckExternalDependenciesNormalisation:
         )
         result = self._status(root, config)
         assert result.status == "fail"
-        assert "some_extra_pkg (package: some-extra-pkg)" in result.message
+        assert "'some_extra_pkg' (package: some-extra-pkg)" in result.message
 
 
 class TestGetStdlibModules:
@@ -214,7 +214,7 @@ class TestGetImportsFromFile:
     def imports(path):
         eager, lazy, error = _get_imports_from_file(path)
         assert error is None
-        return eager | lazy
+        return set(eager) | set(lazy)
 
     def test_simple_import(self, tmp_path):
         """Test simple import statement."""
@@ -279,14 +279,15 @@ async def h():
 """)
         eager, lazy, error = _get_imports_from_file(py_file)
         assert error is None
-        assert eager == {"eager_a", "eager_b", "typing"}
-        assert lazy == {"typed_only", "guarded", "in_function", "nested", "in_async"}
+        assert set(eager) == {"eager_a", "eager_b", "typing"}
+        assert set(lazy) == {"typed_only", "guarded", "in_function", "nested", "in_async"}
+        assert eager["eager_a"] == (2, 1)
 
     def test_syntax_error_is_reported(self, tmp_path):
         py_file = tmp_path / "test.py"
         py_file.write_text("import (")
         eager, lazy, error = _get_imports_from_file(py_file)
-        assert (eager, lazy) == (set(), set())
+        assert (eager, lazy) == ({}, {})
         assert error
 
 
@@ -418,8 +419,7 @@ class TestSandboxImagePinning:
         eval_path.mkdir()
         (eval_path / "compose.yaml").write_text(compose_content)
         config = replace(PRESETS["template"], sandbox_image_allowlist=allowlist)
-        results = sandbox_image_pinning(context_for(eval_path, config))
-        return [r for r in results if r.name == "sandbox_image_pinning"]
+        return list(sandbox_image_pinning(context_for(eval_path, config)))
 
     def test_untagged_registry_image_fails(self, tmp_path):
         results = self.run_check(
@@ -507,10 +507,9 @@ class TestSandboxImagePinning:
             "services:\n  default:\n    image: example/pinned:1.0.0\n",
             allowlist=frozenset({("my_eval", "example/untagged")}),
         )
-        statuses = sorted(r.status for r in results)
-        assert statuses == ["pass", "warn"]
-        warn = next(r for r in results if r.status == "warn")
-        assert "no longer" in warn.message
+        assert [r.status for r in results] == ["warn"]
+        assert "no longer" in results[0].message
+        assert results[0].file.name == "pyproject.toml"
 
     def test_nested_compose_files_are_checked(self, tmp_path):
         eval_path = tmp_path / "my_eval"
@@ -563,7 +562,7 @@ class TestCheckUnscoredReason:
             ("fail", 4),
         ]
         assert "without reason=" in results[0].message
-        assert results[0].file.endswith("scorer.py")
+        assert results[0].file.name == "scorer.py"
 
     def test_legacy_metadata_key_fails_wherever_it_appears(self, tmp_path):
         source = (
@@ -596,9 +595,12 @@ class TestCheckUnscoredReason:
         assert [r.status for r in results] == ["skip"]
 
     def test_line_level_suppression(self, tmp_path):
+        from inspect_evals_lint.registry import get_rule
         from inspect_evals_lint.suppressions import apply_suppressions, load_suppressions
 
         results = self._run(tmp_path, "a = Score.unscored()  # noautolint: unscored_reason\n")
+        for r in results:
+            r.rule = get_rule("unscored_reason")
         apply_suppressions(results, load_suppressions(tmp_path / "alpha"))
         assert [r.status for r in results] == ["suppressed"]
 
@@ -613,8 +615,7 @@ class TestGpuSandboxCheck:
         eval_path.mkdir()
         if eval_yaml is not None:
             (eval_path / "eval.yaml").write_text(eval_yaml)
-        results = gpu_sandbox_check(context_for(eval_path))
-        return [r for r in results if r.name == "gpu_sandbox_check"]
+        return list(gpu_sandbox_check(context_for(eval_path)))
 
     def test_missing_eval_yaml_skips(self, tmp_path):
         results = self.run_check(tmp_path, None)
@@ -638,8 +639,8 @@ class TestGpuSandboxCheck:
             self.GPU_TASKS + "metadata:\n  requires:\n    gpu:\n      count: 1\n",
         )
         assert [r.status for r in results] == ["fail"]
-        assert "sandbox_check" in results[0].message
-        assert "kind: maintenance" in results[0].message
+        assert "sandbox check task" in results[0].message
+        assert "kind: maintenance" in (results[0].hint or "")
 
     def test_gpu_eval_with_maintenance_check_task_passes(self, tmp_path):
         results = self.run_check(

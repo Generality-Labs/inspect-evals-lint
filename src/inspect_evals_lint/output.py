@@ -1,4 +1,4 @@
-"""Rich console rendering of lint reports."""
+"""Rich console rendering of run reports, and the JSON document."""
 
 from __future__ import annotations
 
@@ -14,13 +14,23 @@ from rich.text import Text
 
 from inspect_evals_lint import __version__
 from inspect_evals_lint.config import LintConfig
-from inspect_evals_lint.models import LintReport, LintResult
-from inspect_evals_lint.registry import category_of
+from inspect_evals_lint.diagnostics import (
+    STATUSES,
+    Diagnostic,
+    Finding,
+    Outcome,
+    PackageReport,
+    RunReport,
+    Status,
+)
 
 console = Console()
 stderr_console = Console(stderr=True)
 
 CHECKS_DOC_URL = "https://github.com/Generality-Labs/inspect-evals-lint/blob/main/docs/CHECKS.md"
+
+SCHEMA_VERSION = 1
+"""Bumped when the JSON document changes shape."""
 
 _STATUS_MARKUP = {
     "pass": "[bold green]PASS[/]",
@@ -30,64 +40,95 @@ _STATUS_MARKUP = {
     "suppressed": "[bold blue]SUPP[/]",
 }
 _MESSAGE_STYLE = {"pass": "", "fail": "red", "warn": "yellow", "skip": "dim", "suppressed": "blue"}
+_SUMMARY_LABELS: tuple[tuple[Status, str, str], ...] = (
+    ("pass", "passed", "green"),
+    ("fail", "failed", "red"),
+    ("warn", "warnings", "yellow"),
+    ("skip", "skipped", "dim"),
+    ("suppressed", "suppressed", "blue"),
+)
 
 
 def get_status_text(status: str) -> Text:
     return Text.from_markup(_STATUS_MARKUP.get(status, status.upper()))
 
 
-def _location(result: LintResult) -> str:
-    location = result.file or ""
-    if location and result.line:
-        location += f":{result.line}"
-    return location
-
-
-def _label(report: LintReport) -> str:
+def _label(report: PackageReport) -> str:
     """The package name, marked when it is a helper rather than an evaluation."""
-    return f"{report.eval_name} (helper)" if report.kind == "helper" else report.eval_name
+    return f"{report.name} (helper)" if report.kind == "helper" else report.name
 
 
-def print_report(report: LintReport, config: LintConfig | None = None) -> None:
-    """Print one package's results with suppression hints for any failures."""
+def _rule_cell(item: Finding) -> str:
+    if item.rule is None:
+        return "?"
+    return f"{item.rule.code} {item.rule.name}"
+
+
+def _relative(path: Path, root: Path | None) -> str:
+    if root is not None and path.is_absolute() and path.is_relative_to(root):
+        return path.relative_to(root).as_posix()
+    return str(path)
+
+
+def _location(item: Finding, root: Path | None) -> str:
+    if not isinstance(item, Diagnostic):
+        return ""
+    text = _relative(item.file, root)
+    if item.line is not None:
+        text += f":{item.line}"
+        if item.column is not None:
+            text += f":{item.column}"
+    return text
+
+
+def _message(item: Finding) -> str:
+    if isinstance(item, Diagnostic):
+        if item.suppressed:
+            return f"[suppressed] {item.message}"
+        return item.message if item.hint is None else f"{item.message}; {item.hint}"
+    return item.message
+
+
+def print_report(
+    report: PackageReport, config: LintConfig | None = None, root: Path | None = None
+) -> None:
+    """Print one package's findings with suppression hints for any failures."""
     source_root = config.source_root if config else "src"
 
     console.print()
-    title = f"Lint Report: {report.eval_name}"
+    title = f"Lint Report: {report.name}"
     if report.kind == "helper":
         title += " (helper package)"
     console.print(Rule(f"[bold]{title}[/]", style="blue"))
     console.print()
 
+    if report.skipped:
+        console.print(f"[dim]Skipped: {report.skipped}[/]")
+        return
+
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
     table.add_column("Status", width=6)
-    table.add_column("Check", style="cyan")
+    table.add_column("Rule", style="cyan")
     table.add_column("Message", overflow="fold")
     table.add_column("Location", style="dim", overflow="fold")
 
-    failed_checks: list[str] = []
-    for result in report.results:
+    failed_rules: list[str] = []
+    for item in report.items():
         table.add_row(
-            get_status_text(result.status),
-            result.name,
-            Text(result.message, style=_MESSAGE_STYLE.get(result.status, "")),
-            _location(result),
+            get_status_text(item.status),
+            _rule_cell(item),
+            Text(_message(item), style=_MESSAGE_STYLE.get(item.status, "")),
+            _location(item, root),
         )
-        if result.status == "fail":
-            failed_checks.append(result.name)
+        if item.status == "fail" and item.rule is not None:
+            failed_rules.append(item.rule.name)
     console.print(table)
 
     summary = report.summary()
     console.print()
     console.print(Rule(style="dim"))
     summary_parts: list[str] = []
-    for status, label, style in (
-        ("pass", "passed", "green"),
-        ("fail", "failed", "red"),
-        ("warn", "warnings", "yellow"),
-        ("skip", "skipped", "dim"),
-        ("suppressed", "suppressed", "blue"),
-    ):
+    for status, label, style in _SUMMARY_LABELS:
         if summary[status] > 0:
             summary_parts.append(f"[{style}]{summary[status]} {label}[/]")
     console.print(f"Summary: {', '.join(summary_parts)}")
@@ -99,13 +140,13 @@ def print_report(report: LintReport, config: LintConfig | None = None) -> None:
     console.print("[bold red]Some checks failed.[/]")
     console.print()
     console.print("[dim]To suppress a check, add one of:[/]")
-    for check in dict.fromkeys(failed_checks):
-        console.print(f"  [cyan]# noautolint: {check}[/]  [dim](on the line)[/]")
+    for name in dict.fromkeys(failed_rules):
+        console.print(f"  [cyan]# noautolint: {name}[/]  [dim](on the line)[/]")
     console.print(
-        f"  [dim]Or add check name to[/] [cyan]{source_root}/{report.eval_name}/.noautolint[/]  [dim](package-level)[/]"
+        f"  [dim]Or add check name to[/] [cyan]{source_root}/{report.name}/.noautolint[/]  [dim](package-level)[/]"
     )
     console.print(
-        f"  [dim]Or add check name to[/] [cyan]{source_root}/{report.eval_name}/<subdir>/.noautolint[/]  [dim](dir-level)[/]"
+        f"  [dim]Or add check name to[/] [cyan]{source_root}/{report.name}/<subdir>/.noautolint[/]  [dim](dir-level)[/]"
     )
     console.print()
     console.print(f"[dim]More info about these checks: {CHECKS_DOC_URL}[/]")
@@ -126,14 +167,13 @@ def _pass_rate_text(rate: float) -> Text:
     return Text(f"{pct:.0f}%", style="red")
 
 
-def print_check_summary(reports: list[LintReport]) -> None:
-    """Print per-check compliance across all evaluations, worst first."""
-    check_counts: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"pass": 0, "fail": 0, "warn": 0, "skip": 0, "suppressed": 0}
-    )
-    for report in reports:
-        for result in report.results:
-            check_counts[result.name][result.status] += 1
+def print_check_summary(run: RunReport) -> None:
+    """Print per-rule compliance across all packages, worst first."""
+    counts: dict[str, dict[str, int]] = defaultdict(lambda: dict.fromkeys(STATUSES, 0))
+    for package in run.packages:
+        for name, statuses in package.statuses().items():
+            for status in statuses:
+                counts[name][status] += 1
 
     console.print()
     console.print(Rule("[bold]CHECK COMPLIANCE SUMMARY[/]", style="blue"))
@@ -149,77 +189,76 @@ def print_check_summary(reports: list[LintReport]) -> None:
     table.add_column("% Pass", justify="right")
 
     sorted_checks = sorted(
-        check_counts.items(),
+        counts.items(),
         key=lambda item: item[1]["pass"] / max(item[1]["pass"] + item[1]["fail"], 1),
     )
-    for check_name, counts in sorted_checks:
-        applicable = counts["pass"] + counts["fail"] + counts["warn"]
+    for name, c in sorted_checks:
+        applicable = c["pass"] + c["fail"] + c["warn"]
         rate_text = (
-            _pass_rate_text(counts["pass"] / applicable) if applicable else Text("-", style="dim")
+            _pass_rate_text(c["pass"] / applicable) if applicable else Text("-", style="dim")
         )
         table.add_row(
-            check_name,
-            str(counts["pass"]),
-            str(counts["fail"]),
-            str(counts["warn"]),
-            str(counts["skip"]),
-            str(counts["suppressed"]),
+            name,
+            str(c["pass"]),
+            str(c["fail"]),
+            str(c["warn"]),
+            str(c["skip"]),
+            str(c["suppressed"]),
             rate_text,
         )
     console.print(table)
     console.print()
 
 
-def print_final_summary(reports: list[LintReport]) -> None:
-    """Print the checks that ran, then failures and warnings grouped by check.
+def print_final_summary(run: RunReport) -> None:
+    """Print the rules that ran, then failures and warnings grouped by rule.
 
-    When many evaluations fail the same check the grouping shows the pattern
-    and every affected evaluation in one place.
+    When many packages fail the same rule the grouping shows the pattern and
+    every affected package in one place.
     """
-    check_names = sorted({r.name for report in reports for r in report.results})
+    names = sorted({name for p in run.packages for name in p.rules_run()})
 
     console.print()
     console.print(Rule("[bold]FINAL SUMMARY[/]", style="blue"))
     console.print()
     console.print(
-        f"[bold]Checks run ({len(check_names)}):[/] "
-        + ", ".join(f"[cyan]{name}[/]" for name in check_names)
+        f"[bold]Checks run ({len(names)}):[/] " + ", ".join(f"[cyan]{n}[/]" for n in names)
     )
     console.print()
 
-    if not _print_grouped_results(reports, status="fail", noun="failure", style="red"):
+    if not _print_grouped(run, status="fail", noun="failure", style="red"):
         console.print("[bold green]No failures.[/]")
-    _print_grouped_results(reports, status="warn", noun="warning", style="yellow")
+    _print_grouped(run, status="warn", noun="warning", style="yellow")
 
 
-def _print_grouped_results(reports: list[LintReport], status: str, noun: str, style: str) -> bool:
-    by_check: dict[str, list[tuple[str, LintResult]]] = {}
-    for report in reports:
-        for result in report.results:
-            if result.status == status:
-                by_check.setdefault(result.name, []).append((_label(report), result))
-    if not by_check:
+def _print_grouped(run: RunReport, status: Status, noun: str, style: str) -> bool:
+    by_rule: dict[str, list[tuple[str, Diagnostic]]] = {}
+    for package in run.packages:
+        for d in package.diagnostics:
+            if d.status == status and d.rule is not None:
+                by_rule.setdefault(d.rule.name, []).append((_label(package), d))
+    if not by_rule:
         return False
 
     console.print(f"[bold]{noun.capitalize()}s by check:[/]")
-    for check_name, results in sorted(by_check.items(), key=lambda item: (-len(item[1]), item[0])):
-        plural = noun if len(results) == 1 else f"{noun}s"
+    for name, entries in sorted(by_rule.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        plural = noun if len(entries) == 1 else f"{noun}s"
         console.print()
-        console.print(f"[cyan]{check_name}[/] [{style}]({len(results)} {plural})[/]")
+        console.print(f"[cyan]{name}[/] [{style}]({len(entries)} {plural})[/]")
 
         table = Table(show_header=False, box=None, padding=(0, 1), pad_edge=False)
-        table.add_column("Evaluation", style="cyan", no_wrap=True)
+        table.add_column("Package", style="cyan", no_wrap=True)
         table.add_column("Message", style=style, overflow="fold")
         table.add_column("Location", style="dim", overflow="fold")
-        for eval_name, result in sorted(results, key=lambda item: item[0]):
-            table.add_row(f"  {eval_name}", result.message, _location(result))
+        for label, d in sorted(entries, key=lambda e: e[0]):
+            table.add_row(f"  {label}", _message(d), _location(d, run.root))
         console.print(table)
     console.print()
     return True
 
 
-def print_overall_summary(reports: list[LintReport]) -> None:
-    """Print one row per evaluation with pass/fail/warn/skip counts and totals."""
+def print_overall_summary(run: RunReport) -> None:
+    """Print one row per package with pass/fail/warn/skip counts and totals."""
     console.print()
     console.print(Rule("[bold]OVERALL SUMMARY[/]", style="blue"))
     console.print()
@@ -233,19 +272,19 @@ def print_overall_summary(reports: list[LintReport]) -> None:
     table.add_column("Skip", justify="right", style="dim")
 
     passed = 0
-    totals = {"pass": 0, "fail": 0, "warn": 0, "skip": 0}
-    for report in reports:
-        summary = report.summary()
+    totals: dict[Status, int] = {"pass": 0, "fail": 0, "warn": 0, "skip": 0}
+    for package in run.packages:
+        summary = package.summary()
         for key in totals:
             totals[key] += summary[key]
-        if report.passed():
+        if package.passed():
             status = Text.from_markup("[bold green]PASS[/]")
             passed += 1
         else:
             status = Text.from_markup("[bold red]FAIL[/]")
         table.add_row(
             status,
-            _label(report),
+            _label(package),
             str(summary["pass"]),
             str(summary["fail"]),
             str(summary["warn"]),
@@ -264,75 +303,73 @@ def print_overall_summary(reports: list[LintReport]) -> None:
     )
     console.print()
 
-    failed = len(reports) - passed
-    noun = "packages" if any(r.kind == "helper" for r in reports) else "evaluations"
+    failed = len(run.packages) - passed
+    noun = "packages" if any(p.kind == "helper" for p in run.packages) else "evaluations"
     if failed == 0:
-        console.print(f"[bold green]{passed}/{len(reports)} {noun} passed all required checks[/]")
+        console.print(
+            f"[bold green]{passed}/{len(run.packages)} {noun} passed all required checks[/]"
+        )
     else:
-        console.print(f"[bold]{passed}/{len(reports)} {noun} passed[/], [red]{failed} failed[/]")
+        console.print(
+            f"[bold]{passed}/{len(run.packages)} {noun} passed[/], [red]{failed} failed[/]"
+        )
 
 
-def _relative_file(file: str | None, root: Path | None) -> str | None:
-    """``file`` relative to ``root`` with forward slashes, when it is an absolute path under ``root``.
-
-    Checks record absolute paths, which would tie the JSON to the machine that produced it.
-    """
-    if file is None or root is None:
-        return file
-    path = Path(file)
-    if path.is_absolute() and path.is_relative_to(root):
-        return path.relative_to(root).as_posix()
-    return file
+def _outcome_to_dict(outcome: Outcome) -> dict[str, Any]:
+    return {
+        "rule": outcome.rule.name if outcome.rule else None,
+        "code": outcome.rule.code if outcome.rule else None,
+        "category": outcome.rule.category if outcome.rule else None,
+        "status": outcome.status,
+        "message": outcome.message,
+    }
 
 
-def report_to_dict(report: LintReport, root: Path | None = None) -> dict[str, Any]:
+def _diagnostic_to_dict(diagnostic: Diagnostic, root: Path | None) -> dict[str, Any]:
+    return {
+        "rule": diagnostic.rule.name if diagnostic.rule else None,
+        "code": diagnostic.rule.code if diagnostic.rule else None,
+        "category": diagnostic.rule.category if diagnostic.rule else None,
+        "severity": diagnostic.severity,
+        "status": diagnostic.status,
+        "message": diagnostic.message,
+        "file": _relative(diagnostic.file, root),
+        "line": diagnostic.line,
+        "column": diagnostic.column,
+        "hint": diagnostic.hint,
+    }
+
+
+def package_to_dict(report: PackageReport, root: Path | None = None) -> dict[str, Any]:
     """One package's report as a JSON-serialisable mapping."""
     return {
-        "name": report.eval_name,
+        "name": report.name,
         "kind": report.kind,
         "passed": report.passed(),
+        "skipped": report.skipped,
         "summary": report.summary(),
-        "results": [
-            {
-                "check": result.name,
-                "category": category_of(result.name),
-                "status": result.status,
-                "message": result.message,
-                "file": _relative_file(result.file, root),
-                "line": result.line,
-            }
-            for result in report.results
-        ],
+        "outcomes": [_outcome_to_dict(o) for o in report.outcomes],
+        "diagnostics": [_diagnostic_to_dict(d, root) for d in report.diagnostics],
     }
 
 
-def reports_to_dict(reports: list[LintReport], root: Path | None = None) -> dict[str, Any]:
-    """Every report plus run-wide totals as a JSON-serialisable mapping.
+def run_to_dict(run: RunReport) -> dict[str, Any]:
+    """The whole run as a JSON-serialisable mapping.
 
-    ``passed`` mirrors the CLI exit code: true when no check failed in any package.
-    Evaluations and helper packages are listed separately so consumers that
-    only know evaluations keep reading the same ``evaluations`` list.
+    ``passed`` mirrors the CLI exit code: true when no rule failed in any package.
+    File paths are relative to the root when they fall under it, so the document
+    does not depend on the machine that produced it.
     """
-    totals: dict[str, int] = dict.fromkeys(("pass", "fail", "warn", "skip", "suppressed"), 0)
-    for report in reports:
-        for status, count in report.summary().items():
-            totals[status] += count
-    evaluations = [report for report in reports if report.kind == "eval"]
-    helpers = [report for report in reports if report.kind == "helper"]
     return {
+        "schema_version": SCHEMA_VERSION,
         "version": __version__,
-        "root": str(root) if root is not None else None,
-        "passed": all(report.passed() for report in reports),
-        "evaluations_passed": sum(1 for report in evaluations if report.passed()),
-        "evaluations_total": len(evaluations),
-        "helpers_passed": sum(1 for report in helpers if report.passed()),
-        "helpers_total": len(helpers),
-        "summary": totals,
-        "evaluations": [report_to_dict(report, root) for report in evaluations],
-        "helpers": [report_to_dict(report, root) for report in helpers],
+        "root": str(run.root),
+        "passed": run.passed(),
+        "summary": run.summary(),
+        "packages": [package_to_dict(p, run.root) for p in run.packages],
     }
 
 
-def render_json(reports: list[LintReport], root: Path | None = None) -> str:
-    """The ``--json`` document: :func:`reports_to_dict` as indented JSON with a trailing newline."""
-    return json.dumps(reports_to_dict(reports, root), indent=2) + "\n"
+def render_json(run: RunReport) -> str:
+    """The ``--json`` document: :func:`run_to_dict` as indented JSON with a trailing newline."""
+    return json.dumps(run_to_dict(run), indent=2) + "\n"

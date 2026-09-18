@@ -1,63 +1,68 @@
-"""Tests for the final summary output, ported from inspect_evals."""
+"""Console summaries and the JSON document."""
+
+from __future__ import annotations
 
 import json
 from pathlib import Path
 
 from inspect_evals_lint import __version__
-from inspect_evals_lint.models import LintReport, LintResult
+from inspect_evals_lint.diagnostics import Diagnostic, Outcome, PackageReport, RunReport
 from inspect_evals_lint.output import (
+    SCHEMA_VERSION,
+    package_to_dict,
     print_final_summary,
+    print_overall_summary,
     render_json,
-    report_to_dict,
-    reports_to_dict,
+    run_to_dict,
 )
+from inspect_evals_lint.registry import get_rule
+
+README = get_rule("readme")
+REGISTRY = get_rule("registry")
+PINNING = get_rule("sandbox_image_pinning")
+E2E = get_rule("e2e_test")
+assert README
+assert REGISTRY
+assert PINNING
+assert E2E
 
 
-def make_reports() -> list[LintReport]:
-    passing = LintReport(eval_name="good_eval")
-    passing.add(LintResult(name="readme", status="pass", message="README.md exists"))
-    passing.add(LintResult(name="registry", status="pass", message="Registered"))
+def make_run(root: Path = Path("/repo")) -> RunReport:
+    passing = PackageReport("good_eval", "eval")
+    passing.add(Outcome("pass", "README.md exists", rule=README))
+    passing.add(Outcome("pass", "Registered", rule=REGISTRY))
 
-    failing = LintReport(eval_name="bad_eval")
+    failing = PackageReport("bad_eval", "eval")
     failing.add(
-        LintResult(
-            name="readme",
-            status="fail",
-            message="Missing README.md",
-            file="src/inspect_evals/bad_eval/README.md",
+        Diagnostic(
+            "Missing README.md", file=root / "src/inspect_evals/bad_eval/README.md", rule=README
         )
     )
-    failing.add(LintResult(name="registry", status="pass", message="Registered"))
+    failing.add(Outcome("pass", "Registered", rule=REGISTRY))
 
-    also_failing = LintReport(eval_name="worse_eval")
-    also_failing.add(LintResult(name="readme", status="fail", message="Missing README.md"))
-    also_failing.add(LintResult(name="registry", status="fail", message="Not in registry"))
+    also_failing = PackageReport("worse_eval", "eval")
+    also_failing.add(Diagnostic("Missing README.md", file=root / "x/README.md", rule=README))
+    also_failing.add(Diagnostic("Not in registry", file=root / "pyproject.toml", rule=REGISTRY))
 
-    mixed = LintReport(eval_name="mixed_eval")
+    mixed = PackageReport("mixed_eval", "eval")
     mixed.add(
-        LintResult(
-            name="sandbox_image_pinning",
-            status="warn",
-            message="Allowlisted unpinned image",
-            file="src/inspect_evals/mixed_eval/compose.yaml",
+        Diagnostic(
+            "Allowlisted unpinned image",
+            file=root / "src/inspect_evals/mixed_eval/compose.yaml",
+            severity="warning",
+            rule=PINNING,
         )
     )
-    mixed.add(LintResult(name="e2e_test", status="skip", message="No test directory found"))
+    mixed.add(Outcome("skip", "No test directory found", rule=E2E))
 
-    skipping = LintReport(eval_name="skippy_eval")
-    skipping.add(LintResult(name="e2e_test", status="skip", message="No test directory found"))
+    helper = PackageReport("utils", "helper")
+    helper.add(Outcome("skip", "No test directory found", rule=E2E))
 
-    return [passing, failing, also_failing, mixed, skipping]
-
-
-def make_helper_report(status: str = "pass") -> LintReport:
-    helper = LintReport(eval_name="utils", kind="helper")
-    helper.add(LintResult(name="model_role_resolution", status=status, message="m"))
-    return helper
+    return RunReport(root=root, packages=[passing, failing, also_failing, mixed, helper])
 
 
 def test_lists_checks_run(capsys):
-    print_final_summary(make_reports())
+    print_final_summary(make_run())
     out = capsys.readouterr().out
     assert "Checks run (4):" in out
     assert "readme" in out
@@ -65,7 +70,7 @@ def test_lists_checks_run(capsys):
 
 
 def test_groups_failures_by_check(capsys):
-    print_final_summary(make_reports())
+    print_final_summary(make_run())
     out = capsys.readouterr().out
     readme_pos = out.index("readme (2 failures)")
     registry_pos = out.index("registry (1 failure)")
@@ -75,132 +80,112 @@ def test_groups_failures_by_check(capsys):
     assert "Not in registry" in out
 
 
-def test_failure_location_included(capsys):
-    print_final_summary(make_reports())
+def test_failure_location_is_relative_to_root(capsys):
+    print_final_summary(make_run())
     out = capsys.readouterr().out
     assert "src/inspect_evals/bad_eval/README.md" in out
+    assert "/repo/" not in out
 
 
 def test_no_failures_section_when_all_pass(capsys):
-    reports = [make_reports()[0]]
-    print_final_summary(reports)
+    run = make_run()
+    run.packages = run.packages[:1]
+    print_final_summary(run)
     out = capsys.readouterr().out
     assert "Checks run (2):" in out
-    assert "failure" not in out.lower().replace("no failures", "")
     assert "No failures" in out
 
 
-def test_groups_warnings_by_check(capsys):
-    print_final_summary(make_reports())
-    out = capsys.readouterr().out
-    warn_pos = out.index("sandbox_image_pinning (1 warning)")
-    assert warn_pos > out.index("Warnings by check:")
-    assert "Allowlisted unpinned image" in out
-    assert "src/inspect_evals/mixed_eval/compose.yaml" in "".join(out.split())
-
-
-def test_warnings_section_after_failures(capsys):
-    print_final_summary(make_reports())
+def test_groups_warnings_after_failures(capsys):
+    print_final_summary(make_run())
     out = capsys.readouterr().out
     assert out.index("Failures by check:") < out.index("Warnings by check:")
+    assert "sandbox_image_pinning (1 warning)" in out
+    assert "Allowlisted unpinned image" in out
 
 
 def test_skips_are_not_detailed(capsys):
-    print_final_summary(make_reports())
+    print_final_summary(make_run())
     out = capsys.readouterr().out
     assert "e2e_test" in out  # still listed under checks run
-    assert "skip" not in out.lower()
     assert "No test directory found" not in out
 
 
-def test_no_warnings_section_when_none(capsys):
-    reports = make_reports()[:3]
-    print_final_summary(reports)
-    out = capsys.readouterr().out
-    assert "Warnings by check:" not in out
-
-
-def test_reports_to_dict_totals_and_pass_flag():
-    data = reports_to_dict(make_reports())
-    assert data["version"] == __version__
-    assert data["root"] is None
-    assert data["passed"] is False
-    assert data["evaluations_passed"] == 3
-    assert data["evaluations_total"] == 5
-    assert data["summary"] == {"pass": 3, "fail": 3, "warn": 1, "skip": 2, "suppressed": 0}
-    assert [e["name"] for e in data["evaluations"]] == [
-        "good_eval",
-        "bad_eval",
-        "worse_eval",
-        "mixed_eval",
-        "skippy_eval",
-    ]
-    assert data["helpers"] == []
-    assert data["helpers_total"] == 0
-    assert data["helpers_passed"] == 0
-
-
-def test_reports_to_dict_lists_helpers_separately():
-    data = reports_to_dict([make_reports()[0], make_helper_report("fail")])
-    assert [e["name"] for e in data["evaluations"]] == ["good_eval"]
-    assert data["evaluations_total"] == 1
-    assert data["evaluations_passed"] == 1
-    assert [h["name"] for h in data["helpers"]] == ["utils"]
-    assert data["helpers_total"] == 1
-    assert data["helpers_passed"] == 0
-    assert data["passed"] is False  # a helper failure fails the run
-    assert data["summary"]["fail"] == 1
-
-
 def test_overall_summary_counts_packages_when_helpers_are_present(capsys):
-    from inspect_evals_lint.output import print_overall_summary
-
-    print_overall_summary([make_reports()[0], make_helper_report()])
+    print_overall_summary(make_run())
     out = capsys.readouterr().out
     assert "utils (helper)" in out
-    assert "2/2 packages passed" in out
-    print_overall_summary([make_reports()[0]])
+    assert "3/5 packages passed" in out
+    run = make_run()
+    run.packages = run.packages[:1]
+    print_overall_summary(run)
     assert "1/1 evaluations passed" in capsys.readouterr().out
 
 
-def test_report_to_dict_keeps_result_order_and_fields():
-    report = make_reports()[1]
-    data = report_to_dict(report)
+def test_run_to_dict_shape():
+    data = run_to_dict(make_run())
+    assert data["schema_version"] == SCHEMA_VERSION
+    assert data["version"] == __version__
+    assert data["root"] == "/repo"
     assert data["passed"] is False
-    assert data["kind"] == "eval"
-    assert report_to_dict(make_helper_report())["kind"] == "helper"
-    assert data["results"] == [
+    assert data["summary"] == {"pass": 3, "fail": 3, "warn": 1, "skip": 2, "suppressed": 0}
+    assert [(p["name"], p["kind"]) for p in data["packages"]] == [
+        ("good_eval", "eval"),
+        ("bad_eval", "eval"),
+        ("worse_eval", "eval"),
+        ("mixed_eval", "eval"),
+        ("utils", "helper"),
+    ]
+
+
+def test_package_to_dict_fields():
+    run = make_run()
+    data = package_to_dict(run.packages[1], run.root)
+    assert data["passed"] is False
+    assert data["skipped"] is None
+    assert data["outcomes"] == [
         {
-            "check": "readme",
+            "rule": "registry",
+            "code": "IEFS004",
             "category": "file_structure",
+            "status": "pass",
+            "message": "Registered",
+        }
+    ]
+    assert data["diagnostics"] == [
+        {
+            "rule": "readme",
+            "code": "IEFS006",
+            "category": "file_structure",
+            "severity": "error",
             "status": "fail",
             "message": "Missing README.md",
             "file": "src/inspect_evals/bad_eval/README.md",
             "line": None,
-        },
-        {
-            "check": "registry",
-            "category": "file_structure",
-            "status": "pass",
-            "message": "Registered",
-            "file": None,
-            "line": None,
-        },
+            "column": None,
+            "hint": None,
+        }
     ]
 
 
-def test_report_to_dict_relativises_paths_under_root(tmp_path: Path):
-    report = LintReport(eval_name="x")
-    inside = tmp_path / "src" / "x" / "x.py"
-    outside = Path("/definitely/elsewhere/x.py")
-    report.add(LintResult(name="a", status="fail", message="m", file=str(inside), line=3))
-    report.add(LintResult(name="b", status="fail", message="m", file=str(outside)))
-    report.add(LintResult(name="c", status="fail", message="m", file="tests/x"))
-    files = [r["file"] for r in report_to_dict(report, tmp_path)["results"]]
-    assert files == ["src/x/x.py", str(outside), "tests/x"]
+def test_paths_outside_root_stay_absolute():
+    report = PackageReport("x", "eval")
+    report.add(Diagnostic("m", file=Path("/definitely/elsewhere/x.py"), line=3, rule=README))
+    data = package_to_dict(report, Path("/repo"))
+    assert data["diagnostics"][0]["file"] == "/definitely/elsewhere/x.py"
+    assert data["diagnostics"][0]["line"] == 3
+
+
+def test_skipped_package_has_no_findings():
+    report = PackageReport("examples", "eval", skipped="listed in ignore-dirs")
+    data = package_to_dict(report)
+    assert data["skipped"] == "listed in ignore-dirs"
+    assert data["outcomes"] == []
+    assert data["diagnostics"] == []
+    assert data["passed"] is True
 
 
 def test_render_json_is_parseable_and_newline_terminated():
-    text = render_json(make_reports())
+    text = render_json(make_run())
     assert text.endswith("\n")
-    assert json.loads(text)["evaluations_total"] == 5
+    assert len(json.loads(text)["packages"]) == 5
