@@ -223,6 +223,22 @@ def test_helper_lazy_import_needs_only_an_optional_group(
     assert statuses(root, config, "utils")["external_dependencies"] == ["pass"]
 
 
+def test_helper_lazy_import_declared_by_an_isolated_caller_passes(
+    monorepo: tuple[Path, LintConfig],
+) -> None:
+    """inspect_evals' utils.huggingface defers ``import transformers`` for bold and novelty_bench, which are isolated."""
+    root, config = monorepo
+    make_helper(
+        root, config, code="def load():\n    import transformers\n    return transformers\n"
+    )
+    assert statuses(root, config, "utils")["external_dependencies"] == ["fail"]
+    write(
+        root / "packages/bold/pyproject.toml",
+        "[project]\nname = 'bold'\ndependencies = ['transformers>=5.0.0']\n",
+    )
+    assert statuses(root, config, "utils")["external_dependencies"] == ["pass"]
+
+
 def test_eval_dependency_rule_is_unchanged_by_import_position(
     monorepo: tuple[Path, LintConfig],
 ) -> None:
