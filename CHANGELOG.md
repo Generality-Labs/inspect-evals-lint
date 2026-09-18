@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-18
+
+### Fixed
+
+- `external_dependencies` on a helper package accepts a deferred import that is declared by any isolated package under `isolated-packages-dir`, not only by one named after the helper. inspect_evals' `utils.huggingface` defers `import transformers` for `bold` and `novelty_bench`, both isolated, and 0.2.0 reported it as undeclared.
+
 ## [0.2.0] - 2026-09-18
 
 ### Added
