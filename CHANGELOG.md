@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `gpu_sandbox_check` (best practices): an evaluation whose `eval.yaml` declares `metadata.requires.gpu` must list a `tasks` entry named `<eval>_sandbox_check` with `kind: maintenance`, the task that certifies its sandbox image on GPU hardware through the eval's own scorer. Skips when no GPU requirement is declared. Follows the `metadata.requires` and per-task `kind` fields added to `eval.yaml` in [UKGovernmentBEIS/inspect_evals#2470](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2470) and the check pattern from [#2469](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2469) and [#2472](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2472).
+
 ## [0.2.1] - 2026-09-18
 
 ### Fixed

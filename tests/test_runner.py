@@ -44,7 +44,7 @@ def statuses(
 
 def test_all_check_names_are_registered() -> None:
     assert get_all_check_names() == sorted(["eval_location", *CHECKS])
-    assert len(get_all_check_names()) == 22
+    assert len(get_all_check_names()) == 23
 
 
 def test_every_check_has_a_category() -> None:

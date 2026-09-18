@@ -137,3 +137,96 @@ def check_sandbox_image_pinning(
                 ),
             )
         )
+
+
+GPU_CHECK_NAME = "gpu_sandbox_check"
+
+GPU_CHECK_ADVICE = (
+    "declare a task named '<eval>_sandbox_check' with 'kind: maintenance' in "
+    "eval.yaml that runs the eval's scorer over fixture answers with known "
+    "verdicts inside the pinned image (see inspect_evals.utils.sandbox_check "
+    "and kernelbench_sandbox_check for the pattern)"
+)
+
+
+def _requires_gpu(data: dict[str, Any]) -> bool:
+    metadata: Any = data.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    requires: Any = cast(dict[str, Any], metadata).get("requires")
+    if not isinstance(requires, dict):
+        return False
+    gpu: Any = cast(dict[str, Any], requires).get("gpu")
+    return gpu is True or isinstance(gpu, dict)
+
+
+def check_gpu_sandbox_check(eval_path: Path, report: LintReport) -> None:
+    """An eval that declares ``metadata.requires.gpu`` ships a sandbox check task.
+
+    GPU sandbox images cannot be exercised in ordinary CI, so a broken image
+    (missing package, wrong Python, CUDA toolchain not working) would only show
+    up as errored samples in a real run. The check task certifies the image on
+    GPU hardware through the eval's own scorer. It must appear in ``tasks`` with
+    a name ending ``_sandbox_check`` and ``kind: maintenance``, so listings and
+    reports do not present its accuracy as a model result.
+    """
+    eval_yaml_file = eval_path / "eval.yaml"
+    if not eval_yaml_file.exists():
+        report.add(
+            LintResult(
+                name=GPU_CHECK_NAME,
+                status="skip",
+                message="No eval.yaml to read a GPU requirement from",
+            )
+        )
+        return
+    try:
+        data: Any = yaml.safe_load(eval_yaml_file.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        report.add(
+            LintResult(
+                name=GPU_CHECK_NAME,
+                status="warn",
+                message=f"Could not parse eval.yaml: {e}",
+                file=str(eval_yaml_file),
+            )
+        )
+        return
+    if not isinstance(data, dict) or not _requires_gpu(cast(dict[str, Any], data)):
+        report.add(
+            LintResult(
+                name=GPU_CHECK_NAME,
+                status="skip",
+                message="No GPU requirement declared under metadata.requires",
+            )
+        )
+        return
+
+    tasks: Any = cast(dict[str, Any], data).get("tasks")
+    raw_tasks: list[Any] = cast(list[Any], tasks) if isinstance(tasks, list) else []
+    task_entries: list[dict[str, Any]] = [
+        cast(dict[str, Any], t) for t in raw_tasks if isinstance(t, dict)
+    ]
+    check_tasks = [t for t in task_entries if str(t.get("name", "")).endswith("_sandbox_check")]
+    maintenance = [t for t in check_tasks if t.get("kind") == "maintenance"]
+    if maintenance:
+        names = ", ".join(str(t["name"]) for t in maintenance)
+        report.add(
+            LintResult(
+                name=GPU_CHECK_NAME,
+                status="pass",
+                message=f"GPU eval ships sandbox check task(s): {names}",
+            )
+        )
+        return
+    if check_tasks:
+        names = ", ".join(str(t["name"]) for t in check_tasks)
+        message = (
+            f"Sandbox check task(s) {names} must be declared with 'kind: maintenance' "
+            "so their accuracy is not presented as a model result"
+        )
+    else:
+        message = f"eval.yaml declares metadata.requires.gpu but no sandbox check task; {GPU_CHECK_ADVICE}"
+    report.add(
+        LintResult(name=GPU_CHECK_NAME, status="fail", message=message, file=str(eval_yaml_file))
+    )
