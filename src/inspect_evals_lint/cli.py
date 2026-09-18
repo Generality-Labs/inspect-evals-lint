@@ -179,7 +179,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         if read_tool_table(repo_root) is None and args.preset is None:
             info.print(
                 f"[dim]No {escape('[tool.inspect-evals-lint]')} table in "
-                f"{repo_root / 'pyproject.toml'}; using the 'template' preset.[/]"
+                f"{repo_root / 'pyproject.toml'}; using the 'template' preset.[/]",
+                soft_wrap=True,
             )
         config = load_config(repo_root, preset=args.preset)
         config = _with_cli_selection(config, args.select, args.ignore)
@@ -194,7 +195,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         if helpers:
             plural = "s" if len(helpers) != 1 else ""
             what += f" and {len(helpers)} helper package{plural}"
-        info.print(f"Linting {what}...\n", markup=False)
+        info.print(f"Linting {what}...\n", markup=False, soft_wrap=True)
         names = [
             *evals,
             *helpers,
