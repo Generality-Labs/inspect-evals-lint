@@ -55,40 +55,71 @@ def _no_options() -> dict[str, Mapping[str, object]]:
 class LintConfig:
     """Layout and policy settings for one repository."""
 
-    source_root: str = "src"
-    """Directory (relative to the repo root) holding one sub-directory per evaluation."""
+    source_root: str = field(
+        default="src",
+        metadata={
+            "doc": "Directory (relative to the repo root) holding one sub-directory per evaluation."
+        },
+    )
 
-    tests_root: str = "tests"
-    """Directory holding ``<tests_root>/<name>/`` test packages."""
+    tests_root: str = field(
+        default="tests",
+        metadata={"doc": "Directory holding ``<tests_root>/<name>/`` test packages."},
+    )
 
-    tests_layout: TestsLayout = "per-eval"
-    """``per-eval`` requires ``<tests_root>/<name>/``; ``flat`` also accepts test files directly under ``tests_root``, as single-evaluation repositories usually have."""
+    tests_layout: TestsLayout = field(
+        default="per-eval",
+        metadata={
+            "doc": "``per-eval`` requires ``<tests_root>/<name>/``; ``flat`` also accepts test files directly under ``tests_root``, as single-evaluation repositories usually have."
+        },
+    )
 
-    readme_location: ReadmeLocation = "eval-dir"
-    """``eval-dir`` requires ``README.md`` inside the evaluation directory; ``repo-root`` also accepts the repository's top-level ``README.md``."""
+    readme_location: ReadmeLocation = field(
+        default="eval-dir",
+        metadata={
+            "doc": "``eval-dir`` requires ``README.md`` inside the evaluation directory; ``repo-root`` also accepts the repository's top-level ``README.md``."
+        },
+    )
 
-    eval_yaml_required: bool = True
-    """Whether a missing ``eval.yaml`` fails. False skips instead, for repositories whose metadata lives in the inspect_evals register; a present file is still validated."""
+    eval_yaml_required: bool = field(
+        default=True,
+        metadata={
+            "doc": "Whether a missing ``eval.yaml`` fails. False skips instead, for repositories whose metadata lives in the inspect_evals register; a present file is still validated."
+        },
+    )
 
-    import_prefix: str = ""
-    """Dotted import prefix for evaluations, e.g. ``inspect_evals``; empty when an eval imports as ``<name>``."""
+    import_prefix: str = field(
+        default="",
+        metadata={
+            "doc": "Dotted import prefix for evaluations, e.g. ``inspect_evals``; empty when an eval imports as ``<name>``."
+        },
+    )
 
-    registry: RegistryMode = "entry-points"
-    """How tasks are registered: a Python module that imports every eval, ``[project.entry-points.inspect_ai]``, or not checked."""
+    registry: RegistryMode = field(
+        default="entry-points",
+        metadata={
+            "doc": "How tasks are registered: a Python module that imports every eval, ``[project.entry-points.inspect_ai]``, or not checked."
+        },
+    )
 
-    registry_module: str | None = None
-    """Path of the registry module (relative to the repo root); required when ``registry == "module"``."""
+    registry_module: str | None = field(
+        default=None,
+        metadata={
+            "doc": 'Path of the registry module (relative to the repo root); required when ``registry == "module"``.'
+        },
+    )
 
-    helper_dirs: frozenset[str] = frozenset({"utils"})
-    """Sub-directories of ``source_root`` holding shared code rather than an evaluation.
+    helper_dirs: frozenset[str] = field(
+        default=frozenset({"utils"}),
+        metadata={
+            "doc": "Sub-directories of ``source_root`` holding shared code rather than an evaluation. They are linted with the helper scope: the rules that guard code behaviour (private imports, score values, model roles, dependencies, tests for custom components) but not the ones about an evaluation's structure and registration."
+        },
+    )
 
-    They are linted with the helper scope: the rules that guard code behaviour
-    (private imports, score values, model roles, dependencies, tests for custom
-    components) but not the ones about an evaluation's structure and registration.
-    """
-
-    ignore_dirs: frozenset[str] = frozenset({"examples"})
-    """Sub-directories of ``source_root`` that are never linted."""
+    ignore_dirs: frozenset[str] = field(
+        default=frozenset({"examples"}),
+        metadata={"doc": "Sub-directories of ``source_root`` that are never linted."},
+    )
 
     eval_yaml_required_fields: tuple[str, ...] = (
         "title",
@@ -99,30 +130,54 @@ class LintConfig:
     )
     """Top-level keys every ``eval.yaml`` must define."""
 
-    isolated_packages_dir: str | None = None
-    """Directory of per-eval ``<dir>/<name>/pyproject.toml`` files that declare an eval's dependencies instead of a root extra."""
+    isolated_packages_dir: str | None = field(
+        default=None,
+        metadata={
+            "doc": "Directory of per-eval ``<dir>/<name>/pyproject.toml`` files that declare an eval's dependencies instead of a root extra."
+        },
+    )
 
-    select: tuple[str, ...] = ("IE",)
-    """Rules to run: names, codes or code prefixes. The default prefix selects every rule."""
+    select: tuple[str, ...] = field(
+        default=("IE",),
+        metadata={
+            "doc": "Rules to run: names, codes or code prefixes. The default prefix selects every rule."
+        },
+    )
 
-    ignore: tuple[str, ...] = ()
-    """Rules never to run, in the same forms as ``select``. Wins over ``select``."""
+    ignore: tuple[str, ...] = field(
+        default=(),
+        metadata={
+            "doc": "Rules never to run, in the same forms as ``select``. Wins over ``select``."
+        },
+    )
 
-    exclude: tuple[str, ...] = ()
-    """Glob patterns, relative to the repository root, of files the AST-based rules never read.
+    exclude: tuple[str, ...] = field(
+        default=(),
+        metadata={
+            "doc": "Glob patterns, relative to the repository root, of files the AST-based rules never read. For code that is shipped into a sandbox rather than run on the host, such as challenge sources that are not even valid Python 3."
+        },
+    )
 
-    For code that is shipped into a sandbox rather than run on the host, such as
-    challenge sources that are not even valid Python 3.
-    """
+    per_file_ignores: tuple[tuple[str, tuple[str, ...]], ...] = field(
+        default=(),
+        metadata={
+            "doc": "``(glob, selectors)`` pairs: findings in files matching the glob are suppressed for the selected rules."
+        },
+    )
 
-    per_file_ignores: tuple[tuple[str, tuple[str, ...]], ...] = ()
-    """``(glob, selectors)`` pairs: findings in files matching the glob are suppressed for the selected rules."""
+    allowlists: Mapping[str, Allowlist] = field(
+        default_factory=_no_allowlists,
+        metadata={
+            "doc": "Per rule, the ``(package, key)`` pairs it reports as warnings instead of failures. Only rules declared with ``allowlist=True`` accept one."
+        },
+    )
 
-    allowlists: Mapping[str, Allowlist] = field(default_factory=_no_allowlists)
-    """Per rule, the ``(package, key)`` pairs it reports as warnings instead of failures. Only rules declared with ``allowlist=True`` accept one."""
-
-    rule_options: Mapping[str, Mapping[str, object]] = field(default_factory=_no_options)
-    """``[tool.inspect-evals-lint.<rule>]`` tables, passed through to the rule that declares them."""
+    rule_options: Mapping[str, Mapping[str, object]] = field(
+        default_factory=_no_options,
+        metadata={
+            "doc": "``[tool.inspect-evals-lint.<rule>]`` tables, passed through to the rule that declares them."
+        },
+    )
 
     def source_dir(self, root: Path) -> Path:
         return root / self.source_root

@@ -131,21 +131,16 @@ def _list_rules(output_format: str) -> None:
 
 
 def _explain(rule: Rule, output_format: str) -> None:
+    """Print the rule's page: the same text as ``docs/rules/<code>.md``, rendered for the terminal."""
+    from rich.markdown import Markdown
+
+    from inspect_evals_lint.docs import GENERATED_NOTE, formatted, rule_page
+
+    page = formatted(rule_page(rule)).replace(GENERATED_NOTE, "").lstrip()
     if output_format == "json":
-        sys.stdout.write(json.dumps({**_rule_dict(rule), "doc": rule.doc}, indent=2) + "\n")
+        sys.stdout.write(json.dumps({**_rule_dict(rule), "doc": page}, indent=2) + "\n")
         return
-    console.print(f"[bold cyan]{rule.code}[/] [bold]{rule.name}[/]")
-    console.print(
-        f"[dim]category:[/] {rule.category}   [dim]applies to:[/] {', '.join(sorted(rule.scopes))}"
-    )
-    if rule.allowlist:
-        console.print(
-            f"[dim]allowlist:[/] {escape(f'[tool.inspect-evals-lint.allowlists.{rule.name}]')}"
-        )
-    console.print()
-    console.print(escape(rule.summary), style="bold")
-    console.print()
-    console.print(escape(rule.doc))
+    console.print(Markdown(page))
 
 
 def _selectors(raw: str | None, key: str) -> tuple[str, ...] | None:

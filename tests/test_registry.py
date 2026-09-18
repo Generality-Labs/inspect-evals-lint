@@ -7,6 +7,7 @@ import pytest
 from inspect_evals_lint.registry import (
     CATEGORIES,
     CATEGORY_PREFIX,
+    REQUIRED_DOC_SECTIONS,
     RegistrationError,
     Rule,
     get_rule,
@@ -47,6 +48,19 @@ def test_lookup_by_name_or_code() -> None:
 
 
 def _noop(ctx):  # pragma: no cover - never run
+    """A stand-in rule.
+
+    ## What it does
+    Nothing.
+
+    ## Why is this bad?
+    It is not.
+    """
+    return []
+
+
+def _undocumented(ctx):  # pragma: no cover - never run
+    """Only a summary line."""
     return []
 
 
@@ -80,3 +94,17 @@ def test_inconsistent_declarations_are_rejected(kwargs: dict[str, object], match
     rules()  # make sure the real rules are loaded so duplicates are detectable
     with pytest.raises(RegistrationError, match=match):
         rule(**kwargs)(_noop)  # type: ignore[arg-type]
+
+
+def test_undocumented_rule_is_rejected() -> None:
+    rules()
+    with pytest.raises(RegistrationError, match="What it does"):
+        rule(code="IEFS998", name="undocumented", category="file_structure", summary="s")(
+            _undocumented  # type: ignore[arg-type]
+        )
+
+
+def test_every_rule_documents_itself_in_the_required_sections() -> None:
+    for r in rules():
+        for section in REQUIRED_DOC_SECTIONS:
+            assert section in r.doc, (r.name, section)

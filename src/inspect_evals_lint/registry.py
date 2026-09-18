@@ -32,6 +32,9 @@ CATEGORY_PREFIX: dict[str, str] = {
 
 _CODE_PATTERN = re.compile(r"^IE(FS|CQ|TS|BP)\d{3}$")
 
+REQUIRED_DOC_SECTIONS: tuple[str, ...] = ("## What it does", "## Why is this bad?")
+"""Every rule's docstring carries these headings; ``## Example`` and ``## Options`` are optional."""
+
 RuleFn = Callable[[LintContext], Iterable[Finding]]
 
 
@@ -98,6 +101,13 @@ def rule(
             raise RegistrationError(f"{name}: every rule applies to evaluations")
         if not summary.strip():
             raise RegistrationError(f"{name}: a summary is required")
+        doc = inspect.getdoc(fn) or ""
+        missing = [section for section in REQUIRED_DOC_SECTIONS if section not in doc]
+        if missing:
+            raise RegistrationError(
+                f"{name}: the docstring is the rule's documentation and must have the sections "
+                f"{list(REQUIRED_DOC_SECTIONS)}; missing {missing}"
+            )
         entry = Rule(
             code=code,
             name=name,

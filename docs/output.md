@@ -42,16 +42,16 @@ One document per run. `RunReport.to_dict()` produces the same mapping from the P
 }
 ```
 
-| Field | Meaning |
-| --- | --- |
-| `schema_version` | Integer, bumped when this document changes shape. Check it first. |
-| `version` | The inspect-evals-lint version that produced the document. |
-| `root` | Absolute repository root the run used. Every `file` below is relative to it when it falls under it. |
-| `passed` | `true` when no diagnostic in any package has status `fail`. Mirrors the exit code. |
-| `summary` | Counts of every outcome and diagnostic status across the run. |
-| `packages[].kind` | `eval` or `helper`. Filter on this rather than expecting separate lists. |
-| `packages[].skipped` | Why the package was not linted at all (listed in `ignore-dirs`), else `null`. |
-| `packages[].outcomes[]` | One per rule that ran and had nothing to point at: `status` is `pass` or `skip`, `message` says why. |
+| Field                      | Meaning                                                                                                                                                                                                                                         |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema_version`           | Integer, bumped when this document changes shape. Check it first.                                                                                                                                                                               |
+| `version`                  | The inspect-evals-lint version that produced the document.                                                                                                                                                                                      |
+| `root`                     | Absolute repository root the run used. Every `file` below is relative to it when it falls under it.                                                                                                                                             |
+| `passed`                   | `true` when no diagnostic in any package has status `fail`. Mirrors the exit code.                                                                                                                                                              |
+| `summary`                  | Counts of every outcome and diagnostic status across the run.                                                                                                                                                                                   |
+| `packages[].kind`          | `eval` or `helper`. Filter on this rather than expecting separate lists.                                                                                                                                                                        |
+| `packages[].skipped`       | Why the package was not linted at all (listed in `ignore-dirs`), else `null`.                                                                                                                                                                   |
+| `packages[].outcomes[]`    | One per rule that ran and had nothing to point at: `status` is `pass` or `skip`, `message` says why.                                                                                                                                            |
 | `packages[].diagnostics[]` | One per finding. `severity` is `error` or `warning`; `status` is `fail`, `warn` or `suppressed`. `line` and `column` are 1-based and `null` when the finding is about a file or directory as a whole. `hint` is what to do about it, or `null`. |
 
 `category` is always one of `file_structure`, `code_quality`, `tests` and `best_practices`; a new rule joins one of the four, so tooling that groups by category (badges, dashboards) does not change when rules are added.

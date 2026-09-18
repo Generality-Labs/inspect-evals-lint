@@ -364,25 +364,41 @@ def _helper_dependencies(
     summary="Third-party imports are declared in pyproject.toml",
 )
 def external_dependencies(ctx: LintContext) -> Iterable[Finding]:
-    """Check third-party imports are declared in an optional-dependency group (or isolated package).
+    """Third-party imports are declared in ``pyproject.toml``.
 
-    An import counts as external when it is not in the standard library, not in
-    ``[project].dependencies``, not a module local to the package and not the
-    repository's own package. Each must appear in some
-    ``[project.optional-dependencies]`` group or ``[dependency-groups]`` entry
-    (other than ``dev``), or in the isolated package's ``pyproject.toml`` when
-    ``isolated-packages-dir`` is set. An evaluation with external imports must
-    also own a group named after itself unless it is isolated. Import-to-distribution
-    mapping uses the packages installed in the current environment plus a few
-    static aliases, so results depend on the environment the linter runs in.
-    Names are compared in PEP 503 normalised form.
+    ## What it does
+    Collects every import in the package and treats one as external when it is not
+    in the standard library, not in ``[project].dependencies``, not local to the
+    package and not the repository's own package. For an evaluation, each external
+    import must be declared in some ``[project.optional-dependencies]`` group or
+    ``[dependency-groups]`` entry (other than ``dev``), or in the isolated
+    package's ``pyproject.toml`` when ``isolated-packages-dir`` is set, and the
+    evaluation must own a group named after itself unless it is isolated.
 
     For a helper package the rule is different, because every evaluation that
     imports the helper loads whatever it imports at module level: those imports
     must be in ``[project].dependencies``, while imports inside a function, a
-    ``try`` block or an ``if TYPE_CHECKING:`` block only need to be declared in
-    some group or in any isolated package. Helpers need no group of their own.
-    One diagnostic per import, at its first site.
+    ``try`` block or an ``if TYPE_CHECKING:`` block are deferred and only need to
+    be declared in some group or in any isolated package. Helpers need no group of
+    their own. One diagnostic per import, at its first site.
+
+    Import-to-distribution mapping uses the packages installed in the current
+    environment plus a few static aliases, so run the linter inside the project's
+    environment. Names are compared in PEP 503 normalised form.
+
+    ## Why is this bad?
+    An import nobody declared works on the author's machine and fails for the next
+    person with ``ModuleNotFoundError``, often only when a particular sample runs.
+
+    ## Example
+    ```toml
+    [project.optional-dependencies]
+    my_eval = ["datasets>=4.0", "scikit-learn"]
+    ```
+
+    ## Options
+    - `isolated-packages-dir`
+    - `import-prefix`
     """
     eager, lazy, failures = _get_all_imports_from_package(ctx)
     yield from failures

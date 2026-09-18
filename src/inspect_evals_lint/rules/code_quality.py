@@ -26,10 +26,24 @@ SCORE_LITERALS = ("C", "I", "CORRECT", "INCORRECT")
     summary="No imports from private inspect_ai modules",
 )
 def private_api_imports(ctx: LintContext) -> Iterable[Finding]:
-    """Fail on ``from inspect_ai.<...>._<private> import ...``.
+    """No imports from private ``inspect_ai`` modules.
 
-    Private modules, any dotted segment starting with ``_``, change without
-    notice. One diagnostic per import site.
+    ## What it does
+    Flags ``from inspect_ai.<...>._<name> import ...`` wherever a dotted segment
+    starts with an underscore. One diagnostic per import.
+
+    ## Why is this bad?
+    Private modules change without notice. An evaluation importing one breaks on
+    the next ``inspect_ai`` release with no deprecation period.
+
+    ## Example
+    ```python
+    from inspect_ai.scorer._metric import Score   # private
+    ```
+    Use instead:
+    ```python
+    from inspect_ai.scorer import Score
+    ```
     """
     parsed_files = parse_python_files(ctx)
     yield from parse_failures(parsed_files)
@@ -62,11 +76,26 @@ def private_api_imports(ctx: LintContext) -> Iterable[Finding]:
     summary="Score() values use the CORRECT/INCORRECT constants, not string literals",
 )
 def score_constants(ctx: LintContext) -> Iterable[Finding]:
-    """Fail on ``Score(value="C")``-style literals.
+    """``Score()`` values use the ``CORRECT`` / ``INCORRECT`` constants, not string literals.
 
-    The ``CORRECT`` / ``INCORRECT`` constants are what inspect_ai's metrics
-    compare against; a literal that drifts from them scores silently wrong.
-    One diagnostic per ``Score()`` call.
+    ## What it does
+    Flags ``Score(value="C")`` and the other literals ``"I"``, ``"CORRECT"`` and
+    ``"INCORRECT"``. One diagnostic per call.
+
+    ## Why is this bad?
+    ``inspect_ai``'s metrics compare against the constants. A literal that drifts
+    from them, or that ``inspect_ai`` later changes, scores silently wrong.
+
+    ## Example
+    ```python
+    return Score(value="C")
+    ```
+    Use instead:
+    ```python
+    from inspect_ai.scorer import CORRECT
+
+    return Score(value=CORRECT)
+    ```
     """
     parsed_files = parse_python_files(ctx)
     yield from parse_failures(parsed_files)
@@ -132,14 +161,28 @@ def _has_reason(call: ast.Call) -> bool:
     summary="Score.unscored() passes a reason= and the legacy unscored_reason metadata key is gone",
 )
 def unscored_reason(ctx: LintContext) -> Iterable[Finding]:
-    """Fail on ``Score.unscored()`` without ``reason=`` and on the legacy ``"unscored_reason"`` metadata key.
+    """``Score.unscored()`` passes a ``reason=`` and the legacy ``unscored_reason`` metadata key is gone.
 
-    ``Score.reason`` (inspect_ai 0.3.261) is the first-class place to record why a
-    sample was left unscored; metrics and log tooling read it there, and the
-    interim ``metadata["unscored_reason"]`` convention is superseded. Only
-    attribute calls (``Score.unscored(...)``) count, so a locally defined metric
-    named ``unscored()`` is not mistaken for the constructor; docstrings
-    mentioning the old key are ignored. One diagnostic per site.
+    ## What it does
+    Flags ``Score.unscored(...)`` calls whose ``reason=`` is missing, ``None`` or
+    empty, and any occurrence of the string ``"unscored_reason"`` outside a
+    docstring. Only attribute calls count, so a locally defined metric named
+    ``unscored()`` is not mistaken for the constructor. One diagnostic per site.
+
+    ## Why is this bad?
+    ``Score.reason`` (inspect_ai 0.3.261) is the first-class record of why a sample
+    was left unscored; metrics and log tooling read it there. The interim
+    ``metadata["unscored_reason"]`` convention is superseded, and an unscored
+    sample with no reason cannot be told apart from one the scorer forgot.
+
+    ## Example
+    ```python
+    return Score.unscored(explanation="grader returned nothing")
+    ```
+    Use instead:
+    ```python
+    return Score.unscored(reason="grader_failed", explanation="grader returned nothing")
+    ```
     """
     parsed_files = parse_python_files(ctx)
     yield from parse_failures(parsed_files)

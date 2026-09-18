@@ -70,11 +70,24 @@ def _get_exported_names(init_file: Path) -> set[str]:
     summary="The package exists at <source-root>/<name>/ with an __init__.py",
 )
 def package_location(ctx: LintContext) -> Iterable[Finding]:
-    """Check the package lives at ``<source_root>/<name>``.
+    """The package exists at ``<source-root>/<name>/`` with an ``__init__.py``.
 
-    Every other rule depends on this one. A directory that exists but has no
-    ``__init__.py`` is documentation or data, not code, and is skipped rather
-    than failed; the same rule keeps it out of discovery.
+    ## What it does
+    Checks that the directory named on the command line, or found under
+    ``source-root``, is a Python package. Every other rule depends on this one
+    and does not run when it does not hold.
+
+    ## Why is this bad?
+    A directory that exists but has no ``__init__.py`` is documentation or data,
+    not code: a README left where evaluations used to live, a fixtures folder. It
+    is reported as a skip rather than a failure, and the same test keeps it out of
+    ``--all`` discovery, so it needs no configuration.
+
+    ## Example
+    ```text
+    src/inspect_evals/gdm_capabilities/README.md     # skipped: not a package
+    src/inspect_evals/gpqa/__init__.py               # linted
+    ```
     """
     if is_package(ctx.path):
         yield Outcome("pass", f"Package located at {ctx.path.relative_to(ctx.root).as_posix()}")
@@ -122,11 +135,23 @@ def find_main_file(package_path: Path, name: str) -> Path:
     summary="<name>.py or tasks.py exists and defines at least one @task function",
 )
 def main_file(ctx: LintContext) -> Iterable[Finding]:
-    """Check ``<name>.py`` or ``tasks.py`` exists with at least one ``@task``.
+    """``<name>.py`` or ``tasks.py`` exists and defines at least one ``@task`` function.
 
-    Keeping tasks in a predictably named module lets tooling and readers find
-    them. When both files exist, the first that defines a task is used,
-    ``<name>.py`` first.
+    ## What it does
+    Looks for ``<name>.py`` first and ``tasks.py`` second, preferring whichever
+    defines a ``@task``, so a stray empty ``<name>.py`` does not hide the tasks in
+    ``tasks.py``. Fails when neither exists, when the file does not parse, or when
+    it defines no task.
+
+    ## Why is this bad?
+    Keeping tasks in a predictably named module lets tooling and readers find them
+    without opening every file in the package.
+
+    ## Example
+    ```text
+    src/my_eval/my_eval.py     # defines @task my_eval()
+    src/my_eval/tasks.py       # accepted alternative
+    ```
     """
     target = find_main_file(ctx.path, ctx.name)
 
@@ -158,7 +183,25 @@ def main_file(ctx: LintContext) -> Iterable[Finding]:
     summary="__init__.py exports every @task function from the main file",
 )
 def init_exports(ctx: LintContext) -> Iterable[Finding]:
-    """Check ``__init__.py`` re-exports every ``@task`` function from the main file, via ``__all__`` or ``from ... import``."""
+    """``__init__.py`` exports every ``@task`` function from the main file.
+
+    ## What it does
+    Reads the task functions from the main file and checks each name appears in
+    ``__init__.py``, either in ``__all__`` or imported with ``from ... import``.
+    One diagnostic per missing task.
+
+    ## Why is this bad?
+    ``inspect eval my_eval/task`` resolves tasks through the package, so a task the
+    package does not export is a task nobody can run by name.
+
+    ## Example
+    ```python
+    # __init__.py
+    from .my_eval import my_eval, my_eval_hard
+
+    __all__ = ["my_eval", "my_eval_hard"]
+    ```
+    """
     init_file = ctx.path / "__init__.py"
     target = find_main_file(ctx.path, ctx.name)
 
@@ -258,11 +301,27 @@ def _registry_entry_points(repo_root: Path, name: str, config: LintConfig) -> It
     summary="The evaluation is registered so inspect eval can find its tasks",
 )
 def registry(ctx: LintContext) -> Iterable[Finding]:
-    """Check the evaluation is registered so ``inspect eval`` can find its tasks.
+    """The evaluation is registered so ``inspect eval`` can find its tasks.
 
-    Under ``[project.entry-points.inspect_ai]`` in ``pyproject.toml``
-    (``registry = "entry-points"``), or imported by a registry module
-    (``registry = "module"``). ``registry = "none"`` skips.
+    ## What it does
+    With ``registry = "entry-points"`` (the template layout) the package or its
+    module must appear under ``[project.entry-points.inspect_ai]`` in
+    ``pyproject.toml``. With ``registry = "module"`` (the inspect_evals monorepo)
+    the registry module must import it. ``registry = "none"`` skips the rule.
+
+    ## Why is this bad?
+    An unregistered evaluation runs from a file path in development and then cannot
+    be found by name anywhere else.
+
+    ## Example
+    ```toml
+    [project.entry-points.inspect_ai]
+    my_eval = "my_eval"
+    ```
+
+    ## Options
+    - `registry`
+    - `registry-module`
     """
     if ctx.config.registry == "none":
         yield Outcome("skip", 'Registry check disabled (registry = "none")')
@@ -279,11 +338,32 @@ def registry(ctx: LintContext) -> Iterable[Finding]:
     summary="eval.yaml exists, is a mapping, and defines the required fields",
 )
 def eval_yaml(ctx: LintContext) -> Iterable[Finding]:
-    """Check ``eval.yaml`` exists, is a mapping, and defines the configured required fields.
+    """``eval.yaml`` exists, is a mapping, and defines the required fields.
 
-    A missing file is a skip rather than a failure when ``eval-yaml-required`` is
-    false, because the inspect_evals register entry carries the metadata for
-    upstream repositories; a present file is validated either way.
+    ## What it does
+    Parses ``eval.yaml`` in the package and reports one diagnostic per required
+    field that is missing, or one for a file that is not valid YAML or not a
+    mapping. With ``eval-yaml-required = false`` a missing file is a skip, for
+    repositories whose metadata lives in the inspect_evals register; a present
+    file is still validated.
+
+    ## Why is this bad?
+    ``eval.yaml`` is what listings, the register and the README generator read.
+    A missing field there is a missing field everywhere downstream.
+
+    ## Example
+    ```yaml
+    title: GPQA
+    description: Graduate-level science questions.
+    group: Knowledge
+    contributors: [someone]
+    tasks:
+      - name: gpqa_diamond
+    ```
+
+    ## Options
+    - `eval-yaml-required`
+    - `eval-yaml-required-fields`
     """
     eval_yaml_file = ctx.path / "eval.yaml"
     if not eval_yaml_file.exists():
@@ -319,10 +399,20 @@ def eval_yaml(ctx: LintContext) -> Iterable[Finding]:
     summary="README.md exists and has no TODO markers",
 )
 def readme(ctx: LintContext) -> Iterable[Finding]:
-    """Check ``README.md`` exists; warn on each line that still carries a ``TODO:`` marker.
+    """``README.md`` exists and has no ``TODO:`` markers.
 
-    With ``readme-location = "repo-root"`` the repository's top-level
-    ``README.md`` is accepted when the evaluation directory has none.
+    ## What it does
+    Checks the package has a ``README.md``; with ``readme-location = "repo-root"``
+    the repository's top-level README is accepted when the package has none. Warns
+    once per line that still contains ``TODO:``.
+
+    ## Why is this bad?
+    The README is the evaluation's front door. A missing one leaves users guessing
+    at what the evaluation measures; a leftover ``TODO:`` is a section the author
+    meant to write.
+
+    ## Options
+    - `readme-location`
     """
     readme_file = ctx.path / "README.md"
     fallback = ctx.root / "README.md" if ctx.config.readme_location == "repo-root" else None

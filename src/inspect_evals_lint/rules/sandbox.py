@@ -35,13 +35,35 @@ def _is_pinned(image: str) -> bool:
     summary="Registry images in compose files use an immutable tag or digest",
 )
 def sandbox_image_pinning(ctx: LintContext) -> Iterable[Finding]:
-    """Fail on untagged or ``:latest`` images in ``compose*.y*ml`` files.
+    """Registry images in compose files use an immutable tag or digest.
 
-    A floating reference resolves to whatever the registry currently holds, so a
-    registry push silently changes the evaluation environment. Services built
-    locally (``build:``) and ``${VAR}`` interpolated references are skipped. One
-    diagnostic per service, keyed by the image reference, which is what an entry
-    under ``[tool.inspect-evals-lint.allowlists.sandbox_image_pinning]`` names.
+    ## What it does
+    Reads every ``compose*.y*ml`` under the package and flags each service whose
+    ``image`` is untagged or ``:latest``. Services built locally (``build:``) and
+    ``${VAR}`` interpolated references are skipped. Each diagnostic is keyed by the
+    image reference, which is what an allowlist entry names.
+
+    ## Why is this bad?
+    A floating reference resolves to whatever the registry holds today. A push
+    upstream silently changes the evaluation environment, and results stop being
+    comparable across runs without anything in the repository changing.
+
+    ## Example
+    ```yaml
+    services:
+      default:
+        image: aisiuk/inspect-tool-support
+    ```
+    Use instead:
+    ```yaml
+    services:
+      default:
+        image: aisiuk/inspect-tool-support:1.4.2
+        # or: aisiuk/inspect-tool-support@sha256:...
+    ```
+
+    ## Options
+    - `allowlists.sandbox_image_pinning`: `{ package = ["image/ref"] }` entries reported as warnings while they are pinned.
     """
     compose_files = sorted(ctx.path.rglob("compose*.y*ml"))
     if not compose_files:
@@ -122,14 +144,30 @@ def _requires_gpu(data: dict[str, Any]) -> bool:
     summary="An evaluation requiring a GPU ships a maintenance sandbox check task",
 )
 def gpu_sandbox_check(ctx: LintContext) -> Iterable[Finding]:
-    """An eval that declares ``metadata.requires.gpu`` ships a sandbox check task.
+    """An evaluation requiring a GPU ships a maintenance sandbox check task.
 
-    GPU sandbox images cannot be exercised in ordinary CI, so a broken image
-    (missing package, wrong Python, CUDA toolchain not working) would only show
-    up as errored samples in a real run. The check task certifies the image on
-    GPU hardware through the eval's own scorer. It must appear in ``tasks`` with
-    a name ending ``_sandbox_check`` and ``kind: maintenance``, so listings and
-    reports do not present its accuracy as a model result.
+    ## What it does
+    When ``eval.yaml`` declares ``metadata.requires.gpu``, ``tasks`` must include a
+    task whose name ends ``_sandbox_check`` and which is declared with
+    ``kind: maintenance``.
+
+    ## Why is this bad?
+    GPU sandbox images cannot be exercised in ordinary CI, so a broken image (a
+    missing package, the wrong Python, a CUDA toolchain that does not work) would
+    only show up as errored samples in a real run. The check task certifies the
+    image on GPU hardware through the evaluation's own scorer, and ``kind:
+    maintenance`` keeps its accuracy out of listings that present model results.
+
+    ## Example
+    ```yaml
+    tasks:
+      - name: kernelbench
+      - name: kernelbench_sandbox_check
+        kind: maintenance
+    metadata:
+      requires:
+        gpu: true
+    ```
     """
     eval_yaml_file = ctx.path / "eval.yaml"
     if not eval_yaml_file.exists():

@@ -58,10 +58,34 @@ class GetModelVisitor(ast.NodeVisitor):
     summary="get_model() is only called inside @solver or @scorer functions",
 )
 def get_model_location(ctx: LintContext) -> Iterable[Finding]:
-    """Warn when ``get_model()`` is called outside a ``@solver`` or ``@scorer``.
+    """``get_model()`` is only called inside ``@solver`` or ``@scorer`` functions.
 
-    Resolving concrete models late keeps tasks declarative and lets callers
-    override the model. One diagnostic per call site.
+    ## What it does
+    Warns on each ``get_model()`` call that is not inside a function decorated with
+    ``@solver`` or ``@scorer``.
+
+    ## Why is this bad?
+    Resolving a concrete model at import time or inside ``@task`` fixes it before
+    the caller can choose one. Resolving it inside the solver or scorer keeps the
+    task declarative and lets ``--model-role`` and task parameters override it.
+
+    ## Example
+    ```python
+    GRADER = get_model("openai/gpt-4o")   # resolved at import
+
+    @scorer(metrics=[accuracy()])
+    def graded():
+        async def score(state, target):
+            return await GRADER.generate(...)
+    ```
+    Use instead:
+    ```python
+    @scorer(metrics=[accuracy()])
+    def graded(model: str | Model | None = None):
+        async def score(state, target):
+            grader = get_model(model, role="grader", default="openai/gpt-4o")
+            ...
+    ```
     """
     parsed_files = parse_python_files(ctx)
     yield from parse_failures(parsed_files)
@@ -125,10 +149,24 @@ class SampleIdVisitor(ast.NodeVisitor):
     summary="Every Sample() passes id=",
 )
 def sample_ids(ctx: LintContext) -> Iterable[Finding]:
-    """Fail when a ``Sample()`` call omits ``id=``.
+    """Every ``Sample()`` passes ``id=``.
 
-    Stable IDs keep samples comparable across shuffles, reruns and dataset
-    updates. One diagnostic per call.
+    ## What it does
+    Flags each ``Sample(...)`` call without an ``id=`` keyword.
+
+    ## Why is this bad?
+    Without a stable id a sample is identified by its position. Shuffling,
+    ``--limit``, reruns and dataset updates all change positions, so results can
+    no longer be compared sample by sample.
+
+    ## Example
+    ```python
+    Sample(input=record["question"], target=record["answer"])
+    ```
+    Use instead:
+    ```python
+    Sample(input=record["question"], target=record["answer"], id=record["id"])
+    ```
     """
     parsed_files = parse_python_files(ctx)
     yield from parse_failures(parsed_files)
@@ -194,10 +232,30 @@ OVERRIDABLE_PARAMS = {"solver", "scorer", "metric", "metrics", "grader", "model"
     summary="@task parameters naming a solver, scorer, metric, grader or model have defaults",
 )
 def task_overridable_defaults(ctx: LintContext) -> Iterable[Finding]:
-    """Fail when a ``@task`` parameter naming a solver, scorer, metric, grader or model lacks a default.
+    """``@task`` parameters naming a solver, scorer, metric, grader or model have defaults.
 
-    With defaults the task runs unconfigured and each piece can still be
-    overridden. One diagnostic per parameter.
+    ## What it does
+    Flags each parameter of a ``@task`` function whose name contains ``solver``,
+    ``scorer``, ``metric``, ``metrics``, ``grader`` or ``model`` and has no
+    default.
+
+    ## Why is this bad?
+    These are the pieces callers most often want to swap. With defaults the task
+    runs unconfigured, ``inspect eval my_eval/task`` just works, and each piece can
+    still be overridden with ``-T``.
+
+    ## Example
+    ```python
+    @task
+    def my_eval(solver, grader_model):
+        ...
+    ```
+    Use instead:
+    ```python
+    @task
+    def my_eval(solver: Solver | None = None, grader_model: str | None = None):
+        ...
+    ```
     """
     parsed_files = parse_python_files(ctx)
     yield from parse_failures(parsed_files)
@@ -319,14 +377,34 @@ _MODEL_ROLE_HINT = (
     summary="get_model(role=...) resolves deliberately: an explicit model, default= or required=True",
 )
 def model_role_resolution(ctx: LintContext) -> Iterable[Finding]:
-    """Fail on ``get_model(role=...)`` calls with no explicit model, no ``default=`` and no ``required=True``.
+    """``get_model(role=...)`` resolves deliberately: an explicit model, ``default=`` or ``required=True``.
 
-    Such a role falls back to the model under evaluation when it isn't bound at
-    invocation, and the resulting scores still look plausible. A literal
-    ``default=None``, ``model=None`` or ``required=False`` changes nothing at
-    runtime and so does not count. One diagnostic per call site, keyed by the
-    role name (``<dynamic>`` for a non-literal), which is what an entry under
-    ``[tool.inspect-evals-lint.allowlists.model_role_resolution]`` names.
+    ## What it does
+    Flags each ``get_model(role=...)`` call that passes no explicit model, no
+    ``default=`` and no ``required=True``. A literal ``default=None``,
+    ``model=None`` or ``required=False`` changes nothing at runtime and does not
+    count. Each diagnostic is keyed by the role name (``<dynamic>`` for a
+    non-literal), which is what an allowlist entry names.
+
+    ## Why is this bad?
+    A role that is not bound at invocation falls back to the model under
+    evaluation. A grader then grades the model's own output, and the scores still
+    look plausible. Pinning a default or requiring the role makes the fallback a
+    choice rather than an accident.
+
+    ## Example
+    ```python
+    grader = get_model(role="grader")
+    ```
+    Use instead:
+    ```python
+    grader = get_model(role="grader", default="openai/gpt-4o")
+    # or
+    grader = get_model(role="grader", required=True)
+    ```
+
+    ## Options
+    - `allowlists.model_role_resolution`: `{ package = ["role"] }` entries reported as warnings while an existing surface is burned down.
     """
     parsed_files = parse_python_files(ctx)
     yield from parse_failures(parsed_files)

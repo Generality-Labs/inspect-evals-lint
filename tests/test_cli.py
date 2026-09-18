@@ -41,11 +41,12 @@ def test_explain_by_code_and_name(capsys: pytest.CaptureFixture[str]) -> None:
     out = capsys.readouterr().out
     assert "model_role_resolution" in out
     assert "allowlists.model_role_resolution" in out
-    assert "falls back to the model under evaluation" in out
+    assert "Why is this bad?" in out
     assert run("--explain", "readme", "--output-format", "json") == 0
     data = json.loads(capsys.readouterr().out)
     assert data["code"] == "IEFS006"
     assert "TODO" in data["doc"]
+    assert data["doc"] in Path("docs/rules/IEFS006.md").read_text(encoding="utf-8")
 
 
 def test_explain_unknown_rule_is_usage_error() -> None:

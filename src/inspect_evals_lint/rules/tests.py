@@ -30,11 +30,20 @@ def _expected_test_dir(ctx: LintContext) -> Path:
     summary="A test directory exists for the evaluation",
 )
 def tests_exist(ctx: LintContext) -> Iterable[Finding]:
-    """Check the evaluation has a test directory at ``<tests-root>/<name>/``.
+    """A test directory exists for the evaluation.
 
-    With ``tests-layout = "flat"``, test files directly under ``<tests-root>/``
-    are accepted when that directory is absent, as single-evaluation
-    repositories usually have.
+    ## What it does
+    Looks for ``<tests-root>/<name>/``. With ``tests-layout = "flat"`` test files
+    directly under ``<tests-root>/`` are accepted when that directory is absent,
+    as single-evaluation repositories usually have.
+
+    ## Why is this bad?
+    An evaluation with no tests at all has never been run against the mock model,
+    so nothing guards its wiring.
+
+    ## Options
+    - `tests-root`
+    - `tests-layout`
     """
     if ctx.test_path:
         yield Outcome(
@@ -78,10 +87,25 @@ def _no_test_dir(ctx: LintContext) -> Diagnostic:
     summary="Some test runs eval() against mockllm/model",
 )
 def e2e_test(ctx: LintContext) -> Iterable[Finding]:
-    """Check some test calls ``eval()`` or ``eval_async()`` (or an alias imported from ``inspect_ai``) and mentions ``mockllm/model``.
+    """Some test runs ``eval()`` against ``mockllm/model``.
 
-    An end-to-end run against the mock model catches wiring mistakes without
-    spending tokens.
+    ## What it does
+    Looks through the test directory for a file that calls ``eval()`` or
+    ``eval_async()`` (or an alias imported from ``inspect_ai``) and mentions
+    ``mockllm/model``.
+
+    ## Why is this bad?
+    An end-to-end run against the mock model catches wiring mistakes, a dataset
+    that no longer loads, a solver that does not compose, without spending tokens.
+
+    ## Example
+    ```python
+    from inspect_ai import eval
+
+    def test_e2e():
+        logs = eval(my_eval(), model="mockllm/model", limit=2)
+        assert logs[0].status == "success"
+    ```
     """
     if ctx.test_path is None:
         yield _no_test_dir(ctx)
@@ -128,7 +152,17 @@ def _first_mention(files: Iterable[Path], needle: str) -> tuple[Path, int] | Non
     summary="record_to_sample is exercised by a test when the evaluation uses it",
 )
 def record_to_sample_test(ctx: LintContext) -> Iterable[Finding]:
-    """Check ``record_to_sample`` is referenced by a test when the evaluation defines or uses one."""
+    """``record_to_sample`` is exercised by a test when the evaluation uses it.
+
+    ## What it does
+    When any file in the package mentions ``record_to_sample``, some test file must
+    mention it too. Skipped when the evaluation has none.
+
+    ## Why is this bad?
+    ``record_to_sample`` is where a dataset's fields become an evaluation's inputs
+    and targets. A field renamed upstream fails silently there unless a test pins
+    a real record.
+    """
     if ctx.test_path is None:
         yield _no_test_dir(ctx)
         return
@@ -209,7 +243,20 @@ def _custom_component_tests(ctx: LintContext, decorator_type: str) -> Iterable[F
     summary="Every @solver function name appears somewhere in the tests",
 )
 def custom_solver_tests(ctx: LintContext) -> Iterable[Finding]:
-    """Check every ``@solver`` function name appears somewhere in the tests. A presence check, not a quality check."""
+    """Every ``@solver`` function name appears somewhere in the tests.
+
+    ## What it does
+    Finds functions decorated with ``@solver`` in the package and checks each name
+    appears in a test file. For an evaluation the search covers ``tests/<name>/``;
+    for a helper package, the whole tests root, because shared components are
+    usually tested next to the evaluation that motivated them. One diagnostic per
+    untested function. This is a presence check, not a quality check.
+
+    ## Why is this bad?
+    A custom solver is the evaluation's own logic, the part no upstream test
+    covers. One test that at least constructs it catches import errors and
+    signature changes.
+    """
     yield from _custom_component_tests(ctx, "solver")
 
 
@@ -221,7 +268,20 @@ def custom_solver_tests(ctx: LintContext) -> Iterable[Finding]:
     summary="Every @scorer function name appears somewhere in the tests",
 )
 def custom_scorer_tests(ctx: LintContext) -> Iterable[Finding]:
-    """Check every ``@scorer`` function name appears somewhere in the tests. A presence check, not a quality check."""
+    """Every ``@scorer`` function name appears somewhere in the tests.
+
+    ## What it does
+    Finds functions decorated with ``@scorer`` in the package and checks each name
+    appears in a test file. For an evaluation the search covers ``tests/<name>/``;
+    for a helper package, the whole tests root, because shared components are
+    usually tested next to the evaluation that motivated them. One diagnostic per
+    untested function. This is a presence check, not a quality check.
+
+    ## Why is this bad?
+    A custom scorer is the evaluation's own logic, the part no upstream test
+    covers. One test that at least constructs it catches import errors and
+    signature changes.
+    """
     yield from _custom_component_tests(ctx, "scorer")
 
 
@@ -233,7 +293,20 @@ def custom_scorer_tests(ctx: LintContext) -> Iterable[Finding]:
     summary="Every @tool function name appears somewhere in the tests",
 )
 def custom_tool_tests(ctx: LintContext) -> Iterable[Finding]:
-    """Check every ``@tool`` function name appears somewhere in the tests. A presence check, not a quality check."""
+    """Every ``@tool`` function name appears somewhere in the tests.
+
+    ## What it does
+    Finds functions decorated with ``@tool`` in the package and checks each name
+    appears in a test file. For an evaluation the search covers ``tests/<name>/``;
+    for a helper package, the whole tests root, because shared components are
+    usually tested next to the evaluation that motivated them. One diagnostic per
+    untested function. This is a presence check, not a quality check.
+
+    ## Why is this bad?
+    A custom tool is the evaluation's own logic, the part no upstream test
+    covers. One test that at least constructs it catches import errors and
+    signature changes.
+    """
     yield from _custom_component_tests(ctx, "tool")
 
 
@@ -248,13 +321,19 @@ EXCLUDED_TEST_DIRS = {"__pycache__", ".mypy_cache", ".pytest_cache"}
     summary="The test directory and its sub-directories contain __init__.py",
 )
 def tests_init(ctx: LintContext) -> Iterable[Finding]:
-    """Check the test directory and every sub-directory has an ``__init__.py``.
+    """The test directory and its sub-directories contain ``__init__.py``.
 
-    Per-evaluation test trees with duplicate module basenames collide during
-    pytest collection without them. Skipped when the tests live directly under
-    the tests root (flat layout), where there is nothing to collide with, and
-    for a helper package with no ``tests/<name>/`` directory, since its tests
-    may live anywhere. One diagnostic per directory.
+    ## What it does
+    Checks ``<tests-root>/<name>/`` and every directory beneath it for an
+    ``__init__.py``, ignoring cache directories. One diagnostic per directory.
+    Skipped when the tests live directly under the tests root, where there is
+    nothing to collide with, and for a helper package with no ``tests/<name>/``
+    directory.
+
+    ## Why is this bad?
+    Per-evaluation test trees with duplicate module basenames (``test_scorer.py``
+    in two evaluations) collide during pytest collection unless each tree is a
+    package.
     """
     if ctx.test_path is None:
         if ctx.kind == "eval":
