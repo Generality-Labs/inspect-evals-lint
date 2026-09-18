@@ -84,6 +84,9 @@ class TestCheckUnscoredReason:
         for r in results:
             r.rule = get_rule("unscored_reason")
         apply_suppressions(
-            results, load_suppressions(tmp_path / "alpha"), PRESETS["template"], tmp_path
+            results,
+            load_suppressions(context_for(tmp_path / "alpha")),
+            PRESETS["template"],
+            tmp_path,
         )
         assert [r.status for r in results] == ["suppressed"]

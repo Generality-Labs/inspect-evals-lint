@@ -115,7 +115,7 @@ def lint_package(
         if rule.name == LOCATION_RULE and not is_package(context.path):
             return report
 
-    apply_suppressions(report.diagnostics, load_suppressions(context.path), config, repo_root)
+    apply_suppressions(report.diagnostics, load_suppressions(context), config, repo_root)
     return report
 
 

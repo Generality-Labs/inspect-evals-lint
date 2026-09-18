@@ -11,7 +11,7 @@ from inspect_evals_lint.config import PRESETS
 from inspect_evals_lint.diagnostics import Diagnostic
 from inspect_evals_lint.registry import get_rule
 from inspect_evals_lint.suppressions import apply_suppressions, load_suppressions
-from tests.conftest import write
+from tests.conftest import context_for, write
 
 
 def test_line_level_by_name_or_code(monorepo: tuple[Path, LintConfig]) -> None:
@@ -38,7 +38,7 @@ def test_line_level_by_name_or_code(monorepo: tuple[Path, LintConfig]) -> None:
 def test_file_level_in_header(tmp_path: Path) -> None:
     pkg = tmp_path / "e"
     write(pkg / "early.py", "# inspect-evals-lint: ignore-file[readme, sample_ids]\n")
-    s = load_suppressions(pkg)
+    s = load_suppressions(context_for(pkg))
     assert s.file_level[pkg / "early.py"] == {"readme", "sample_ids"}
 
 
@@ -46,7 +46,7 @@ def test_file_level_outside_header_is_an_error(tmp_path: Path) -> None:
     pkg = tmp_path / "e"
     write(pkg / "late.py", "\n" * 12 + "# inspect-evals-lint: ignore-file[readme]\n")
     with pytest.raises(ConfigError, match="first 10 lines"):
-        load_suppressions(pkg)
+        load_suppressions(context_for(pkg))
 
 
 @pytest.mark.parametrize(
@@ -61,7 +61,7 @@ def test_ignore_without_a_rule_is_an_error(tmp_path: Path, comment: str) -> None
     pkg = tmp_path / "e"
     write(pkg / "x.py", f"x = 1  {comment}\n")
     with pytest.raises(ConfigError, match="must name at least one rule"):
-        load_suppressions(pkg)
+        load_suppressions(context_for(pkg))
 
 
 @pytest.mark.parametrize(
@@ -77,7 +77,7 @@ def test_legacy_syntax_is_an_error_naming_the_replacement(tmp_path: Path, setup:
     else:
         write(pkg / ".noautolint", "readme\n")
     with pytest.raises(ConfigError, match="ignore\\[<rule>\\]"):
-        load_suppressions(pkg)
+        load_suppressions(context_for(pkg))
 
 
 def test_apply_marks_covered_diagnostics(tmp_path: Path) -> None:
@@ -94,5 +94,19 @@ def test_apply_marks_covered_diagnostics(tmp_path: Path) -> None:
     config = type(config)(
         **{**config.__dict__, "per_file_ignores": (("src/e/data/**", ("IEFS004",)),)}
     )
-    apply_suppressions(diagnostics, load_suppressions(pkg), config, tmp_path)
+    apply_suppressions(diagnostics, load_suppressions(context_for(pkg)), config, tmp_path)
     assert [d.status for d in diagnostics] == ["suppressed", "warn", "suppressed"]
+
+
+def test_comments_in_excluded_files_are_not_read(tmp_path: Path) -> None:
+    """A legacy or malformed comment in sandbox code that exclude keeps out of the rules is not an error."""
+    from dataclasses import replace
+
+    pkg = tmp_path / "src" / "e"
+    write(pkg / "challenges" / "solve.py", "print 'py2'  # noautolint: readme\n")
+    write(pkg / "ok.py", "x = 1  # inspect-evals-lint: ignore[readme]\n")
+    with pytest.raises(ConfigError):
+        load_suppressions(context_for(pkg))
+    config = replace(PRESETS["template"], exclude=("e/challenges/**",))  # root is pkg.parent
+    s = load_suppressions(context_for(pkg, config))
+    assert list(s.line_level) == [pkg / "ok.py"]

@@ -13,7 +13,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from inspect_evals_lint.config import ConfigError, LintConfig, selector_matches
+from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic
+from inspect_evals_lint.rules._ast import iter_python_files
 
 LINE_PATTERN = re.compile(r"#\s*inspect-evals-lint:\s*ignore\[([^\]]*)\]")
 FILE_PATTERN = re.compile(r"#\s*inspect-evals-lint:\s*ignore-file\[([^\]]*)\]")
@@ -56,18 +58,21 @@ def _selectors(raw: str, where: str) -> set[str]:
     return selectors
 
 
-def load_suppressions(package_path: Path) -> Suppressions:
-    """Collect ignore comments from Python files under ``package_path``.
+def load_suppressions(ctx: LintContext) -> Suppressions:
+    """Collect ignore comments from the package's Python files, skipping ``exclude``d ones.
+
+    Excluded files are never linted, so nothing in them can be suppressed and a
+    stray comment there (in code shipped into a sandbox, say) is not an error.
 
     Raises:
         ConfigError: a comment is malformed, or uses the removed ``noautolint`` syntax.
     """
-    legacy_files = sorted(package_path.rglob(".noautolint"))
+    legacy_files = sorted(ctx.path.rglob(".noautolint"))
     if legacy_files:
         raise ConfigError(f"{legacy_files[0]}: .noautolint files are no longer read; {LEGACY_HELP}")
 
     suppressions = Suppressions()
-    for py_file in sorted(package_path.rglob("*.py")):
+    for py_file in iter_python_files(ctx):
         try:
             lines = py_file.read_text(encoding="utf-8").splitlines()
         except (OSError, UnicodeDecodeError):

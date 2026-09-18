@@ -395,5 +395,7 @@ class TestCheckModelRoleResolution:
         )
         for r in results:
             r.rule = get_rule("model_role_resolution")
-        apply_suppressions(results, load_suppressions(eval_dir), PRESETS["template"], tmp_path)
+        apply_suppressions(
+            results, load_suppressions(context_for(eval_dir)), PRESETS["template"], tmp_path
+        )
         assert [r.status for r in results] == ["suppressed"]
