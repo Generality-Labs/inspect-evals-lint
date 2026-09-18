@@ -139,6 +139,9 @@ def test_path_policies() -> None:
     assert not cfg.ignored_in("src/alpha/data/gen.py", readme)
     assert cfg.ignored_in("tests/alpha/test_x.py", readme)
     assert not cfg.ignored_in("src/alpha/alpha.py", sample_ids)
+    # A finding about a directory carries the directory as its file; `dir/**` covers it.
+    assert cfg.ignored_in("tests", readme)
+    assert cfg.excludes("src/cybench/challenges")
 
 
 def test_allowlist_lookup_is_per_package() -> None:

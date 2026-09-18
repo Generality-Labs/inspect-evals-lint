@@ -625,3 +625,13 @@ def test_model_role_allowlist_from_config(monorepo: tuple[Path, LintConfig]) -> 
     (d,) = report.diagnostics
     assert d.message.startswith("Allowlisted:")
     assert "remove the allowlist entry" in (d.hint or "")
+
+
+def test_per_file_ignores_cover_a_finding_about_the_directory_itself(
+    monorepo: tuple[Path, LintConfig],
+) -> None:
+    root, config = monorepo
+    (root / "tests/alpha/test_alpha.py").write_text("def test_x():\n    pass\n")
+    assert statuses(root, config, check="e2e_test")["e2e_test"] == ["fail"]
+    config = replace(config, per_file_ignores=(("tests/alpha/**", ("e2e_test",)),))
+    assert statuses(root, config, check="e2e_test")["e2e_test"] == ["suppressed"]

@@ -38,6 +38,18 @@ class ConfigError(ValueError):
     """Raised when the ``[tool.inspect-evals-lint]`` table is invalid."""
 
 
+def _glob_matches(pattern: str, relative_path: str) -> bool:
+    """``fnmatch`` with one extension: ``dir/**`` also matches ``dir`` itself.
+
+    A finding about a directory (a missing ``__init__.py``, a test tree with no
+    end-to-end test) has that directory as its file, and the glob a user writes
+    for the tree should cover it.
+    """
+    return fnmatch.fnmatchcase(relative_path, pattern) or fnmatch.fnmatchcase(
+        relative_path + "/", pattern
+    )
+
+
 def selector_matches(selector: str, rule: Rule) -> bool:
     """Whether a ``select`` / ``ignore`` entry names ``rule``: its name, its code, or a code prefix."""
     return selector == rule.name or rule.code.startswith(selector)
@@ -200,14 +212,13 @@ class LintConfig:
 
     def excludes(self, relative_path: str | PurePosixPath) -> bool:
         """Whether a repository-relative path matches an ``exclude`` glob."""
-        text = str(relative_path)
-        return any(fnmatch.fnmatchcase(text, pattern) for pattern in self.exclude)
+        return any(_glob_matches(pattern, str(relative_path)) for pattern in self.exclude)
 
     def ignored_in(self, relative_path: str | PurePosixPath, rule: Rule) -> bool:
         """Whether ``per-file-ignores`` suppresses ``rule`` for a repository-relative path."""
         text = str(relative_path)
         return any(
-            fnmatch.fnmatchcase(text, pattern) and any(selector_matches(s, rule) for s in selectors)
+            _glob_matches(pattern, text) and any(selector_matches(s, rule) for s in selectors)
             for pattern, selectors in self.per_file_ignores
         )
 
