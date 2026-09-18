@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console
+from rich.markup import escape
 from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
@@ -139,15 +140,12 @@ def print_report(
 
     console.print("[bold red]Some checks failed.[/]")
     console.print()
-    console.print("[dim]To suppress a check, add one of:[/]")
+    console.print("[dim]To suppress a finding, add one of:[/]")
     for name in dict.fromkeys(failed_rules):
-        console.print(f"  [cyan]# noautolint: {name}[/]  [dim](on the line)[/]")
-    console.print(
-        f"  [dim]Or add check name to[/] [cyan]{source_root}/{report.name}/.noautolint[/]  [dim](package-level)[/]"
-    )
-    console.print(
-        f"  [dim]Or add check name to[/] [cyan]{source_root}/{report.name}/<subdir>/.noautolint[/]  [dim](dir-level)[/]"
-    )
+        comment = escape(f"# inspect-evals-lint: ignore[{name}]")
+        console.print(f"  [cyan]{comment}[/]  [dim](on the line)[/]")
+    table_entry = escape(f'per-file-ignores = {{ "{source_root}/{report.name}/**" = ["<rule>"] }}')
+    console.print(f"  [cyan]{table_entry}[/]  [dim](in {escape('[tool.inspect-evals-lint]')})[/]")
     console.print()
     console.print(f"[dim]More info about these checks: {CHECKS_DOC_URL}[/]")
 

@@ -28,12 +28,12 @@ Every check is a rule with a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for t
 
 ## Best practices
 
-- Every `get_model(role=...)` call resolves deliberately: an explicit model, a pinned `default=`, or `required=True` (`model_role_resolution`). A role with none of these silently falls back to the model under evaluation when it isn't bound at invocation, so a grader can grade its own output and the scores still look plausible. A literal `default=None`, `model=None` or `required=False` changes nothing at runtime and so does not count. Entries in `model-role-allowlist` (`{ eval = ["role"] }`, with `"<dynamic>"` for a non-literal role name) warn instead of failing so an existing surface can be burned down while new violations are blocked; a stale entry also warns so it gets removed. Contributed to inspect_evals by @antnewman.
+- Every `get_model(role=...)` call resolves deliberately: an explicit model, a pinned `default=`, or `required=True` (`model_role_resolution`). A role with none of these silently falls back to the model under evaluation when it isn't bound at invocation, so a grader can grade its own output and the scores still look plausible. A literal `default=None`, `model=None` or `required=False` changes nothing at runtime and so does not count. Entries under `[tool.inspect-evals-lint.allowlists.model_role_resolution]` (`package = ["role"]`, with `"<dynamic>"` for a non-literal role name) turn the finding into a warning so an existing surface can be burned down while new violations are blocked; a stale entry also warns so it gets removed. Contributed to inspect_evals by @antnewman.
 - `get_model()` is only called inside `@solver` or `@scorer` functions (`get_model_location`, warns). Resolving models late keeps tasks declarative and lets callers override the model.
 - Every `Sample(...)` call passes `id=` (`sample_ids`). Stable IDs keep samples comparable across shuffles, reruns and dataset updates.
 - `@task` parameters whose names contain `solver`, `scorer`, `metric`, `metrics`, `grader` or `model` have defaults (`task_overridable_defaults`), so the task runs unconfigured and each piece can still be overridden.
 - An evaluation whose `eval.yaml` declares `metadata.requires.gpu` ships a sandbox check task (`gpu_sandbox_check`): a `tasks` entry whose name ends `_sandbox_check` and has `kind: maintenance`. GPU sandbox images cannot be exercised in ordinary CI, so a broken image (missing package, wrong Python, CUDA toolchain not working) would otherwise only surface as errored samples in a real run; the check task certifies the image on GPU hardware through the eval's own scorer, and `kind: maintenance` keeps its accuracy out of model results. Skips when no GPU requirement is declared. inspect_evals provides `inspect_evals.utils.sandbox_check` for building one.
-- Registry-pulled images in `compose*.y*ml` files use an immutable tag or an `@sha256` digest (`sandbox_image_pinning`). Untagged and `:latest` references fail because a registry push silently changes the evaluation environment. Services with `build:` and `${VAR}` interpolated images are skipped. Entries in `sandbox-image-allowlist` warn instead of failing; a stale entry also warns so it gets removed.
+- Registry-pulled images in `compose*.y*ml` files use an immutable tag or an `@sha256` digest (`sandbox_image_pinning`). Untagged and `:latest` references fail because a registry push silently changes the evaluation environment. Services with `build:` and `${VAR}` interpolated images are skipped. Entries under `[tool.inspect-evals-lint.allowlists.sandbox_image_pinning]` (`package = ["image/ref"]`) turn the finding into a warning; a stale entry also warns so it gets removed.
 
 ## Helper packages
 
@@ -43,6 +43,19 @@ Directories listed in `helper-dirs` (by default `utils`) hold code that evaluati
 - Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`.
 
 `--check <name>` on a helper with a check outside that scope reports a skip. The scope is `runner.CHECK_SCOPES`, and every check declares one, so a new check decides up front whether shared code is in scope.
+
+## Categories
+
+Each check belongs to one of exactly four categories, the sections above: `file_structure`, `code_quality`, `tests` and `best_practices`. The `--json` output and `runner.CHECK_CATEGORIES` expose them, and downstream tooling (badges, the register lint service) is built around that fixed set. A new check joins one of the four; adding a category would be a breaking change.
+
+## Suppression
+
+- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line; names, codes and code prefixes, comma-separated. `ignore` without a bracketed list is a configuration error.
+- File: `# inspect-evals-lint: ignore-file[<rule>]` within the first ten lines.
+- Paths: `per-file-ignores = { "<glob>" = ["<rule>"] }` in `[tool.inspect-evals-lint]`.
+- Never read: `exclude = ["<glob>"]` keeps files out of the AST-based rules entirely, for code shipped into a sandbox.
+
+Suppressed findings still appear in reports, marked `[suppressed]`, and count as passing. The former `noautolint` comments and `.noautolint` files are rejected with a message naming the replacement.
 
 ## Categories
 

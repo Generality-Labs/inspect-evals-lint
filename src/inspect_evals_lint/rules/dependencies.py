@@ -174,13 +174,13 @@ Location = tuple[Path, int, int | None]
 
 
 def _get_all_imports_from_package(
-    package_path: Path,
+    ctx: LintContext,
 ) -> tuple[dict[str, Location], dict[str, Location], list[Diagnostic]]:
     """``(eager, lazy, parse diagnostics)`` across the package; a name eager anywhere counts as eager."""
     eager: dict[str, Location] = {}
     lazy: dict[str, Location] = {}
     failures: list[Diagnostic] = []
-    for py_file in iter_python_files(package_path):
+    for py_file in iter_python_files(ctx):
         file_eager, file_lazy, error = _get_imports_from_file(py_file)
         if error:
             failures.append(Diagnostic(f"Could not parse file: {error}", file=py_file, line=1))
@@ -384,10 +384,8 @@ def external_dependencies(ctx: LintContext) -> Iterable[Finding]:
     some group or in any isolated package. Helpers need no group of their own.
     One diagnostic per import, at its first site.
     """
-    eager, lazy, failures = _get_all_imports_from_package(ctx.path)
-    if failures:
-        yield from failures
-        return
+    eager, lazy, failures = _get_all_imports_from_package(ctx)
+    yield from failures
 
     if ctx.kind == "helper":
         yield from _helper_dependencies(ctx, eager, lazy)

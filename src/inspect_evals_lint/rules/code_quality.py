@@ -31,10 +31,8 @@ def private_api_imports(ctx: LintContext) -> Iterable[Finding]:
     Private modules, any dotted segment starting with ``_``, change without
     notice. One diagnostic per import site.
     """
-    parsed_files = parse_python_files(ctx.path)
-    if parsed_files.failed:
-        yield from parse_failures(parsed_files)
-        return
+    parsed_files = parse_python_files(ctx)
+    yield from parse_failures(parsed_files)
 
     found = False
     for parsed in parsed_files.parsed:
@@ -70,10 +68,8 @@ def score_constants(ctx: LintContext) -> Iterable[Finding]:
     compare against; a literal that drifts from them scores silently wrong.
     One diagnostic per ``Score()`` call.
     """
-    parsed_files = parse_python_files(ctx.path)
-    if parsed_files.failed:
-        yield from parse_failures(parsed_files)
-        return
+    parsed_files = parse_python_files(ctx)
+    yield from parse_failures(parsed_files)
 
     found = False
     for parsed in parsed_files.parsed:
@@ -145,10 +141,8 @@ def unscored_reason(ctx: LintContext) -> Iterable[Finding]:
     named ``unscored()`` is not mistaken for the constructor; docstrings
     mentioning the old key are ignored. One diagnostic per site.
     """
-    parsed_files = parse_python_files(ctx.path)
-    if parsed_files.failed:
-        yield from parse_failures(parsed_files)
-        return
+    parsed_files = parse_python_files(ctx)
+    yield from parse_failures(parsed_files)
 
     total_calls = 0
     sites: list[Diagnostic] = []

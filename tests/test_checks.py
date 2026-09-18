@@ -1,7 +1,6 @@
 """Tests for individual check helpers, ported from inspect_evals."""
 
 import ast
-from dataclasses import replace
 
 from inspect_evals_lint.config import PRESETS
 from inspect_evals_lint.context import LintContext
@@ -414,12 +413,11 @@ __all__ = ["my_eval", "CONSTANT"]
 class TestSandboxImagePinning:
     """Tests for the sandbox_image_pinning rule."""
 
-    def run_check(self, tmp_path, compose_content, eval_name="my_eval", allowlist=frozenset()):
+    def run_check(self, tmp_path, compose_content, eval_name="my_eval"):
         eval_path = tmp_path / eval_name
         eval_path.mkdir()
         (eval_path / "compose.yaml").write_text(compose_content)
-        config = replace(PRESETS["template"], sandbox_image_allowlist=allowlist)
-        return list(sandbox_image_pinning(context_for(eval_path, config)))
+        return list(sandbox_image_pinning(context_for(eval_path)))
 
     def test_untagged_registry_image_fails(self, tmp_path):
         results = self.run_check(
@@ -493,23 +491,12 @@ class TestSandboxImagePinning:
         results = list(sandbox_image_pinning(context_for(eval_path)))
         assert [r.status for r in results] == ["skip"]
 
-    def test_allowlisted_image_warns(self, tmp_path):
+    def test_diagnostics_are_keyed_by_image_for_the_allowlist(self, tmp_path):
         results = self.run_check(
             tmp_path,
             "services:\n  default:\n    image: example/untagged\n",
-            allowlist=frozenset({("my_eval", "example/untagged")}),
         )
-        assert [r.status for r in results] == ["warn"]
-
-    def test_stale_allowlist_entry_warns(self, tmp_path):
-        results = self.run_check(
-            tmp_path,
-            "services:\n  default:\n    image: example/pinned:1.0.0\n",
-            allowlist=frozenset({("my_eval", "example/untagged")}),
-        )
-        assert [r.status for r in results] == ["warn"]
-        assert "no longer" in results[0].message
-        assert results[0].file.name == "pyproject.toml"
+        assert [r.key for r in results] == ["example/untagged"]
 
     def test_nested_compose_files_are_checked(self, tmp_path):
         eval_path = tmp_path / "my_eval"
@@ -598,10 +585,14 @@ class TestCheckUnscoredReason:
         from inspect_evals_lint.registry import get_rule
         from inspect_evals_lint.suppressions import apply_suppressions, load_suppressions
 
-        results = self._run(tmp_path, "a = Score.unscored()  # noautolint: unscored_reason\n")
+        results = self._run(
+            tmp_path, "a = Score.unscored()  # inspect-evals-lint: ignore[IECQ003]\n"
+        )
         for r in results:
             r.rule = get_rule("unscored_reason")
-        apply_suppressions(results, load_suppressions(tmp_path / "alpha"))
+        apply_suppressions(
+            results, load_suppressions(tmp_path / "alpha"), PRESETS["template"], tmp_path
+        )
         assert [r.status for r in results] == ["suppressed"]
 
 

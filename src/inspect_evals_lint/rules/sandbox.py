@@ -17,8 +17,6 @@ PIN_HINT = (
     "control, or an @sha256 digest if no immutable tag exists"
 )
 
-ALLOWLIST_LOCATION = "[tool.inspect-evals-lint.sandbox_image_allowlist] in pyproject.toml"
-
 
 def _is_pinned(image: str) -> bool:
     if "@sha256:" in image:
@@ -41,17 +39,15 @@ def sandbox_image_pinning(ctx: LintContext) -> Iterable[Finding]:
 
     A floating reference resolves to whatever the registry currently holds, so a
     registry push silently changes the evaluation environment. Services built
-    locally (``build:``) and ``${VAR}`` interpolated references are skipped.
-    Allowlist entries ``(package, image)`` warn instead of failing, and a stale
-    entry warns so it gets removed. One diagnostic per service.
+    locally (``build:``) and ``${VAR}`` interpolated references are skipped. One
+    diagnostic per service, keyed by the image reference, which is what an entry
+    under ``[tool.inspect-evals-lint.allowlists.sandbox_image_pinning]`` names.
     """
-    allowlist = ctx.config.sandbox_image_allowlist
     compose_files = sorted(ctx.path.rglob("compose*.y*ml"))
     if not compose_files:
         yield Outcome("skip", "No compose files found")
         return
 
-    seen_allowlisted: set[tuple[str, str]] = set()
     issues = 0
     checked_images = 0
     for compose_file in compose_files:
@@ -84,32 +80,15 @@ def sandbox_image_pinning(ctx: LintContext) -> Iterable[Finding]:
                 continue
             checked_images += 1
             issues += 1
-            if (ctx.name, image) in allowlist:
-                seen_allowlisted.add((ctx.name, image))
-                yield Diagnostic(
-                    f"Service '{service_name}' uses allowlisted unpinned image '{image}'",
-                    file=compose_file,
-                    severity="warning",
-                    hint=f"{PIN_HINT}, then remove the allowlist entry",
-                )
-            else:
-                yield Diagnostic(
-                    f"Service '{service_name}' image '{image}' is untagged or :latest, "
-                    "so registry pushes silently change the eval environment",
-                    file=compose_file,
-                    hint=PIN_HINT,
-                )
+            yield Diagnostic(
+                f"Service '{service_name}' image '{image}' is untagged or :latest, "
+                "so registry pushes silently change the eval environment",
+                file=compose_file,
+                hint=PIN_HINT,
+                key=image,
+            )
 
-    stale = {(name, image) for (name, image) in allowlist if name == ctx.name} - seen_allowlisted
-    for _, image in sorted(stale):
-        yield Diagnostic(
-            f"Allowlist entry for image '{image}' is no longer needed",
-            file=ctx.root / "pyproject.toml",
-            severity="warning",
-            hint=f"remove it from {ALLOWLIST_LOCATION}",
-        )
-
-    if not issues and not stale:
+    if not issues:
         yield Outcome(
             "pass",
             f"All {checked_images} registry image reference(s) in "

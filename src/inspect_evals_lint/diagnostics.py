@@ -45,6 +45,8 @@ class Diagnostic:
     severity: Severity = "error"
     hint: str | None = None
     """What to do about it, in one sentence."""
+    key: str | None = None
+    """What an allowlist entry for this finding would name (a role, an image); None for rules without one."""
     rule: Rule | None = None
     """Set by the runner."""
     suppressed: bool = False

@@ -139,9 +139,13 @@ def main(argv: Sequence[str] | None = None) -> None:
             what += f" and {len(helper_names)} helper package{plural}"
         info.print(f"Linting {what}{check_msg}...\n", markup=False)
 
-        run = lint_repository(
-            repo_root, config, names=[*eval_names, *helper_names], check=args.check
-        )
+        try:
+            run = lint_repository(
+                repo_root, config, names=[*eval_names, *helper_names], check=args.check
+            )
+        except ConfigError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(2)
         if args.json:
             sys.stdout.write(render_json(run))
             sys.exit(0 if run.passed() else 1)
@@ -157,7 +161,11 @@ def main(argv: Sequence[str] | None = None) -> None:
 
         sys.exit(0 if run.passed() else 1)
 
-    report = lint_evaluation(repo_root, args.eval_name, config, check=args.check)
+    try:
+        report = lint_evaluation(repo_root, args.eval_name, config, check=args.check)
+    except ConfigError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
     run = RunReport(root=repo_root, packages=[report])
     if args.json:
         sys.stdout.write(render_json(run))

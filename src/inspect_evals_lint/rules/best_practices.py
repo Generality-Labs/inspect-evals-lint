@@ -63,10 +63,8 @@ def get_model_location(ctx: LintContext) -> Iterable[Finding]:
     Resolving concrete models late keeps tasks declarative and lets callers
     override the model. One diagnostic per call site.
     """
-    parsed_files = parse_python_files(ctx.path)
-    if parsed_files.failed:
-        yield from parse_failures(parsed_files)
-        return
+    parsed_files = parse_python_files(ctx)
+    yield from parse_failures(parsed_files)
 
     found = False
     for parsed in parsed_files.parsed:
@@ -132,10 +130,8 @@ def sample_ids(ctx: LintContext) -> Iterable[Finding]:
     Stable IDs keep samples comparable across shuffles, reruns and dataset
     updates. One diagnostic per call.
     """
-    parsed_files = parse_python_files(ctx.path)
-    if parsed_files.failed:
-        yield from parse_failures(parsed_files)
-        return
+    parsed_files = parse_python_files(ctx)
+    yield from parse_failures(parsed_files)
 
     total = 0
     missing = 0
@@ -203,10 +199,8 @@ def task_overridable_defaults(ctx: LintContext) -> Iterable[Finding]:
     With defaults the task runs unconfigured and each piece can still be
     overridden. One diagnostic per parameter.
     """
-    parsed_files = parse_python_files(ctx.path)
-    if parsed_files.failed:
-        yield from parse_failures(parsed_files)
-        return
+    parsed_files = parse_python_files(ctx)
+    yield from parse_failures(parsed_files)
 
     total_tasks = 0
     found = False
@@ -309,7 +303,6 @@ def _is_required(keywords: dict[str, ast.expr]) -> bool:
     return True
 
 
-MODEL_ROLE_ALLOWLIST_LOCATION = "[tool.inspect-evals-lint.model_role_allowlist] in pyproject.toml"
 _MODEL_ROLE_HINT = (
     "pass an explicit model, pin a default=, or mark it required=True; an unbound "
     "role otherwise falls back to the model under evaluation, so a grader can "
@@ -331,20 +324,15 @@ def model_role_resolution(ctx: LintContext) -> Iterable[Finding]:
     Such a role falls back to the model under evaluation when it isn't bound at
     invocation, and the resulting scores still look plausible. A literal
     ``default=None``, ``model=None`` or ``required=False`` changes nothing at
-    runtime and so does not count. Allowlist entries ``(package, role)`` warn
-    instead of failing so an existing surface can be burned down while new
-    violations are blocked, and a stale entry warns so it gets removed. One
-    diagnostic per call site.
+    runtime and so does not count. One diagnostic per call site, keyed by the
+    role name (``<dynamic>`` for a non-literal), which is what an entry under
+    ``[tool.inspect-evals-lint.allowlists.model_role_resolution]`` names.
     """
-    allowlist = ctx.config.model_role_allowlist
-    parsed_files = parse_python_files(ctx.path)
-    if parsed_files.failed:
-        yield from parse_failures(parsed_files)
-        return
+    parsed_files = parse_python_files(ctx)
+    yield from parse_failures(parsed_files)
 
     total_role_calls = 0
     issues = 0
-    seen_allowlisted: set[tuple[str, str]] = set()
     for parsed in parsed_files.parsed:
         visitor = ModelRoleVisitor()
         visitor.visit(parsed.tree)
@@ -353,35 +341,16 @@ def model_role_resolution(ctx: LintContext) -> Iterable[Finding]:
             if resolves:
                 continue
             issues += 1
-            if (ctx.name, role) in allowlist:
-                seen_allowlisted.add((ctx.name, role))
-                yield Diagnostic(
-                    f"Allowlisted get_model(role={role!r}) has no deliberate resolution",
-                    file=parsed.path,
-                    line=line,
-                    column=column_of(node),
-                    severity="warning",
-                    hint=f"{_MODEL_ROLE_HINT}, then remove the allowlist entry",
-                )
-            else:
-                yield Diagnostic(
-                    f"get_model(role={role!r}) has no model, no default= and no required=True",
-                    file=parsed.path,
-                    line=line,
-                    column=column_of(node),
-                    hint=_MODEL_ROLE_HINT,
-                )
+            yield Diagnostic(
+                f"get_model(role={role!r}) has no model, no default= and no required=True",
+                file=parsed.path,
+                line=line,
+                column=column_of(node),
+                hint=_MODEL_ROLE_HINT,
+                key=role,
+            )
 
-    stale = {(name, role) for (name, role) in allowlist if name == ctx.name} - seen_allowlisted
-    for _, role in sorted(stale):
-        yield Diagnostic(
-            f"Allowlist entry for role {role!r} is no longer needed",
-            file=ctx.root / "pyproject.toml",
-            severity="warning",
-            hint=f"remove it from {MODEL_ROLE_ALLOWLIST_LOCATION}",
-        )
-
-    if issues or stale:
+    if issues:
         return
     if total_role_calls == 0:
         yield Outcome("skip", "No get_model(role=...) calls found")

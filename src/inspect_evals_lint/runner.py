@@ -12,7 +12,7 @@ from inspect_evals_lint.context import (
     is_package,
     package_kind,
 )
-from inspect_evals_lint.diagnostics import Diagnostic, Outcome, PackageReport, RunReport
+from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome, PackageReport, RunReport
 from inspect_evals_lint.registry import Rule, get_rule, rule_names, rules
 from inspect_evals_lint.suppressions import apply_suppressions, load_suppressions
 
@@ -26,18 +26,55 @@ def get_all_check_names() -> list[str]:
 
 
 def _selected(rule: Rule, only: Rule | None, config: LintConfig) -> bool:
-    if only is not None and rule is not only:
-        return False
-    return rule.name not in config.disabled_checks
+    if only is not None:
+        return rule is only
+    return config.selects(rule)
 
 
 def _run_rule(rule: Rule, context: LintContext, report: PackageReport) -> None:
     findings = list(rule.run(context))
     for finding in findings:
         finding.rule = rule
+    if rule.allowlist:
+        findings.extend(_apply_allowlist(rule, context, findings))
+    if any(isinstance(f, Diagnostic) for f in findings):
+        # A rule cannot both pass and point at something; a skip can stand beside a warning.
+        findings = [f for f in findings if not (isinstance(f, Outcome) and f.status == "pass")]
+    for finding in findings:
         report.add(finding)
     if not findings:
         report.add(Outcome("pass", rule.summary, rule=rule))
+
+
+def _apply_allowlist(rule: Rule, context: LintContext, findings: list[Finding]) -> list[Diagnostic]:
+    """Turn allowlisted failures into warnings; return warnings for entries nothing matched.
+
+    The ratchet: an existing surface can be burned down while new violations are
+    blocked, and a stale entry is reported so it gets removed.
+    """
+    allowed = context.config.allowlist_for(rule, context.name)
+    seen: set[str] = set()
+    for finding in findings:
+        if isinstance(finding, Diagnostic) and finding.key is not None and finding.key in allowed:
+            seen.add(finding.key)
+            finding.severity = "warning"
+            finding.message = f"Allowlisted: {finding.message}"
+            finding.hint = (
+                f"{finding.hint}, then remove the allowlist entry"
+                if finding.hint
+                else "remove the allowlist entry once fixed"
+            )
+    return [
+        Diagnostic(
+            f"Allowlist entry {key!r} for {rule.name} on {context.name!r} is no longer needed",
+            file=context.root / "pyproject.toml",
+            severity="warning",
+            hint=f"remove it from [tool.inspect-evals-lint.allowlists.{rule.name}]",
+            key=key,
+            rule=rule,
+        )
+        for key in sorted(allowed - seen)
+    ]
 
 
 def lint_evaluation(
@@ -83,7 +120,7 @@ def lint_evaluation(
         if rule.name == LOCATION_RULE and not is_package(context.path):
             return report
 
-    apply_suppressions(report.diagnostics, load_suppressions(context.path))
+    apply_suppressions(report.diagnostics, load_suppressions(context.path), config, repo_root)
     return report
 
 

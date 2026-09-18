@@ -109,8 +109,8 @@ def e2e_test(ctx: LintContext) -> Iterable[Finding]:
     )
 
 
-def _first_mention(directory: Path, needle: str) -> tuple[Path, int] | None:
-    for py_file in sorted(directory.rglob("*.py")):
+def _first_mention(files: Iterable[Path], needle: str) -> tuple[Path, int] | None:
+    for py_file in files:
         try:
             lines = py_file.read_text(encoding="utf-8").splitlines()
         except (OSError, UnicodeDecodeError):
@@ -133,12 +133,12 @@ def record_to_sample_test(ctx: LintContext) -> Iterable[Finding]:
         yield _no_test_dir(ctx)
         return
 
-    mention = _first_mention(ctx.path, "record_to_sample")
+    mention = _first_mention(iter_python_files(ctx), "record_to_sample")
     if mention is None:
         yield Outcome("skip", "Evaluation does not use record_to_sample")
         return
 
-    if _first_mention(ctx.test_path, "record_to_sample") is not None:
+    if _first_mention(sorted(ctx.test_path.rglob("*.py")), "record_to_sample") is not None:
         yield Outcome("pass", "record_to_sample is tested")
     else:
         file, line = mention
@@ -151,12 +151,12 @@ def record_to_sample_test(ctx: LintContext) -> Iterable[Finding]:
 
 
 def _find_decorated_functions(
-    package_path: Path, decorator_name: str
+    ctx: LintContext, decorator_name: str
 ) -> tuple[list[tuple[Path, str, int, int | None]], list[Diagnostic]]:
     """``(file, name, line, column)`` of functions decorated with ``decorator_name``, plus parse diagnostics."""
     functions: list[tuple[Path, str, int, int | None]] = []
     failed: list[Diagnostic] = []
-    for py_file in iter_python_files(package_path):
+    for py_file in iter_python_files(ctx):
         outcome = safe_parse_file(py_file)
         if not isinstance(outcome, ParsedFile):
             failed.append(
@@ -178,10 +178,8 @@ def _custom_component_tests(ctx: LintContext, decorator_type: str) -> Iterable[F
         yield _no_test_dir(ctx)
         return
 
-    functions, failed = _find_decorated_functions(ctx.path, decorator_type)
-    if failed:
-        yield from failed
-        return
+    functions, failed = _find_decorated_functions(ctx, decorator_type)
+    yield from failed
 
     if not functions:
         yield Outcome("skip", f"No custom {plural} found")
@@ -189,7 +187,7 @@ def _custom_component_tests(ctx: LintContext, decorator_type: str) -> Iterable[F
 
     untested = 0
     for file, name, line, column in functions:
-        if _first_mention(ctx.test_search_path, name) is not None:
+        if _first_mention(sorted(ctx.test_search_path.rglob("*.py")), name) is not None:
             continue
         untested += 1
         yield Diagnostic(

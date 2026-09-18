@@ -9,6 +9,7 @@ import pytest
 
 from inspect_evals_lint import (
     PRESETS,
+    ConfigError,
     LintConfig,
     get_all_check_names,
     get_all_eval_names,
@@ -150,7 +151,9 @@ def test_helper_model_role_fallback_fails(monorepo: tuple[Path, LintConfig]) -> 
         ),
     )
     assert statuses(root, config, "utils")["model_role_resolution"] == ["fail"]
-    config = replace(config, model_role_allowlist=frozenset({("utils", "<dynamic>")}))
+    config = replace(
+        config, allowlists={"model_role_resolution": frozenset({("utils", "<dynamic>")})}
+    )
     assert statuses(root, config, "utils")["model_role_resolution"] == ["warn"]
 
 
@@ -358,10 +361,50 @@ def test_invalid_check_name(monorepo: tuple[Path, LintConfig]) -> None:
 
 def test_disabled_checks_do_not_run(monorepo: tuple[Path, LintConfig]) -> None:
     root, config = monorepo
-    config = replace(config, disabled_checks=frozenset({"registry", "tests_init"}))
+    config = replace(config, ignore=("registry", "IETS002"))
     result = statuses(root, config)
     assert "registry" not in result
     assert "tests_init" not in result
+
+
+def test_select_prefix_runs_only_that_category(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    result = statuses(root, replace(config, select=("IEFS",)))
+    assert set(result) == {r.name for r in rules() if r.category == "file_structure"}
+
+
+def test_exclude_keeps_files_out_of_the_ast_rules(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    write(config.eval_dir(root, "alpha") / "challenges" / "bad.py", "print 'python 2'\n")
+    assert statuses(root, config)["private_api_imports"] == ["fail"]  # the parse failure
+    config = replace(config, exclude=("src/inspect_evals/*/challenges/**",))
+    assert statuses(root, config)["private_api_imports"] == ["pass"]
+
+
+def test_unparsable_file_is_reported_and_the_rest_still_checked(
+    monorepo: tuple[Path, LintConfig],
+) -> None:
+    root, config = monorepo
+    eval_dir = config.eval_dir(root, "alpha")
+    write(eval_dir / "broken.py", "def (:\n")
+    write(eval_dir / "private.py", "from inspect_ai.model._model import x\n")
+    report = lint_evaluation(root, "alpha", config, check="private_api_imports")
+    assert sorted(d.file.name for d in report.diagnostics) == ["broken.py", "private.py"]
+
+
+def test_per_file_ignores_suppress_by_glob(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    write(config.eval_dir(root, "alpha") / "data" / "gen.py", "s = Sample(input='x')\n")
+    assert statuses(root, config)["sample_ids"] == ["fail"]
+    config = replace(config, per_file_ignores=(("src/inspect_evals/*/data/**", ("IEBP003",)),))
+    assert statuses(root, config)["sample_ids"] == ["suppressed"]
+
+
+def test_legacy_noautolint_is_a_configuration_error(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    write(config.eval_dir(root, "alpha") / ".noautolint", "readme\n")
+    with pytest.raises(ConfigError, match="noautolint"):
+        lint_evaluation(root, "alpha", config)
 
 
 def test_custom_required_yaml_fields(template_repo: tuple[Path, LintConfig]) -> None:
@@ -414,8 +457,35 @@ def test_sandbox_allowlist_from_config(monorepo: tuple[Path, LintConfig]) -> Non
         "services:\n  default:\n    image: example/untagged\n",
     )
     assert statuses(root, config)["sandbox_image_pinning"] == ["fail"]
-    config = replace(config, sandbox_image_allowlist=frozenset({("alpha", "example/untagged")}))
+    config = replace(
+        config, allowlists={"sandbox_image_pinning": frozenset({("alpha", "example/untagged")})}
+    )
     assert statuses(root, config)["sandbox_image_pinning"] == ["warn"]
+    (warning,) = lint_evaluation(root, "alpha", config).statuses()["sandbox_image_pinning"]
+    assert warning == "warn"
+
+
+def test_stale_allowlist_entry_warns_at_pyproject(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    config = replace(
+        config, allowlists={"sandbox_image_pinning": frozenset({("alpha", "example/untagged")})}
+    )
+    report = lint_evaluation(root, "alpha", config, check="sandbox_image_pinning")
+    assert report.statuses()["sandbox_image_pinning"] == ["skip", "warn"]
+    (stale,) = report.diagnostics
+    assert stale.file.name == "pyproject.toml"
+    assert "no longer needed" in stale.message
+    assert "allowlists.sandbox_image_pinning" in (stale.hint or "")
+
+
+def test_allowlist_is_scoped_to_the_package(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    write(
+        config.eval_dir(root, "alpha") / "scorer.py",
+        'from inspect_ai.model import get_model\n\ngrader = get_model(role="grader")\n',
+    )
+    config = replace(config, allowlists={"model_role_resolution": frozenset({("beta", "grader")})})
+    assert statuses(root, config)["model_role_resolution"] == ["fail"]
 
 
 def test_register_layout_statuses(register_repo: tuple[Path, LintConfig]) -> None:
@@ -549,5 +619,9 @@ def test_model_role_allowlist_from_config(monorepo: tuple[Path, LintConfig]) -> 
         'from inspect_ai.model import get_model\n\ngrader = get_model(role="grader")\n',
     )
     assert statuses(root, config)["model_role_resolution"] == ["fail"]
-    config = replace(config, model_role_allowlist=frozenset({("alpha", "grader")}))
+    config = replace(config, allowlists={"model_role_resolution": frozenset({("alpha", "grader")})})
     assert statuses(root, config)["model_role_resolution"] == ["warn"]
+    report = lint_evaluation(root, "alpha", config, check="model_role_resolution")
+    (d,) = report.diagnostics
+    assert d.message.startswith("Allowlisted:")
+    assert "remove the allowlist entry" in (d.hint or "")

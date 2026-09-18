@@ -51,8 +51,8 @@ def test_single_eval_fail_prints_hints(
     (config.eval_dir(root, "alpha") / "README.md").unlink()
     assert run("alpha", "--root", str(root)) == 1
     out = capsys.readouterr().out
-    assert "# noautolint: readme" in out
-    assert "src/inspect_evals/alpha/.noautolint" in out
+    assert "# inspect-evals-lint: ignore[readme]" in out
+    assert 'per-file-ignores = { "src/inspect_evals/alpha/**"' in out
 
 
 def test_all_evals_and_check_summary(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -138,7 +138,7 @@ def test_helper_failure_sets_exit_code(
         'from inspect_ai.model import get_model\n\ngrader = get_model(role="grader")\n',
     )
     assert run("--all-evals", "--root", str(root)) == 1
-    assert "src/inspect_evals/utils/.noautolint" in capsys.readouterr().out
+    assert 'per-file-ignores = { "src/inspect_evals/utils/**"' in capsys.readouterr().out
 
 
 def test_json_with_check_summary_still_emits_document(

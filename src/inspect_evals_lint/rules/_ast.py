@@ -1,4 +1,4 @@
-"""Shared helpers for checks: AST parsing, decorator names, ``.noautolint`` directory skipping."""
+"""Shared helpers for rules: AST parsing, decorator names, file iteration that honours ``exclude``."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import ast
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic
 
 
@@ -77,32 +78,24 @@ def safe_parse_file(file_path: Path) -> ParsedFile | ParseFailure:
         return ParseFailure(path=file_path, error=str(e))
 
 
-def noautolint_skip_dirs(eval_path: Path) -> set[Path]:
-    """Sub-directories of ``eval_path`` holding a ``.noautolint`` file.
-
-    Files under these directories are excluded from AST-based checks entirely.
-    The eval directory's own ``.noautolint`` is not included: it lists per-check
-    suppressions rather than opting the whole tree out.
-    """
-    return {f.parent for f in eval_path.rglob(".noautolint") if f.parent != eval_path}
-
-
-def is_path_under_any(path: Path, skip_dirs: set[Path]) -> bool:
-    return any(path.is_relative_to(skip_dir) for skip_dir in skip_dirs)
-
-
-def iter_python_files(eval_path: Path) -> list[Path]:
-    """Python files under ``eval_path``, skipping ``.noautolint`` sub-directories, in stable order."""
-    skip_dirs = noautolint_skip_dirs(eval_path)
-    return [
-        p for p in eval_path.rglob("*.py") if not (skip_dirs and is_path_under_any(p, skip_dirs))
-    ]
+def iter_python_files(ctx: LintContext) -> list[Path]:
+    """Python files under the package, minus those matching the ``exclude`` globs, in stable order."""
+    files: list[Path] = []
+    for path in sorted(ctx.path.rglob("*.py")):
+        relative = (
+            path.relative_to(ctx.root).as_posix()
+            if path.is_relative_to(ctx.root)
+            else path.as_posix()
+        )
+        if not ctx.config.excludes(relative):
+            files.append(path)
+    return files
 
 
-def parse_python_files(eval_path: Path) -> ParseResults:
-    """Parse every Python file under ``eval_path`` (honouring ``.noautolint`` sub-directories)."""
+def parse_python_files(ctx: LintContext) -> ParseResults:
+    """Parse every Python file under the package that ``exclude`` does not rule out."""
     results = ParseResults()
-    for py_file in iter_python_files(eval_path):
+    for py_file in iter_python_files(ctx):
         outcome = safe_parse_file(py_file)
         if isinstance(outcome, ParsedFile):
             results.parsed.append(outcome)
