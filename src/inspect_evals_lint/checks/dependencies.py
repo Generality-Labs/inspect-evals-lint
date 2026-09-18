@@ -253,17 +253,24 @@ def _undeclared(external_imports: set[str], declared: set[str]) -> list[str]:
     return missing
 
 
-def _all_declared_optional(repo_root: Path, config: LintConfig, eval_name: str) -> set[str]:
-    """Every name declared in some optional group, dependency group or isolated package."""
+def _all_declared_optional(repo_root: Path, config: LintConfig) -> set[str]:
+    """Every name declared in some optional group, dependency group or isolated package.
+
+    All isolated packages count, not one named after the package under review:
+    a helper's deferred import is satisfied by whichever evaluation calls the
+    function that performs it, and an isolated evaluation declares its
+    dependencies only in its own ``pyproject.toml``.
+    """
     declared: set[str] = set()
     for deps in _load_pyproject_optional_deps(repo_root).values():
         declared.update(deps)
     if config.isolated_packages_dir:
-        isolated = _load_isolated_package_deps(
-            repo_root / config.isolated_packages_dir / eval_name / "pyproject.toml"
-        )
-        if isolated is not None:
-            declared.update(isolated)
+        for pyproject in sorted(
+            (repo_root / config.isolated_packages_dir).glob("*/pyproject.toml")
+        ):
+            isolated = _load_isolated_package_deps(pyproject)
+            if isolated is not None:
+                declared.update(isolated)
     return declared
 
 
@@ -311,7 +318,7 @@ def _check_helper_dependencies(
         )
         return
 
-    missing = _undeclared(external_lazy, _all_declared_optional(repo_root, config, eval_name))
+    missing = _undeclared(external_lazy, _all_declared_optional(repo_root, config))
     if missing:
         report.add(
             LintResult(
