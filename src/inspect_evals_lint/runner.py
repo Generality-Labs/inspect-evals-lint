@@ -15,6 +15,7 @@ from inspect_evals_lint.checks import (
     check_eval_yaml,
     check_external_dependencies,
     check_get_model_location,
+    check_gpu_sandbox_check,
     check_init_exports,
     check_main_file,
     check_model_role_resolution,
@@ -79,6 +80,7 @@ CHECKS: dict[str, CheckFn] = {
     "sandbox_image_pinning": lambda c: check_sandbox_image_pinning(
         c.eval_path, c.report, c.config.sandbox_image_allowlist
     ),
+    "gpu_sandbox_check": lambda c: check_gpu_sandbox_check(c.eval_path, c.report),
     "registry": lambda c: check_registry(c.root, c.eval_name, c.config, c.report),
     "eval_yaml": lambda c: check_eval_yaml(c.root, c.eval_name, c.config, c.report),
     "external_dependencies": lambda c: check_external_dependencies(
@@ -137,6 +139,7 @@ CHECK_CATEGORIES: dict[str, str] = {
     "sample_ids": "best_practices",
     "task_overridable_defaults": "best_practices",
     "sandbox_image_pinning": "best_practices",
+    "gpu_sandbox_check": "best_practices",
 }
 
 # Checks that also apply to helper packages: shared code has no task, README,

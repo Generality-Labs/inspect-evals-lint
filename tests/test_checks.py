@@ -15,7 +15,10 @@ from inspect_evals_lint.checks.file_structure import (
     _find_task_functions,
     _get_exported_names,
 )
-from inspect_evals_lint.checks.sandbox import check_sandbox_image_pinning
+from inspect_evals_lint.checks.sandbox import (
+    check_gpu_sandbox_check,
+    check_sandbox_image_pinning,
+)
 from inspect_evals_lint.checks.tests import _has_eval_call
 from inspect_evals_lint.models import LintReport
 
@@ -605,3 +608,68 @@ class TestCheckUnscoredReason:
         results = self._run(tmp_path, "a = Score.unscored()  # noautolint: unscored_reason\n")
         apply_suppressions(results, load_suppressions(tmp_path / "alpha"))
         assert [r.status for r in results] == ["suppressed"]
+
+
+class TestGpuSandboxCheck:
+    """Tests for check_gpu_sandbox_check."""
+
+    GPU_TASKS = "tasks:\n  - name: my_eval\n    dataset_samples: 10\n"
+
+    def run_check(self, tmp_path, eval_yaml, eval_name="my_eval"):
+        eval_path = tmp_path / eval_name
+        eval_path.mkdir()
+        if eval_yaml is not None:
+            (eval_path / "eval.yaml").write_text(eval_yaml)
+        report = LintReport(eval_name=eval_name)
+        check_gpu_sandbox_check(eval_path, report)
+        return [r for r in report.results if r.name == "gpu_sandbox_check"]
+
+    def test_missing_eval_yaml_skips(self, tmp_path):
+        results = self.run_check(tmp_path, None)
+        assert [r.status for r in results] == ["skip"]
+
+    def test_no_gpu_requirement_skips(self, tmp_path):
+        results = self.run_check(
+            tmp_path, self.GPU_TASKS + "metadata:\n  requires:\n    internet: true\n"
+        )
+        assert [r.status for r in results] == ["skip"]
+
+    def test_gpu_false_skips(self, tmp_path):
+        results = self.run_check(
+            tmp_path, self.GPU_TASKS + "metadata:\n  requires:\n    gpu: false\n"
+        )
+        assert [r.status for r in results] == ["skip"]
+
+    def test_gpu_eval_without_check_task_fails(self, tmp_path):
+        results = self.run_check(
+            tmp_path,
+            self.GPU_TASKS + "metadata:\n  requires:\n    gpu:\n      count: 1\n",
+        )
+        assert [r.status for r in results] == ["fail"]
+        assert "sandbox_check" in results[0].message
+        assert "kind: maintenance" in results[0].message
+
+    def test_gpu_eval_with_maintenance_check_task_passes(self, tmp_path):
+        results = self.run_check(
+            tmp_path,
+            self.GPU_TASKS
+            + "  - name: my_eval_sandbox_check\n    dataset_samples: 3\n    kind: maintenance\n"
+            + "metadata:\n  requires:\n    gpu: true\n",
+        )
+        assert [r.status for r in results] == ["pass"]
+        assert "my_eval_sandbox_check" in results[0].message
+
+    def test_check_task_must_be_declared_maintenance(self, tmp_path):
+        results = self.run_check(
+            tmp_path,
+            self.GPU_TASKS
+            + "  - name: my_eval_sandbox_check\n    dataset_samples: 3\n"
+            + "metadata:\n  requires:\n    gpu: true\n",
+        )
+        assert [r.status for r in results] == ["fail"]
+        assert "my_eval_sandbox_check" in results[0].message
+        assert "kind: maintenance" in results[0].message
+
+    def test_invalid_yaml_warns(self, tmp_path):
+        results = self.run_check(tmp_path, "tasks: [\n")
+        assert [r.status for r in results] == ["warn"]

@@ -21,7 +21,10 @@ from inspect_evals_lint.checks.file_structure import (
     check_registry,
     get_eval_path,
 )
-from inspect_evals_lint.checks.sandbox import check_sandbox_image_pinning
+from inspect_evals_lint.checks.sandbox import (
+    check_gpu_sandbox_check,
+    check_sandbox_image_pinning,
+)
 from inspect_evals_lint.checks.tests import (
     check_custom_scorer_tests,
     check_custom_solver_tests,
@@ -42,6 +45,7 @@ __all__ = [
     "check_eval_yaml",
     "check_external_dependencies",
     "check_get_model_location",
+    "check_gpu_sandbox_check",
     "check_init_exports",
     "check_main_file",
     "check_model_role_resolution",
