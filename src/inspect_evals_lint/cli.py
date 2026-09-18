@@ -25,19 +25,19 @@ from inspect_evals_lint.config import (
     read_tool_table,
 )
 from inspect_evals_lint.context import evaluation_names, helper_names
-from inspect_evals_lint.output import (
-    console,
+from inspect_evals_lint.registry import Rule, get_rule, rules
+from inspect_evals_lint.render import (
     print_check_summary,
     print_final_summary,
     print_overall_summary,
     print_report,
+    render_github,
     render_json,
-    stderr_console,
 )
-from inspect_evals_lint.registry import Rule, get_rule, rules
+from inspect_evals_lint.render.console import console, stderr_console
 from inspect_evals_lint.runner import lint_repository
 
-OUTPUT_FORMATS = ("text", "json")
+OUTPUT_FORMATS = ("text", "json", "github")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -74,7 +74,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-format",
         choices=OUTPUT_FORMATS,
         default="text",
-        help="text (default) prints reports and summaries; json writes one document to stdout",
+        help=(
+            "text (default) prints reports and summaries; json writes one document to stdout; "
+            "github writes one workflow annotation per finding"
+        ),
     )
     parser.add_argument(
         "--root",
@@ -173,8 +176,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     if not args.packages and not args.all:
         parser.error("Name at least one package or use --all")
 
-    # Under --output-format json, stdout carries only the document; everything informational goes to stderr.
-    info = stderr_console if args.output_format == "json" else console
+    # Under a machine-readable format stdout carries only the document; everything informational goes to stderr.
+    info = stderr_console if args.output_format != "text" else console
 
     repo_root = (args.root or find_repo_root()).resolve()
     try:
@@ -213,6 +216,9 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.output_format == "json":
         sys.stdout.write(render_json(run))
+        sys.exit(0 if run.passed() else 1)
+    if args.output_format == "github":
+        sys.stdout.write(render_github(run))
         sys.exit(0 if run.passed() else 1)
 
     for report in run.packages:

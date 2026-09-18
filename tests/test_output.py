@@ -7,7 +7,8 @@ from pathlib import Path
 
 from inspect_evals_lint import __version__
 from inspect_evals_lint.diagnostics import Diagnostic, Outcome, PackageReport, RunReport
-from inspect_evals_lint.output import (
+from inspect_evals_lint.registry import get_rule
+from inspect_evals_lint.render import (
     SCHEMA_VERSION,
     package_to_dict,
     print_final_summary,
@@ -15,7 +16,6 @@ from inspect_evals_lint.output import (
     render_json,
     run_to_dict,
 )
-from inspect_evals_lint.registry import get_rule
 
 README = get_rule("readme")
 REGISTRY = get_rule("registry")
@@ -189,3 +189,45 @@ def test_render_json_is_parseable_and_newline_terminated():
     text = render_json(make_run())
     assert text.endswith("\n")
     assert len(json.loads(text)["packages"]) == 5
+
+
+def test_github_annotations_cover_errors_and_warnings_only():
+    from inspect_evals_lint.render import render_github
+
+    text = render_github(make_run())
+    lines = text.splitlines()
+    assert lines[0] == (
+        "::error file=src/inspect_evals/bad_eval/README.md,title=IEFS006 readme::Missing README.md"
+    )
+    assert any(
+        line.startswith("::warning file=src/inspect_evals/mixed_eval/compose.yaml,")
+        for line in lines
+    )
+    assert not any("skip" in line for line in lines[:-1])
+    assert (
+        lines[-1] == "inspect-evals-lint: 3/5 packages passed; 3 failed, 1 warnings, 0 suppressed"
+    )
+
+
+def test_github_annotation_escapes_and_locates():
+    from inspect_evals_lint.render.github import annotation
+
+    run = make_run()
+    d = Diagnostic(
+        "50% done: a, b\nnext",
+        file=Path("/repo/src/x.py"),
+        line=3,
+        column=7,
+        hint="fix: it",
+        rule=README,
+    )
+    assert annotation(d, run) == (
+        "::error file=src/x.py,line=3,col=7,title=IEFS006 readme::50%25 done: a, b%0Anext; fix: it"
+    )
+    d.suppressed = True
+    assert annotation(d, run) is None
+
+
+def test_run_to_dict_is_available_on_the_report():
+    run = make_run()
+    assert run.to_dict() == run_to_dict(run)

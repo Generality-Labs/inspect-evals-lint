@@ -1,11 +1,9 @@
-"""Rich console rendering of run reports, and the JSON document."""
+"""Rich console rendering of run reports."""
 
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
 
 from rich.console import Console
 from rich.markup import escape
@@ -13,25 +11,21 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
-from inspect_evals_lint import __version__
 from inspect_evals_lint.config import LintConfig
 from inspect_evals_lint.diagnostics import (
     STATUSES,
     Diagnostic,
     Finding,
-    Outcome,
     PackageReport,
     RunReport,
     Status,
 )
+from inspect_evals_lint.render.paths import relative_to_root
 
 console = Console()
 stderr_console = Console(stderr=True)
 
 CHECKS_DOC_URL = "https://github.com/Generality-Labs/inspect-evals-lint/blob/main/docs/CHECKS.md"
-
-SCHEMA_VERSION = 1
-"""Bumped when the JSON document changes shape."""
 
 _STATUS_MARKUP = {
     "pass": "[bold green]PASS[/]",
@@ -65,16 +59,10 @@ def _rule_cell(item: Finding) -> str:
     return f"{item.rule.code} {item.rule.name}"
 
 
-def _relative(path: Path, root: Path | None) -> str:
-    if root is not None and path.is_absolute() and path.is_relative_to(root):
-        return path.relative_to(root).as_posix()
-    return str(path)
-
-
 def _location(item: Finding, root: Path | None) -> str:
     if not isinstance(item, Diagnostic):
         return ""
-    text = _relative(item.file, root)
+    text = relative_to_root(item.file, root)
     if item.line is not None:
         text += f":{item.line}"
         if item.column is not None:
@@ -311,63 +299,3 @@ def print_overall_summary(run: RunReport) -> None:
         console.print(
             f"[bold]{passed}/{len(run.packages)} {noun} passed[/], [red]{failed} failed[/]"
         )
-
-
-def _outcome_to_dict(outcome: Outcome) -> dict[str, Any]:
-    return {
-        "rule": outcome.rule.name if outcome.rule else None,
-        "code": outcome.rule.code if outcome.rule else None,
-        "category": outcome.rule.category if outcome.rule else None,
-        "status": outcome.status,
-        "message": outcome.message,
-    }
-
-
-def _diagnostic_to_dict(diagnostic: Diagnostic, root: Path | None) -> dict[str, Any]:
-    return {
-        "rule": diagnostic.rule.name if diagnostic.rule else None,
-        "code": diagnostic.rule.code if diagnostic.rule else None,
-        "category": diagnostic.rule.category if diagnostic.rule else None,
-        "severity": diagnostic.severity,
-        "status": diagnostic.status,
-        "message": diagnostic.message,
-        "file": _relative(diagnostic.file, root),
-        "line": diagnostic.line,
-        "column": diagnostic.column,
-        "hint": diagnostic.hint,
-    }
-
-
-def package_to_dict(report: PackageReport, root: Path | None = None) -> dict[str, Any]:
-    """One package's report as a JSON-serialisable mapping."""
-    return {
-        "name": report.name,
-        "kind": report.kind,
-        "passed": report.passed(),
-        "skipped": report.skipped,
-        "summary": report.summary(),
-        "outcomes": [_outcome_to_dict(o) for o in report.outcomes],
-        "diagnostics": [_diagnostic_to_dict(d, root) for d in report.diagnostics],
-    }
-
-
-def run_to_dict(run: RunReport) -> dict[str, Any]:
-    """The whole run as a JSON-serialisable mapping.
-
-    ``passed`` mirrors the CLI exit code: true when no rule failed in any package.
-    File paths are relative to the root when they fall under it, so the document
-    does not depend on the machine that produced it.
-    """
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "version": __version__,
-        "root": str(run.root),
-        "passed": run.passed(),
-        "summary": run.summary(),
-        "packages": [package_to_dict(p, run.root) for p in run.packages],
-    }
-
-
-def render_json(run: RunReport) -> str:
-    """The ``--output-format json`` document: :func:`run_to_dict` as indented JSON with a trailing newline."""
-    return json.dumps(run_to_dict(run), indent=2) + "\n"

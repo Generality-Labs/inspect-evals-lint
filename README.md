@@ -29,7 +29,7 @@ inspect-evals-lint --explain IEBP002        # one rule's documentation
 
 `--select` replaces the configured selection for one run and `--ignore` adds to it; both take rule names, codes or code prefixes, comma-separated. With more than one package the text output ends with an overall summary, a per-rule compliance table and the failures grouped by rule.
 
-`--output-format json` writes one document to stdout and sends progress to stderr, so the output can be piped straight into other tooling. It carries `schema_version`, `passed`, run-wide `summary` counts and a `packages` list. Each package has its `kind` (`eval` or `helper`), `outcomes` (one per rule that passed or did not apply) and `diagnostics` (one per finding, with `rule`, `code`, `category` (`file_structure`, `code_quality`, `tests` or `best_practices`), `severity`, `status`, `message`, `file` relative to the repository root, `line`, `column` and a `hint`). Every finding points at a file, and at a line where the finding is in a file's contents, so `# inspect-evals-lint: ignore[<rule>]` on that line suppresses it whatever the rule. The set of categories is stable: a new rule always joins one of the four, because badge and dashboard tooling keys on them.
+`--output-format json` writes one document to stdout and sends progress to stderr, so the output can be piped straight into other tooling ([docs/output.md](docs/output.md) has the schema). `--output-format github` writes one GitHub Actions annotation per finding instead, so a lint step marks up the pull request. It carries `schema_version`, `passed`, run-wide `summary` counts and a `packages` list. Each package has its `kind` (`eval` or `helper`), `outcomes` (one per rule that passed or did not apply) and `diagnostics` (one per finding, with `rule`, `code`, `category` (`file_structure`, `code_quality`, `tests` or `best_practices`), `severity`, `status`, `message`, `file` relative to the repository root, `line`, `column` and a `hint`). Every finding points at a file, and at a line where the finding is in a file's contents, so `# inspect-evals-lint: ignore[<rule>]` on that line suppresses it whatever the rule. The set of categories is stable: a new rule always joins one of the four, because badge and dashboard tooling keys on them.
 
 The repository root is the nearest `pyproject.toml` carrying a `[tool.inspect-evals-lint]` table (falling back to the nearest `pyproject.toml`, then the current directory). Pass `--root` to override.
 
@@ -120,7 +120,7 @@ for package in run.packages:
         print(f"  {d.rule.code} {d.location}: {d.message}")
 ```
 
-`lint_package(root, name, config)` lints one package and returns a `PackageReport`. `rules()` lists every registered `Rule`; `get_rule("IEBP002")` or `get_rule("model_role_resolution")` looks one up. `inspect_evals_lint.output.run_to_dict(run)` is the JSON document.
+`lint_package(root, name, config)` lints one package and returns a `PackageReport`. `rules()` lists every registered `Rule`; `get_rule("IEBP002")` or `get_rule("model_role_resolution")` looks one up. `run.to_dict()` is the JSON document described in [docs/output.md](docs/output.md).
 
 ## Development
 

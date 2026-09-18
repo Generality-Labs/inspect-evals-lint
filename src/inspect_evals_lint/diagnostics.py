@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from inspect_evals_lint.registry import Rule
@@ -160,3 +160,9 @@ class RunReport:
 
     def of_kind(self, kind: PackageKind) -> list[PackageReport]:
         return [p for p in self.packages if p.kind == kind]
+
+    def to_dict(self) -> dict[str, Any]:
+        """The JSON document for this run; see docs/output.md."""
+        from inspect_evals_lint.render.json import run_to_dict  # renderers import this module
+
+        return run_to_dict(self)
