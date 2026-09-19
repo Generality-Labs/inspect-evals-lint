@@ -121,7 +121,7 @@ def index_page() -> str:
         "",
         "## Suppression",
         "",
-        "- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. `ignore` without a bracketed list is a configuration error.",
+        "- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. `ignore` without a bracketed list is a configuration error. In a Dockerfile, on the line above the instruction.",
         "- File: `# inspect-evals-lint: ignore-file[<rule>]` within the first ten lines.",
         '- Paths: `per-file-ignores = { "<glob>" = ["<rule>"] }` in `[tool.inspect-evals-lint]`.',
         '- Never read: `exclude = ["<glob>"]` keeps files out of the AST-based rules entirely, for code shipped into a sandbox.',

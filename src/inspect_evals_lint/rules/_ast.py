@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -78,10 +79,14 @@ def safe_parse_file(file_path: Path) -> ParsedFile | ParseFailure:
         return ParseFailure(path=file_path, error=str(e))
 
 
-def iter_python_files(ctx: LintContext) -> list[Path]:
-    """Python files under the package, minus those matching the ``exclude`` globs, in stable order."""
+def iter_package_files(
+    ctx: LintContext, pattern: str, keep: Callable[[Path], bool] = Path.is_file
+) -> list[Path]:
+    """Files under the package matching ``pattern``, minus those the ``exclude`` globs rule out, in stable order."""
     files: list[Path] = []
-    for path in sorted(ctx.path.rglob("*.py")):
+    for path in sorted(ctx.path.rglob(pattern)):
+        if not keep(path):
+            continue
         relative = (
             path.relative_to(ctx.root).as_posix()
             if path.is_relative_to(ctx.root)
@@ -90,6 +95,21 @@ def iter_python_files(ctx: LintContext) -> list[Path]:
         if not ctx.config.excludes(relative):
             files.append(path)
     return files
+
+
+def iter_python_files(ctx: LintContext) -> list[Path]:
+    """Python files under the package that ``exclude`` does not rule out."""
+    return iter_package_files(ctx, "*.py")
+
+
+def is_dockerfile(path: Path) -> bool:
+    """``Dockerfile``, ``Dockerfile.gpu`` and the like; case-sensitive, so ``dockerfile.py`` is not one."""
+    return path.is_file() and path.name.startswith("Dockerfile") and path.suffix != ".py"
+
+
+def iter_dockerfiles(ctx: LintContext) -> list[Path]:
+    """Dockerfiles under the package that ``exclude`` does not rule out."""
+    return iter_package_files(ctx, "Dockerfile*", keep=is_dockerfile)
 
 
 def parse_python_files(ctx: LintContext) -> ParseResults:

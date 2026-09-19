@@ -98,12 +98,40 @@ def test_apply_marks_covered_diagnostics(tmp_path: Path) -> None:
     assert [d.status for d in diagnostics] == ["suppressed", "warn", "suppressed"]
 
 
+def test_dockerfile_comment_covers_the_instruction_below_or_its_own_line(tmp_path: Path) -> None:
+    """Dockerfile instructions take no trailing comment, so the comment above an instruction covers it."""
+    pkg = tmp_path / "e"
+    dockerfile = write(
+        pkg / "Dockerfile",
+        "# inspect-evals-lint: ignore-file[IEBP005]\n"
+        "# inspect-evals-lint: ignore[readme]\n"
+        "\n"
+        "# an ordinary comment in between\n"
+        "FROM python:3.12\n"
+        "RUN pip install x  # inspect-evals-lint: ignore[IEBP, sample_ids]\n"
+        "# inspect-evals-lint: ignore[IEFS001]\n",
+    )
+    write(pkg / "dockerfile.py", "x = 1  # inspect-evals-lint: ignore[IEFS002]\n")
+    s = load_suppressions(context_for(pkg))
+    assert s.file_level == {dockerfile: {"IEBP005"}}
+    assert s.line_level[dockerfile] == {5: {"readme"}, 6: {"IEBP", "sample_ids"}, 7: {"IEFS001"}}
+    assert s.line_level[pkg / "dockerfile.py"] == {1: {"IEFS002"}}
+
+
+def test_dockerfile_legacy_comment_is_an_error(tmp_path: Path) -> None:
+    pkg = tmp_path / "e"
+    write(pkg / "Dockerfile.gpu", "FROM x\n# noautolint: readme\n")
+    with pytest.raises(ConfigError, match="ignore\\[<rule>\\]"):
+        load_suppressions(context_for(pkg))
+
+
 def test_comments_in_excluded_files_are_not_read(tmp_path: Path) -> None:
     """A legacy or malformed comment in sandbox code that exclude keeps out of the rules is not an error."""
     from dataclasses import replace
 
     pkg = tmp_path / "src" / "e"
     write(pkg / "challenges" / "solve.py", "print 'py2'  # noautolint: readme\n")
+    write(pkg / "challenges" / "Dockerfile", "# noautolint: readme\nFROM x\n")
     write(pkg / "ok.py", "x = 1  # inspect-evals-lint: ignore[readme]\n")
     with pytest.raises(ConfigError):
         load_suppressions(context_for(pkg))
