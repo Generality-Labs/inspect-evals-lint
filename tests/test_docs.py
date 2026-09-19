@@ -85,3 +85,64 @@ def test_site_index_rewrites_links_for_the_site(tmp_path: Path) -> None:
 def test_committed_site_index_matches_readme() -> None:
     assert (REPO / "docs" / "index.md").exists()
     assert docs.stale_files(REPO) == []
+
+
+def test_site_url_matches_mkdocs() -> None:
+    import yaml
+
+    config = yaml.safe_load((REPO / "mkdocs.yml").read_text(encoding="utf-8"))
+    assert config["site_url"] == docs.SITE_URL
+
+
+def test_llms_txt_lists_every_rule_as_raw_markdown() -> None:
+    text = docs.llms_txt()
+    assert text.startswith("# inspect-evals-lint\n\n> ")
+    for rule in rules():
+        assert f"[{rule.code} {rule.name}]({docs.SITE_URL}rules/{rule.code}.md)" in text
+    assert f"{docs.SITE_URL}rules.json" in text
+    assert "llms-full.txt" in text
+
+
+def test_rules_json_is_complete_and_machine_readable() -> None:
+    import json
+
+    data = json.loads(docs.rules_json())
+    assert data["site"] == docs.SITE_URL
+    by_code = {r["code"]: r for r in data["rules"]}
+    assert set(by_code) == {r.code for r in rules()}
+    entry = by_code["IEBP002"]
+    assert entry["name"] == "model_role_resolution"
+    assert entry["allowlist"] is True
+    assert entry["scopes"] == ["eval", "helper"]
+    assert entry["markdown"].endswith("/rules/IEBP002.md")
+
+
+def test_llms_full_concatenates_every_page() -> None:
+    text = docs.llms_full_txt(REPO, (REPO / "README.md").read_text(encoding="utf-8"))
+    for rule in rules():
+        assert f"# {rule.code}: {rule.name}" in text
+    assert "# Rule index" in text
+    assert "# Output formats" in text
+    assert docs.GENERATED_NOTE not in text
+
+
+def test_post_build_hook_publishes_raw_markdown(tmp_path: Path) -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("mkdocs_hooks", REPO / "mkdocs_hooks.py")
+    assert spec
+    assert spec.loader
+    hooks = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hooks)
+    docs_dir, site_dir = tmp_path / "docs", tmp_path / "site"
+    (docs_dir / "rules").mkdir(parents=True)
+    (docs_dir / "index.md").write_text("# home\n")
+    (docs_dir / "CHECKS.md").write_text("# rules\n")
+    (docs_dir / "rules" / "IEFS001.md").write_text("# IEFS001\n")
+    site_dir.mkdir()
+    hooks.on_post_build({"docs_dir": str(docs_dir), "site_dir": str(site_dir)})
+    assert (site_dir / "index.md").read_text() == "# home\n"
+    assert (site_dir / "CHECKS.md").read_text() == "# rules\n"
+    assert (site_dir / "CHECKS" / "index.md").read_text() == "# rules\n"
+    assert (site_dir / "rules" / "IEFS001.md").read_text() == "# IEFS001\n"
+    assert (site_dir / "rules" / "IEFS001" / "index.md").read_text() == "# IEFS001\n"

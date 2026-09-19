@@ -1,0 +1,1004 @@
+# inspect-evals-lint
+
+Static checks for [Inspect AI](https://inspect.aisi.org.uk/) evaluations: file structure, test coverage conventions, best practices and sandbox image pinning. Documentation, including a page per rule, is at [inspect-evals-lint.generality.org](https://inspect-evals-lint.generality.org/).
+
+These checks began life as the `autolint` tool inside [inspect_evals](https://github.com/UKGovernmentBEIS/inspect_evals). They are packaged here so any repository of Inspect evaluations can run the same checks, including standalone repos built from the [inspect-evals-template](https://github.com/Generality-Labs/inspect-evals-template) and submitted to the inspect_evals register.
+
+Nothing is imported or executed from the evaluation being checked. Every check is static analysis over Python source (via `ast`), `eval.yaml`, compose files and `pyproject.toml`.
+
+## Install
+
+```bash
+uv add --dev inspect-evals-lint
+# or
+pip install inspect-evals-lint
+```
+
+## Usage
+
+```bash
+inspect-evals-lint gpqa                     # one evaluation (or helper package, e.g. utils)
+inspect-evals-lint gpqa utils               # several
+inspect-evals-lint --all                    # every evaluation and helper package in the repo
+inspect-evals-lint --all --select IEBP      # only the best-practice rules
+inspect-evals-lint gpqa --ignore readme,IETS
+inspect-evals-lint --all --output-format json > lint.json
+inspect-evals-lint --list-rules             # every rule with its code, category, scope and summary
+inspect-evals-lint --explain IEBP002        # one rule's documentation
+```
+
+Run it inside the project's environment (`uv run inspect-evals-lint`): `external_dependencies` maps import names to distributions through the packages installed there. `--select` replaces the configured selection for one run and `--ignore` adds to it; both take rule names, codes or code prefixes, comma-separated. With more than one package the text output ends with an overall summary, a per-rule compliance table and the failures grouped by rule.
+
+`--output-format json` writes one document to stdout and sends progress to stderr, so the output can be piped straight into other tooling ([docs/output.md](output.md) has the schema). `--output-format github` writes one GitHub Actions annotation per finding instead, so a lint step marks up the pull request. It carries `schema_version`, `passed`, run-wide `summary` counts and a `packages` list. Each package has its `kind` (`eval` or `helper`), `outcomes` (one per rule that passed or did not apply) and `diagnostics` (one per finding, with `rule`, `code`, `category` (`file_structure`, `code_quality`, `tests` or `best_practices`), `severity`, `status`, `message`, `file` relative to the repository root, `line`, `column` and a `hint`). Every finding points at a file, and at a line where the finding is in a file's contents, so `# inspect-evals-lint: ignore[<rule>]` on that line suppresses it whatever the rule. The set of categories is stable: a new rule always joins one of the four, because badge and dashboard tooling keys on them.
+
+The repository root is the nearest `pyproject.toml` carrying a `[tool.inspect-evals-lint]` table (falling back to the nearest `pyproject.toml`, then the current directory). Pass `--root` to override.
+
+Exit codes: `0` all checks passed (warnings, skips and suppressions count as passing), `1` at least one check failed, `2` usage or configuration error.
+
+## Configuration
+
+Configuration lives in `pyproject.toml`. Pick a layout preset and override any field:
+
+```toml
+[tool.inspect-evals-lint]
+preset = "template"   # or "monorepo" / "register"
+```
+
+<!-- config-table:start -->
+
+| Key                         | `template` preset                                            | `monorepo` preset                                            | `register` preset                                            | Meaning                                                                                                                                                                                                                                                                                                               |
+| --------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `source-root`               | `src`                                                        | `src/inspect_evals`                                          | `src`                                                        | Directory (relative to the repo root) holding one sub-directory per evaluation.                                                                                                                                                                                                                                       |
+| `tests-root`                | `tests`                                                      | `tests`                                                      | `tests`                                                      | Directory holding `<tests_root>/<name>/` test packages.                                                                                                                                                                                                                                                               |
+| `tests-layout`              | `per-eval`                                                   | `per-eval`                                                   | `flat`                                                       | `per-eval` requires `<tests_root>/<name>/`; `flat` also accepts test files directly under `tests_root`, as single-evaluation repositories usually have.                                                                                                                                                               |
+| `readme-location`           | `eval-dir`                                                   | `eval-dir`                                                   | `repo-root`                                                  | `eval-dir` requires `README.md` inside the evaluation directory; `repo-root` also accepts the repository's top-level `README.md`.                                                                                                                                                                                     |
+| `eval-yaml-required`        | `true`                                                       | `true`                                                       | `false`                                                      | Whether a missing `eval.yaml` fails. False skips instead, for repositories whose metadata lives in the inspect_evals register; a present file is still validated.                                                                                                                                                     |
+| `import-prefix`             | `""`                                                         | `inspect_evals`                                              | `""`                                                         | Dotted import prefix for evaluations, e.g. `inspect_evals`; empty when an eval imports as `<name>`.                                                                                                                                                                                                                   |
+| `registry`                  | `entry-points`                                               | `module`                                                     | `entry-points`                                               | How tasks are registered: a Python module that imports every eval, `[project.entry-points.inspect_ai]`, or not checked.                                                                                                                                                                                               |
+| `registry-module`           | unset                                                        | `src/inspect_evals/_registry.py`                             | unset                                                        | Path of the registry module (relative to the repo root); required when `registry == "module"`.                                                                                                                                                                                                                        |
+| `helper-dirs`               | `["utils"]`                                                  | `["utils"]`                                                  | `["utils"]`                                                  | Sub-directories of `source_root` holding shared code rather than an evaluation. They are linted with the helper scope: the rules that guard code behaviour (private imports, score values, model roles, dependencies, tests for custom components) but not the ones about an evaluation's structure and registration. |
+| `ignore-dirs`               | `["examples"]`                                               | `[]`                                                         | `["examples"]`                                               | Sub-directories of `source_root` that are never linted.                                                                                                                                                                                                                                                               |
+| `eval-yaml-required-fields` | `["title", "description", "group", "contributors", "tasks"]` | `["title", "description", "group", "contributors", "tasks"]` | `["title", "description", "group", "contributors", "tasks"]` | Top-level keys every `eval.yaml` must define.                                                                                                                                                                                                                                                                         |
+| `isolated-packages-dir`     | unset                                                        | `packages`                                                   | unset                                                        | Directory of per-eval `<dir>/<name>/pyproject.toml` files that declare an eval's dependencies instead of a root extra.                                                                                                                                                                                                |
+| `select`                    | `["IE"]`                                                     | `["IE"]`                                                     | `["IE"]`                                                     | Rules to run: names, codes or code prefixes. The default prefix selects every rule.                                                                                                                                                                                                                                   |
+| `ignore`                    | `[]`                                                         | `[]`                                                         | `[]`                                                         | Rules never to run, in the same forms as `select`. Wins over `select`.                                                                                                                                                                                                                                                |
+| `exclude`                   | `[]`                                                         | `[]`                                                         | `[]`                                                         | Glob patterns, relative to the repository root, of files the AST-based rules never read. For code that is shipped into a sandbox rather than run on the host, such as challenge sources that are not even valid Python 3.                                                                                             |
+| `per-file-ignores`          | `[]`                                                         | `[]`                                                         | `[]`                                                         | `(glob, selectors)` pairs: findings in files matching the glob are suppressed for the selected rules.                                                                                                                                                                                                                 |
+| `allowlists.<rule>`         | `{}`                                                         | `{}`                                                         | `{}`                                                         | Per rule, the `(package, key)` pairs it reports as warnings instead of failures. Only rules declared with `allowlist=True` accept one.                                                                                                                                                                                |
+| `<rule>`                    | `{}`                                                         | `{ dockerfile_locking = { host-lock-coupling = "warn" } }`   | `{}`                                                         | `[tool.inspect-evals-lint.<rule>]` tables, passed through to the rule that declares them. Keys may be kebab-case; a preset's default for a key applies when the table leaves it unset.                                                                                                                                |
+
+<!-- config-table:end -->
+
+Without a `[tool.inspect-evals-lint]` table the `template` preset is used. `--preset` overrides the table for one run. A fuller table:
+
+```toml
+[tool.inspect-evals-lint]
+preset = "monorepo"
+ignore = ["IETS004"]                                   # by name, code or prefix
+exclude = ["src/inspect_evals/*/challenges/**"]         # sandbox code: never parsed
+per-file-ignores = { "src/inspect_evals/*/data/**" = ["IEBP003"] }
+
+[tool.inspect-evals-lint.allowlists.model_role_resolution]
+moru = ["grader"]                                       # package = [keys the rule names]
+
+[tool.inspect-evals-lint.allowlists.sandbox_image_pinning]
+cybench = ["example/untagged"]
+
+[tool.inspect-evals-lint.dockerfile_locking]                # a rule's own options
+host-lock-coupling = "allow"
+```
+
+An allowlisted finding is reported as a warning with its message prefixed `Allowlisted:`, and an entry that no finding matches is itself a warning at `pyproject.toml`, so the list can only shrink. A table named after a rule holds that rule's options, merged over the preset's defaults key by key; each rule's page lists what it accepts. Removed keys (`disabled-checks`, `non-eval-dirs`, `sandbox-image-allowlist`, `model-role-allowlist`) are rejected with a message naming their replacement.
+
+Only Python packages are linted: a sub-directory of `source-root` without an `__init__.py` (a README left behind after a move, a data directory) is skipped by `--all` and reported as a skip when named directly, so it needs no `ignore-dirs` entry. `ignore-dirs` is for packages you really do not want checked.
+
+### Helper packages
+
+Shared code that evaluations import, such as inspect_evals' `utils` package, is not an evaluation but does most of the same things: it grades, it resolves models, it imports third-party packages. Directories listed in `helper-dirs` are linted with the checks that guard that behaviour (`private_api_imports`, `score_constants`, `unscored_reason`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `external_dependencies`, `tests_init` and the `custom_*_tests` checks) and not with the ones about an evaluation's structure and registration (`main_file`, `init_exports`, `readme`, `registry`, `eval_yaml`, `tests_exist`, `e2e_test`, `record_to_sample_test`). Two checks adapt: `external_dependencies` requires a helper's module-level third-party imports to be in `[project].dependencies`, since every evaluation that imports the helper loads them, while imports inside a function, a `try` block or an `if TYPE_CHECKING:` block only need declaring in some group or isolated package; and the `custom_*_tests` checks look for a helper's tests anywhere under `tests-root`, not only in `tests/<name>/`. Allowlists are keyed by package name, so `utils = ["grader"]` under `allowlists.model_role_resolution` works for a helper too. A failing helper check fails the run like any other.
+
+The `register` preset is for an upstream repository listed in the [inspect_evals register](https://github.com/UKGovernmentBEIS/inspect_evals/blob/main/register/README.md): one evaluation, tests directly under `tests/`, the README at the repository root, and metadata held by the register entry rather than an `eval.yaml` in the repo. Run it from outside the repo with `inspect-evals-lint --root <clone> --preset register --all --output-format json`.
+
+## For agents and tools
+
+The documentation site is built to be read by machines as well as people:
+
+- [`llms.txt`](https://inspect-evals-lint.generality.org/llms.txt) is an index of the whole site in the [llms.txt](https://llmstxt.org) convention; [`llms-full.txt`](https://inspect-evals-lint.generality.org/llms-full.txt) is every page concatenated.
+- Every page is also served as raw Markdown at the same path with a `.md` suffix, for example [`rules/IEBP002.md`](https://inspect-evals-lint.generality.org/rules/IEBP002.md).
+- [`rules.json`](https://inspect-evals-lint.generality.org/rules.json) lists every rule with its code, name, category, scopes, summary and page URLs.
+- Locally, `inspect-evals-lint --explain <code>` prints the same page text, `--list-rules --output-format json` lists the rules, and `--output-format json` gives findings with file, line, column and a hint ([schema](output.md)).
+
+## Suppressing a finding
+
+Every finding has a file and, where it is in a file's contents, a line, so one comment syntax covers every rule:
+
+- Line: `# inspect-evals-lint: ignore[IEBP003]` on the offending line, or on any line of a multi-line statement (formatters move trailing comments inside parenthesised imports). Names, codes and code prefixes are accepted, comma-separated. A bare `ignore` or `ignore[]` is a configuration error, so a suppression always says what it silences. In a Dockerfile, whose instructions take no trailing comment, put it on the line above the instruction.
+- File: `# inspect-evals-lint: ignore-file[IEBP003]` within the first ten lines of the file.
+- Paths: `per-file-ignores` in the configuration table, for whole directories.
+- Not linted at all: `exclude`, for code that is shipped into a sandbox rather than run on the host.
+
+The comment is namespaced with the tool's name rather than reusing ruff's `# noqa`: ruff reads every `# noqa` comment and warns about codes it does not know, so a shared spelling would turn each suppression into a ruff warning. The former `noautolint` comments and `.noautolint` files are rejected with a message naming the replacement. Suppressed findings still appear in reports, marked `[suppressed]`, and count as passing.
+
+## Checks
+
+[docs/CHECKS.md](CHECKS.md) lists every rule by category and links to a page per rule under [docs/rules/](CHECKS.md), generated from each rule's docstring by `python -m inspect_evals_lint.docs`; `inspect-evals-lint --explain <code>` prints the same text. Each rule is a decorated function in `src/inspect_evals_lint/rules/`: adding one means adding the function, its docstring and its tests, and regenerating the docs (pre-commit checks they are current).
+
+## Python API
+
+```python
+from pathlib import Path
+from inspect_evals_lint import lint_repository, load_config
+
+root = Path(".")
+run = lint_repository(root, load_config(root))      # RunReport: every evaluation and helper package
+for package in run.packages:
+    print(package.name, package.kind, package.passed(), package.summary())
+    for d in package.diagnostics:
+        print(f"  {d.rule.code} {d.location}: {d.message}")
+```
+
+`lint_package(root, name, config)` lints one package and returns a `PackageReport`. `rules()` lists every registered `Rule`; `get_rule("IEBP002")` or `get_rule("model_role_resolution")` looks one up. `run.to_dict()` is the JSON document described in [docs/output.md](output.md).
+
+## Development
+
+```bash
+uv sync
+uv run pre-commit install   # optional: run the lint stack on every commit
+uv run pytest                 # per-rule tests live under tests/rules/
+uv run basedpyright src
+```
+
+`docs/CHECKS.md`, `docs/rules/`, `docs/index.md` and the configuration table above are generated by `uv run python -m inspect_evals_lint.docs`; pre-commit fails if they are out of date. `uv run --group docs mkdocs serve` previews the site, which `docs.yml` publishes from main. Linting (ruff, [zizmor](https://docs.zizmor.sh/), mdformat) runs via [pre-commit](https://pre-commit.com); CI runs the same stack plus basedpyright and pytest via the shared [`python-ci`](https://github.com/Generality-Labs/python-project-template) reusable workflow.
+
+## Releasing
+
+See [RELEASING.md](https://github.com/Generality-Labs/inspect-evals-lint/blob/main/RELEASING.md).
+
+
+---
+
+# Rule index
+
+Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four categories below) and a name; either is accepted by `--select`, `--ignore` and in suppression comments, and a prefix selects a whole category. A rule reports one diagnostic per site it finds something wrong at, each with a file and, where the finding is in a file's contents, a line and column. A rule with nothing to point at reports `pass`, or `skip` with the reason. Diagnostics are `fail` or `warn`; only `fail` makes the run exit non-zero. `inspect-evals-lint --explain <code>` prints the same text as a rule's page.
+
+## File structure
+
+| Code                        | Rule               | Applies to   | Summary                                                              |
+| --------------------------- | ------------------ | ------------ | -------------------------------------------------------------------- |
+| [IEFS001](rules/IEFS001.md) | `package_location` | eval, helper | The package exists at <source-root>/<name>/ with an __init__.py      |
+| [IEFS002](rules/IEFS002.md) | `main_file`        | eval         | <name>.py or tasks.py exists and defines at least one @task function |
+| [IEFS003](rules/IEFS003.md) | `init_exports`     | eval         | __init__.py exports every @task function from the main file          |
+| [IEFS004](rules/IEFS004.md) | `registry`         | eval         | The evaluation is registered so inspect eval can find its tasks      |
+| [IEFS005](rules/IEFS005.md) | `eval_yaml`        | eval         | eval.yaml exists, is a mapping, and defines the required fields      |
+| [IEFS006](rules/IEFS006.md) | `readme`           | eval         | README.md exists and has no TODO markers                             |
+
+## Code quality
+
+| Code                        | Rule                    | Applies to   | Summary                                                                               |
+| --------------------------- | ----------------------- | ------------ | ------------------------------------------------------------------------------------- |
+| [IECQ001](rules/IECQ001.md) | `private_api_imports`   | eval, helper | No imports from private inspect_ai modules                                            |
+| [IECQ002](rules/IECQ002.md) | `score_constants`       | eval, helper | Score() values use the CORRECT/INCORRECT constants, not string literals               |
+| [IECQ003](rules/IECQ003.md) | `unscored_reason`       | eval, helper | Score.unscored() passes a reason= and the legacy unscored_reason metadata key is gone |
+| [IECQ004](rules/IECQ004.md) | `external_dependencies` | eval, helper | Third-party imports are declared in pyproject.toml                                    |
+
+## Tests
+
+| Code                        | Rule                    | Applies to   | Summary                                                             |
+| --------------------------- | ----------------------- | ------------ | ------------------------------------------------------------------- |
+| [IETS001](rules/IETS001.md) | `tests_exist`           | eval         | A test directory exists for the evaluation                          |
+| [IETS002](rules/IETS002.md) | `tests_init`            | eval, helper | The test directory and its sub-directories contain __init__.py      |
+| [IETS003](rules/IETS003.md) | `e2e_test`              | eval         | Some test runs eval() against mockllm/model                         |
+| [IETS004](rules/IETS004.md) | `record_to_sample_test` | eval         | record_to_sample is exercised by a test when the evaluation uses it |
+| [IETS005](rules/IETS005.md) | `custom_solver_tests`   | eval, helper | Every @solver function name appears somewhere in the tests          |
+| [IETS006](rules/IETS006.md) | `custom_scorer_tests`   | eval, helper | Every @scorer function name appears somewhere in the tests          |
+| [IETS007](rules/IETS007.md) | `custom_tool_tests`     | eval, helper | Every @tool function name appears somewhere in the tests            |
+
+## Best practices
+
+| Code                        | Rule                        | Applies to   | Summary                                                                                       |
+| --------------------------- | --------------------------- | ------------ | --------------------------------------------------------------------------------------------- |
+| [IEBP001](rules/IEBP001.md) | `get_model_location`        | eval, helper | get_model() is only called inside @solver or @scorer functions                                |
+| [IEBP002](rules/IEBP002.md) | `model_role_resolution`     | eval, helper | get_model(role=...) resolves deliberately: an explicit model, default= or required=True       |
+| [IEBP003](rules/IEBP003.md) | `sample_ids`                | eval, helper | Every Sample() passes id=                                                                     |
+| [IEBP004](rules/IEBP004.md) | `task_overridable_defaults` | eval, helper | @task parameters naming a solver, scorer, metric, grader or model have defaults               |
+| [IEBP005](rules/IEBP005.md) | `sandbox_image_pinning`     | eval, helper | Registry images in compose files use an immutable tag or digest                               |
+| [IEBP006](rules/IEBP006.md) | `gpu_sandbox_check`         | eval         | An evaluation requiring a GPU ships a maintenance sandbox check task                          |
+| [IEBP007](rules/IEBP007.md) | `dockerfile_locking`        | eval         | Dockerfile builds consume locked inputs: committed locks, digest-pinned images, fixed sources |
+
+## Helper packages
+
+Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
+
+## Categories
+
+Each rule belongs to one of exactly four categories, the sections above. The JSON output and `registry.CATEGORIES` expose them, and downstream tooling (badges, the register lint service) is built around that fixed set. A new rule joins one of the four; adding a category would be a breaking change.
+
+## Suppression
+
+- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. `ignore` without a bracketed list is a configuration error. In a Dockerfile, on the line above the instruction.
+- File: `# inspect-evals-lint: ignore-file[<rule>]` within the first ten lines.
+- Paths: `per-file-ignores = { "<glob>" = ["<rule>"] }` in `[tool.inspect-evals-lint]`.
+- Never read: `exclude = ["<glob>"]` keeps files out of the AST-based rules entirely, for code shipped into a sandbox.
+
+Suppressed findings still appear in reports, marked `[suppressed]`, and count as passing. The former `noautolint` comments and `.noautolint` files are rejected with a message naming the replacement.
+
+
+---
+
+# Output formats
+
+`--output-format text` (the default) prints a report per package and, with more than one package, an overall summary, a per-rule compliance table and the failures grouped by rule. The two machine-readable formats are described here. Under either, progress messages go to stderr and stdout carries only the document, so the output can be redirected or piped.
+
+## JSON (`--output-format json`)
+
+One document per run. `RunReport.to_dict()` produces the same mapping from the Python API.
+
+```json
+{
+  "schema_version": 1,
+  "version": "0.3.0",
+  "root": "/abs/path/to/repo",
+  "passed": false,
+  "summary": {"pass": 40, "fail": 2, "warn": 1, "skip": 6, "suppressed": 0},
+  "packages": [
+    {
+      "name": "gpqa",
+      "kind": "eval",
+      "passed": false,
+      "skipped": null,
+      "summary": {"pass": 20, "fail": 2, "warn": 0, "skip": 3, "suppressed": 0},
+      "outcomes": [
+        {"rule": "package_location", "code": "IEFS001", "category": "file_structure", "status": "pass", "message": "Package located at src/inspect_evals/gpqa"}
+      ],
+      "diagnostics": [
+        {
+          "rule": "sample_ids",
+          "code": "IEBP003",
+          "category": "best_practices",
+          "severity": "error",
+          "status": "fail",
+          "message": "Sample() call without id=",
+          "file": "src/inspect_evals/gpqa/gpqa.py",
+          "line": 42,
+          "column": 12,
+          "hint": "pass a stable id= so the sample survives shuffles and reruns"
+        }
+      ]
+    }
+  ]
+}
+```
+
+| Field                      | Meaning                                                                                                                                                                                                                                         |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema_version`           | Integer, bumped when this document changes shape. Check it first.                                                                                                                                                                               |
+| `version`                  | The inspect-evals-lint version that produced the document.                                                                                                                                                                                      |
+| `root`                     | Absolute repository root the run used. Every `file` below is relative to it when it falls under it.                                                                                                                                             |
+| `passed`                   | `true` when no diagnostic in any package has status `fail`. Mirrors the exit code.                                                                                                                                                              |
+| `summary`                  | Counts of every outcome and diagnostic status across the run.                                                                                                                                                                                   |
+| `packages[].kind`          | `eval` or `helper`. Filter on this rather than expecting separate lists.                                                                                                                                                                        |
+| `packages[].skipped`       | Why the package was not linted at all (listed in `ignore-dirs`), else `null`.                                                                                                                                                                   |
+| `packages[].outcomes[]`    | One per rule that ran and had nothing to point at: `status` is `pass` or `skip`, `message` says why.                                                                                                                                            |
+| `packages[].diagnostics[]` | One per finding. `severity` is `error` or `warning`; `status` is `fail`, `warn` or `suppressed`. `line` and `column` are 1-based and `null` when the finding is about a file or directory as a whole. `hint` is what to do about it, or `null`. |
+
+`category` is always one of `file_structure`, `code_quality`, `tests` and `best_practices`; a new rule joins one of the four, so tooling that groups by category (badges, dashboards) does not change when rules are added.
+
+## GitHub Actions (`--output-format github`)
+
+One [workflow command](https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions) per failing or warning diagnostic, so a lint step annotates the pull request at the right line, followed by a one-line summary:
+
+```
+::error file=src/inspect_evals/gpqa/gpqa.py,line=42,col=12,title=IEBP003 sample_ids::Sample() call without id=; pass a stable id= so the sample survives shuffles and reruns
+::warning file=pyproject.toml,title=IEBP005 sandbox_image_pinning::Allowlist entry 'x/y' for sandbox_image_pinning on 'cybench' is no longer needed; remove it from [tool.inspect-evals-lint.allowlists.sandbox_image_pinning]
+inspect-evals-lint: 128/130 packages passed; 2 failed, 1 warnings, 0 suppressed
+```
+
+Skips, passes and suppressed findings produce no annotation. Property values and messages are percent-escaped the way the workflow-command syntax requires.
+
+
+---
+
+# IEFS001: package_location
+
+The package exists at <source-root>/<name>/ with an __init__.py.
+
+**Category:** file_structure · **Applies to:** eval, helper
+
+## What it does
+
+Checks that the directory named on the command line, or found under `source-root`, is a Python package. Every other rule depends on this one and does not run when it does not hold.
+
+## Why is this bad?
+
+A directory that exists but has no `__init__.py` is documentation or data, not code: a README left where evaluations used to live, a fixtures folder. It is reported as a skip rather than a failure, and the same test keeps it out of `--all` discovery, so it needs no configuration.
+
+## Example
+
+```text
+src/inspect_evals/gdm_capabilities/README.md     # skipped: not a package
+src/inspect_evals/gpqa/__init__.py               # linted
+```
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS001]` or `ignore[package_location]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+
+
+---
+
+# IEFS002: main_file
+
+<name>.py or tasks.py exists and defines at least one @task function.
+
+**Category:** file_structure · **Applies to:** eval
+
+## What it does
+
+Looks for `<name>.py` first and `tasks.py` second, preferring whichever defines a `@task`, so a stray empty `<name>.py` does not hide the tasks in `tasks.py`. Fails when neither exists, when the file does not parse, or when it defines no task.
+
+## Why is this bad?
+
+Keeping tasks in a predictably named module lets tooling and readers find them without opening every file in the package.
+
+## Example
+
+```text
+src/my_eval/my_eval.py     # defines @task my_eval()
+src/my_eval/tasks.py       # accepted alternative
+```
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS002]` or `ignore[main_file]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+
+
+---
+
+# IEFS003: init_exports
+
+__init__.py exports every @task function from the main file.
+
+**Category:** file_structure · **Applies to:** eval
+
+## What it does
+
+Reads the task functions from the main file and checks each name appears in `__init__.py`, either in `__all__` or imported with `from ... import`. One diagnostic per missing task.
+
+## Why is this bad?
+
+`inspect eval my_eval/task` resolves tasks through the package, so a task the package does not export is a task nobody can run by name.
+
+## Example
+
+```python
+# __init__.py
+from .my_eval import my_eval, my_eval_hard
+
+__all__ = ["my_eval", "my_eval_hard"]
+```
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS003]` or `ignore[init_exports]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+
+
+---
+
+# IEFS004: registry
+
+The evaluation is registered so inspect eval can find its tasks.
+
+**Category:** file_structure · **Applies to:** eval
+
+## What it does
+
+With `registry = "entry-points"` (the template layout) the package or its module must appear under `[project.entry-points.inspect_ai]` in `pyproject.toml`. With `registry = "module"` (the inspect_evals monorepo) the registry module must import it. `registry = "none"` skips the rule.
+
+## Why is this bad?
+
+An unregistered evaluation runs from a file path in development and then cannot be found by name anywhere else.
+
+## Example
+
+```toml
+[project.entry-points.inspect_ai]
+my_eval = "my_eval"
+```
+
+## Options
+
+- `registry`
+- `registry-module`
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS004]` or `ignore[registry]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+
+
+---
+
+# IEFS005: eval_yaml
+
+eval.yaml exists, is a mapping, and defines the required fields.
+
+**Category:** file_structure · **Applies to:** eval
+
+## What it does
+
+Parses `eval.yaml` in the package and reports one diagnostic per required field that is missing, or one for a file that is not valid YAML or not a mapping. With `eval-yaml-required = false` a missing file is a skip, for repositories whose metadata lives in the inspect_evals register; a present file is still validated.
+
+## Why is this bad?
+
+`eval.yaml` is what listings, the register and the README generator read. A missing field there is a missing field everywhere downstream.
+
+## Example
+
+```yaml
+title: GPQA
+description: Graduate-level science questions.
+group: Knowledge
+contributors: [someone]
+tasks:
+  - name: gpqa_diamond
+```
+
+## Options
+
+- `eval-yaml-required`
+- `eval-yaml-required-fields`
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS005]` or `ignore[eval_yaml]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+
+
+---
+
+# IEFS006: readme
+
+README.md exists and has no TODO markers.
+
+**Category:** file_structure · **Applies to:** eval
+
+## What it does
+
+Checks the package has a `README.md`; with `readme-location = "repo-root"` the repository's top-level README is accepted when the package has none. Warns once per line that still contains `TODO:`.
+
+## Why is this bad?
+
+The README is the evaluation's front door. A missing one leaves users guessing at what the evaluation measures; a leftover `TODO:` is a section the author meant to write.
+
+## Options
+
+- `readme-location`
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS006]` or `ignore[readme]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+
+
+---
+
+# IECQ001: private_api_imports
+
+No imports from private inspect_ai modules.
+
+**Category:** code_quality · **Applies to:** eval, helper
+
+## What it does
+
+Flags `from inspect_ai.<...>._<name> import ...` wherever a dotted segment starts with an underscore. One diagnostic per import.
+
+## Why is this bad?
+
+Private modules change without notice. An evaluation importing one breaks on the next `inspect_ai` release with no deprecation period.
+
+## Example
+
+```python
+from inspect_ai.scorer._metric import Score   # private
+```
+
+Use instead:
+
+```python
+from inspect_ai.scorer import Score
+```
+
+Suppress on a line with `# inspect-evals-lint: ignore[IECQ001]` or `ignore[private_api_imports]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
+
+
+---
+
+# IECQ002: score_constants
+
+Score() values use the CORRECT/INCORRECT constants, not string literals.
+
+**Category:** code_quality · **Applies to:** eval, helper
+
+## What it does
+
+Flags `Score(value="C")` and the other literals `"I"`, `"CORRECT"` and `"INCORRECT"`. One diagnostic per call.
+
+## Why is this bad?
+
+`inspect_ai`'s metrics compare against the constants. A literal that drifts from them, or that `inspect_ai` later changes, scores silently wrong.
+
+## Example
+
+```python
+return Score(value="C")
+```
+
+Use instead:
+
+```python
+from inspect_ai.scorer import CORRECT
+
+return Score(value=CORRECT)
+```
+
+Suppress on a line with `# inspect-evals-lint: ignore[IECQ002]` or `ignore[score_constants]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
+
+
+---
+
+# IECQ003: unscored_reason
+
+Score.unscored() passes a reason= and the legacy unscored_reason metadata key is gone.
+
+**Category:** code_quality · **Applies to:** eval, helper
+
+## What it does
+
+Flags `Score.unscored(...)` calls whose `reason=` is missing, `None` or empty, and any occurrence of the string `"unscored_reason"` outside a docstring. Only attribute calls count, so a locally defined metric named `unscored()` is not mistaken for the constructor. One diagnostic per site.
+
+## Why is this bad?
+
+`Score.reason` (inspect_ai 0.3.261) is the first-class record of why a sample was left unscored; metrics and log tooling read it there. The interim `metadata["unscored_reason"]` convention is superseded, and an unscored sample with no reason cannot be told apart from one the scorer forgot.
+
+## Example
+
+```python
+return Score.unscored(explanation="grader returned nothing")
+```
+
+Use instead:
+
+```python
+return Score.unscored(reason="grader_failed", explanation="grader returned nothing")
+```
+
+Suppress on a line with `# inspect-evals-lint: ignore[IECQ003]` or `ignore[unscored_reason]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
+
+
+---
+
+# IECQ004: external_dependencies
+
+Third-party imports are declared in pyproject.toml.
+
+**Category:** code_quality · **Applies to:** eval, helper
+
+## What it does
+
+Collects every import in the package and treats one as external when it is not in the standard library, not in `[project].dependencies`, not local to the package and not the repository's own package. For an evaluation, each external import must be declared in some `[project.optional-dependencies]` group or `[dependency-groups]` entry (other than `dev`), or in the isolated package's `pyproject.toml` when `isolated-packages-dir` is set, and the evaluation must own a group named after itself unless it is isolated.
+
+For a helper package the rule is different, because every evaluation that imports the helper loads whatever it imports at module level: those imports must be in `[project].dependencies`, while imports inside a function, a `try` block or an `if TYPE_CHECKING:` block are deferred and only need to be declared in some group or in any isolated package. Helpers need no group of their own. One diagnostic per import, at its first site.
+
+Import-to-distribution mapping uses the packages installed in the current environment plus a few static aliases, so run the linter inside the project's environment. Names are compared in PEP 503 normalised form.
+
+## Why is this bad?
+
+An import nobody declared works on the author's machine and fails for the next person with `ModuleNotFoundError`, often only when a particular sample runs.
+
+## Example
+
+```toml
+[project.optional-dependencies]
+my_eval = ["datasets>=4.0", "scikit-learn"]
+```
+
+## Options
+
+- `isolated-packages-dir`
+- `import-prefix`
+
+Suppress on a line with `# inspect-evals-lint: ignore[IECQ004]` or `ignore[external_dependencies]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
+
+
+---
+
+# IETS001: tests_exist
+
+A test directory exists for the evaluation.
+
+**Category:** tests · **Applies to:** eval
+
+## What it does
+
+Looks for `<tests-root>/<name>/`. With `tests-layout = "flat"` test files directly under `<tests-root>/` are accepted when that directory is absent, as single-evaluation repositories usually have.
+
+## Why is this bad?
+
+An evaluation with no tests at all has never been run against the mock model, so nothing guards its wiring.
+
+## Options
+
+- `tests-root`
+- `tests-layout`
+
+Suppress on a line with `# inspect-evals-lint: ignore[IETS001]` or `ignore[tests_exist]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+
+
+---
+
+# IETS002: tests_init
+
+The test directory and its sub-directories contain __init__.py.
+
+**Category:** tests · **Applies to:** eval, helper
+
+## What it does
+
+Checks `<tests-root>/<name>/` and every directory beneath it for an `__init__.py`, ignoring cache directories. One diagnostic per directory. Skipped when the tests live directly under the tests root, where there is nothing to collide with, and for a helper package with no `tests/<name>/` directory.
+
+## Why is this bad?
+
+Per-evaluation test trees with duplicate module basenames (`test_scorer.py` in two evaluations) collide during pytest collection unless each tree is a package.
+
+Suppress on a line with `# inspect-evals-lint: ignore[IETS002]` or `ignore[tests_init]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+
+
+---
+
+# IETS003: e2e_test
+
+Some test runs eval() against mockllm/model.
+
+**Category:** tests · **Applies to:** eval
+
+## What it does
+
+Looks through the test directory for a file that calls `eval()` or `eval_async()` (or an alias imported from `inspect_ai`) and mentions `mockllm/model`.
+
+## Why is this bad?
+
+An end-to-end run against the mock model catches wiring mistakes, a dataset that no longer loads, a solver that does not compose, without spending tokens.
+
+## Example
+
+```python
+from inspect_ai import eval
+
+def test_e2e():
+    logs = eval(my_eval(), model="mockllm/model", limit=2)
+    assert logs[0].status == "success"
+```
+
+Suppress on a line with `# inspect-evals-lint: ignore[IETS003]` or `ignore[e2e_test]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+
+
+---
+
+# IETS004: record_to_sample_test
+
+record_to_sample is exercised by a test when the evaluation uses it.
+
+**Category:** tests · **Applies to:** eval
+
+## What it does
+
+When any file in the package mentions `record_to_sample`, some test file must mention it too. Skipped when the evaluation has none.
+
+## Why is this bad?
+
+`record_to_sample` is where a dataset's fields become an evaluation's inputs and targets. A field renamed upstream fails silently there unless a test pins a real record.
+
+Suppress on a line with `# inspect-evals-lint: ignore[IETS004]` or `ignore[record_to_sample_test]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+
+
+---
+
+# IETS005: custom_solver_tests
+
+Every @solver function name appears somewhere in the tests.
+
+**Category:** tests · **Applies to:** eval, helper
+
+## What it does
+
+Finds functions decorated with `@solver` in the package and checks each name appears in a test file. For an evaluation the search covers `tests/<name>/`; for a helper package, the whole tests root, because shared components are usually tested next to the evaluation that motivated them. One diagnostic per untested function. This is a presence check, not a quality check.
+
+## Why is this bad?
+
+A custom solver is the evaluation's own logic, the part no upstream test covers. One test that at least constructs it catches import errors and signature changes.
+
+Suppress on a line with `# inspect-evals-lint: ignore[IETS005]` or `ignore[custom_solver_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+
+
+---
+
+# IETS006: custom_scorer_tests
+
+Every @scorer function name appears somewhere in the tests.
+
+**Category:** tests · **Applies to:** eval, helper
+
+## What it does
+
+Finds functions decorated with `@scorer` in the package and checks each name appears in a test file. For an evaluation the search covers `tests/<name>/`; for a helper package, the whole tests root, because shared components are usually tested next to the evaluation that motivated them. One diagnostic per untested function. This is a presence check, not a quality check.
+
+## Why is this bad?
+
+A custom scorer is the evaluation's own logic, the part no upstream test covers. One test that at least constructs it catches import errors and signature changes.
+
+Suppress on a line with `# inspect-evals-lint: ignore[IETS006]` or `ignore[custom_scorer_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+
+
+---
+
+# IETS007: custom_tool_tests
+
+Every @tool function name appears somewhere in the tests.
+
+**Category:** tests · **Applies to:** eval, helper
+
+## What it does
+
+Finds functions decorated with `@tool` in the package and checks each name appears in a test file. For an evaluation the search covers `tests/<name>/`; for a helper package, the whole tests root, because shared components are usually tested next to the evaluation that motivated them. One diagnostic per untested function. This is a presence check, not a quality check.
+
+## Why is this bad?
+
+A custom tool is the evaluation's own logic, the part no upstream test covers. One test that at least constructs it catches import errors and signature changes.
+
+Suppress on a line with `# inspect-evals-lint: ignore[IETS007]` or `ignore[custom_tool_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+
+
+---
+
+# IEBP001: get_model_location
+
+get_model() is only called inside @solver or @scorer functions.
+
+**Category:** best_practices · **Applies to:** eval, helper
+
+## What it does
+
+Warns on each `get_model()` call that is not inside a function decorated with `@solver` or `@scorer`.
+
+## Why is this bad?
+
+Resolving a concrete model at import time or inside `@task` fixes it before the caller can choose one. Resolving it inside the solver or scorer keeps the task declarative and lets `--model-role` and task parameters override it.
+
+## Example
+
+```python
+GRADER = get_model("openai/gpt-4o")   # resolved at import
+
+@scorer(metrics=[accuracy()])
+def graded():
+    async def score(state, target):
+        return await GRADER.generate(...)
+```
+
+Use instead:
+
+```python
+@scorer(metrics=[accuracy()])
+def graded(model: str | Model | None = None):
+    async def score(state, target):
+        grader = get_model(model, role="grader", default="openai/gpt-4o")
+        ...
+```
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP001]` or `ignore[get_model_location]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+
+
+---
+
+# IEBP002: model_role_resolution
+
+get_model(role=...) resolves deliberately: an explicit model, default= or required=True.
+
+**Category:** best_practices · **Applies to:** eval, helper · **Allowlist:** `[tool.inspect-evals-lint.allowlists.model_role_resolution]`
+
+## What it does
+
+Flags each `get_model(role=...)` call that passes no explicit model, no `default=` and no `required=True`. A literal `default=None`, `model=None` or `required=False` changes nothing at runtime and does not count. Each diagnostic is keyed by the role name (`<dynamic>` for a non-literal), which is what an allowlist entry names.
+
+## Why is this bad?
+
+A role that is not bound at invocation falls back to the model under evaluation. A grader then grades the model's own output, and the scores still look plausible. Pinning a default or requiring the role makes the fallback a choice rather than an accident.
+
+## Example
+
+```python
+grader = get_model(role="grader")
+```
+
+Use instead:
+
+```python
+grader = get_model(role="grader", default="openai/gpt-4o")
+# or
+grader = get_model(role="grader", required=True)
+```
+
+## Options
+
+- `allowlists.model_role_resolution`: `{ package = ["role"] }` entries reported as warnings while an existing surface is burned down.
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP002]` or `ignore[model_role_resolution]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+
+
+---
+
+# IEBP003: sample_ids
+
+Every Sample() passes id=.
+
+**Category:** best_practices · **Applies to:** eval, helper
+
+## What it does
+
+Flags each `Sample(...)` call without an `id=` keyword.
+
+## Why is this bad?
+
+Without a stable id a sample is identified by its position. Shuffling, `--limit`, reruns and dataset updates all change positions, so results can no longer be compared sample by sample.
+
+## Example
+
+```python
+Sample(input=record["question"], target=record["answer"])
+```
+
+Use instead:
+
+```python
+Sample(input=record["question"], target=record["answer"], id=record["id"])
+```
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP003]` or `ignore[sample_ids]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+
+
+---
+
+# IEBP004: task_overridable_defaults
+
+@task parameters naming a solver, scorer, metric, grader or model have defaults.
+
+**Category:** best_practices · **Applies to:** eval, helper
+
+## What it does
+
+Flags each parameter of a `@task` function whose name contains `solver`, `scorer`, `metric`, `metrics`, `grader` or `model` and has no default.
+
+## Why is this bad?
+
+These are the pieces callers most often want to swap. With defaults the task runs unconfigured, `inspect eval my_eval/task` just works, and each piece can still be overridden with `-T`.
+
+## Example
+
+```python
+@task
+def my_eval(solver, grader_model):
+    ...
+```
+
+Use instead:
+
+```python
+@task
+def my_eval(solver: Solver | None = None, grader_model: str | None = None):
+    ...
+```
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP004]` or `ignore[task_overridable_defaults]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+
+
+---
+
+# IEBP005: sandbox_image_pinning
+
+Registry images in compose files use an immutable tag or digest.
+
+**Category:** best_practices · **Applies to:** eval, helper · **Allowlist:** `[tool.inspect-evals-lint.allowlists.sandbox_image_pinning]`
+
+## What it does
+
+Reads every `compose*.y*ml` under the package and flags each service whose `image` is untagged or `:latest`. Services built locally (`build:`) and `${VAR}` interpolated references are skipped. Each diagnostic is keyed by the image reference, which is what an allowlist entry names.
+
+## Why is this bad?
+
+A floating reference resolves to whatever the registry holds today. A push upstream silently changes the evaluation environment, and results stop being comparable across runs without anything in the repository changing.
+
+## Example
+
+```yaml
+services:
+  default:
+    image: aisiuk/inspect-tool-support
+```
+
+Use instead:
+
+```yaml
+services:
+  default:
+    image: aisiuk/inspect-tool-support:1.4.2
+    # or: aisiuk/inspect-tool-support@sha256:...
+```
+
+## Options
+
+- `allowlists.sandbox_image_pinning`: `{ package = ["image/ref"] }` entries reported as warnings while they are pinned.
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP005]` or `ignore[sandbox_image_pinning]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+
+
+---
+
+# IEBP006: gpu_sandbox_check
+
+An evaluation requiring a GPU ships a maintenance sandbox check task.
+
+**Category:** best_practices · **Applies to:** eval
+
+## What it does
+
+When `eval.yaml` declares `metadata.requires.gpu`, `tasks` must include a task whose name ends `_sandbox_check` and which is declared with `kind: maintenance`.
+
+## Why is this bad?
+
+GPU sandbox images cannot be exercised in ordinary CI, so a broken image (a missing package, the wrong Python, a CUDA toolchain that does not work) would only show up as errored samples in a real run. The check task certifies the image on GPU hardware through the evaluation's own scorer, and `kind: maintenance` keeps its accuracy out of listings that present model results.
+
+## Example
+
+```yaml
+tasks:
+  - name: kernelbench
+  - name: kernelbench_sandbox_check
+    kind: maintenance
+metadata:
+  requires:
+    gpu: true
+```
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP006]` or `ignore[gpu_sandbox_check]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+
+
+---
+
+# IEBP007: dockerfile_locking
+
+Dockerfile builds consume locked inputs: committed locks, digest-pinned images, fixed sources.
+
+**Category:** best_practices · **Applies to:** eval
+
+## What it does
+
+Reads every `Dockerfile*` under the evaluation statically (nothing is executed) and reports one warning per instruction with a build input that is not locked, pointing at the instruction's first line:
+
+- Dependency installs must consume a committed lock or hashed snapshot: `uv sync --locked` with `uv.lock` copied or bind-mounted in beforehand, or `pip install --require-hashes -r <snapshot>`. `uv sync` alone (may update the lock), `uv sync --frozen` (skips freshness validation), `uv lock` during the build, `pip install <packages>`, requirements files without `--require-hashes`, and installing the project with dependency resolution all warn; `pip install . --no-deps` after locked dependencies is accepted. Manifests are not inspected: ranges there are fine when the consumed lock resolves them.
+- Image and source inputs must be immutable: `FROM` and `COPY --from` references need an `@sha256` digest (`scratch` and earlier build stages are exempt), Git dependencies on a pip command line need a full commit, and an installer script piped from `curl` or `wget` into a shell warns because nothing verifies it. `COPY --from` a digest-pinned tool image is the accepted way to bring in `uv`.
+- Dynamic references (`${VAR}` images, remote or interpolated `COPY` sources, templated package names) and unsupported package managers (`npm`, `cargo`, `conda`, ...) are reported as unverified, never as passing.
+- `COPY` sources resolve against the build context: the `# BUILD_CONTEXT=<path relative to the repository root>` directive inspect_evals uses, else the `build.context` of a compose service that builds the Dockerfile (compose resolves `dockerfile` relative to it), else the Dockerfile's directory. Missing sources and sources outside the repository warn. BuildKit heredocs are skipped and `.dockerignore` is not consulted.
+
+Limits, kept visible: OS package installs (`apt-get install` and the like) cannot be locked by this rule, so a Dockerfile whose other inputs are locked still passes, with each such step named in the pass message. Build-isolation dependencies of source builds and the interpreter version against the sandbox project's `requires-python` are not checked. Passing means the supported installs consume locked inputs, not that a rebuild is byte-identical. Every finding is a warning in this release. Dockerfiles matched by `exclude` are not read; an evaluation without a Dockerfile skips.
+
+## Why is this bad?
+
+A digest-pinned published image fixes what runs today, but not what a rebuild produces: a Dockerfile that installs whatever the index or registry serves on the day gives a different sandbox each time the image is rebuilt, so results stop being comparable without anything in the repository changing, and a broken upstream release can turn into errored samples. Consuming a committed lock makes the rebuild a function of the repository alone.
+
+## Example
+
+```dockerfile
+FROM python:3.12-slim
+COPY pyproject.toml ./
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && uv sync
+```
+
+Use instead:
+
+```dockerfile
+# BUILD_CONTEXT=.
+FROM python:3.12-slim@sha256:<digest>
+COPY --from=ghcr.io/astral-sh/uv:0.12.5@sha256:<digest> /uv /usr/local/bin/uv
+COPY src/inspect_evals/my_eval/sandbox/pyproject.toml src/inspect_evals/my_eval/sandbox/uv.lock ./
+RUN uv sync --locked --no-dev --no-install-project
+```
+
+## Options
+
+- `dockerfile_locking.host-lock-coupling`: `"warn"` reports a build that copies the repository root's `pyproject.toml` or `uv.lock`, because unrelated host dependency updates would then change the sandbox image; `"allow"` accepts it, for a standalone repository whose root project is the sandbox. `warn` in the `monorepo` preset, `allow` elsewhere.
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP007]` or `ignore[dockerfile_locking]`; select or ignore it in configuration by either, or by the prefix `IEBP`.

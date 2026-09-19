@@ -1,0 +1,48 @@
+# inspect-evals-lint
+
+> Static checks for Inspect AI evaluations: file structure, test coverage conventions, best practices and sandbox image pinning. Every check is a rule with a code (IEFS, IECQ, IETS, IEBP prefixes for the four categories) and a name.
+
+Every HTML page on this site is also available as raw Markdown at the same path with a `.md` suffix (for example `rules/IEBP002.md`). The full documentation is concatenated in `llms-full.txt`. `rules.json` lists every rule with its code, name, category, scopes and page URLs. Suppress a finding with `# inspect-evals-lint: ignore[<code or name>]` on the offending line; configure the linter under `[tool.inspect-evals-lint]` in `pyproject.toml`. Locally, `inspect-evals-lint --explain <code>` prints a rule's page and `inspect-evals-lint --list-rules --output-format json` lists them.
+
+## Reference
+
+- [Overview, installation, configuration](https://inspect-evals-lint.generality.org/index.md): the README
+- [Rule index](https://inspect-evals-lint.generality.org/CHECKS.md): every rule by category, how suppression works
+- [Output formats](https://inspect-evals-lint.generality.org/output.md): the JSON schema and GitHub annotations
+- [rules.json](https://inspect-evals-lint.generality.org/rules.json): machine-readable rule list
+
+## File structure
+
+- [IEFS001 package_location](https://inspect-evals-lint.generality.org/rules/IEFS001.md): The package exists at <source-root>/<name>/ with an __init__.py
+- [IEFS002 main_file](https://inspect-evals-lint.generality.org/rules/IEFS002.md): <name>.py or tasks.py exists and defines at least one @task function
+- [IEFS003 init_exports](https://inspect-evals-lint.generality.org/rules/IEFS003.md): __init__.py exports every @task function from the main file
+- [IEFS004 registry](https://inspect-evals-lint.generality.org/rules/IEFS004.md): The evaluation is registered so inspect eval can find its tasks
+- [IEFS005 eval_yaml](https://inspect-evals-lint.generality.org/rules/IEFS005.md): eval.yaml exists, is a mapping, and defines the required fields
+- [IEFS006 readme](https://inspect-evals-lint.generality.org/rules/IEFS006.md): README.md exists and has no TODO markers
+
+## Code quality
+
+- [IECQ001 private_api_imports](https://inspect-evals-lint.generality.org/rules/IECQ001.md): No imports from private inspect_ai modules
+- [IECQ002 score_constants](https://inspect-evals-lint.generality.org/rules/IECQ002.md): Score() values use the CORRECT/INCORRECT constants, not string literals
+- [IECQ003 unscored_reason](https://inspect-evals-lint.generality.org/rules/IECQ003.md): Score.unscored() passes a reason= and the legacy unscored_reason metadata key is gone
+- [IECQ004 external_dependencies](https://inspect-evals-lint.generality.org/rules/IECQ004.md): Third-party imports are declared in pyproject.toml
+
+## Tests
+
+- [IETS001 tests_exist](https://inspect-evals-lint.generality.org/rules/IETS001.md): A test directory exists for the evaluation
+- [IETS002 tests_init](https://inspect-evals-lint.generality.org/rules/IETS002.md): The test directory and its sub-directories contain __init__.py
+- [IETS003 e2e_test](https://inspect-evals-lint.generality.org/rules/IETS003.md): Some test runs eval() against mockllm/model
+- [IETS004 record_to_sample_test](https://inspect-evals-lint.generality.org/rules/IETS004.md): record_to_sample is exercised by a test when the evaluation uses it
+- [IETS005 custom_solver_tests](https://inspect-evals-lint.generality.org/rules/IETS005.md): Every @solver function name appears somewhere in the tests
+- [IETS006 custom_scorer_tests](https://inspect-evals-lint.generality.org/rules/IETS006.md): Every @scorer function name appears somewhere in the tests
+- [IETS007 custom_tool_tests](https://inspect-evals-lint.generality.org/rules/IETS007.md): Every @tool function name appears somewhere in the tests
+
+## Best practices
+
+- [IEBP001 get_model_location](https://inspect-evals-lint.generality.org/rules/IEBP001.md): get_model() is only called inside @solver or @scorer functions
+- [IEBP002 model_role_resolution](https://inspect-evals-lint.generality.org/rules/IEBP002.md): get_model(role=...) resolves deliberately: an explicit model, default= or required=True
+- [IEBP003 sample_ids](https://inspect-evals-lint.generality.org/rules/IEBP003.md): Every Sample() passes id=
+- [IEBP004 task_overridable_defaults](https://inspect-evals-lint.generality.org/rules/IEBP004.md): @task parameters naming a solver, scorer, metric, grader or model have defaults
+- [IEBP005 sandbox_image_pinning](https://inspect-evals-lint.generality.org/rules/IEBP005.md): Registry images in compose files use an immutable tag or digest
+- [IEBP006 gpu_sandbox_check](https://inspect-evals-lint.generality.org/rules/IEBP006.md): An evaluation requiring a GPU ships a maintenance sandbox check task
+- [IEBP007 dockerfile_locking](https://inspect-evals-lint.generality.org/rules/IEBP007.md): Dockerfile builds consume locked inputs: committed locks, digest-pinned images, fixed sources
