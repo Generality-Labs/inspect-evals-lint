@@ -46,7 +46,10 @@ def test_explain_by_code_and_name(capsys: pytest.CaptureFixture[str]) -> None:
     data = json.loads(capsys.readouterr().out)
     assert data["code"] == "IEFS006"
     assert "TODO" in data["doc"]
-    assert data["doc"] in Path("docs/rules/IEFS006.md").read_text(encoding="utf-8")
+    from inspect_evals_lint.docs import GENERATED_NOTE
+
+    page = Path("docs/rules/IEFS006.md").read_text(encoding="utf-8")
+    assert data["doc"] == page.replace(GENERATED_NOTE + "\n\n", "")
 
 
 def test_explain_unknown_rule_is_usage_error() -> None:

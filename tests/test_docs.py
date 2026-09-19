@@ -18,8 +18,8 @@ def test_committed_docs_are_current() -> None:
 def test_every_rule_has_a_page_with_the_required_sections() -> None:
     for rule in rules():
         page = docs.rule_page(rule)
-        assert page.startswith(docs.GENERATED_NOTE)
-        assert f"# {rule.code}: {rule.name}" in page
+        assert page.startswith(f"# {rule.code}: {rule.name}")
+        assert docs.GENERATED_NOTE in page
         assert "## What it does" in page
         assert "## Why is this bad?" in page
         assert f"ignore[{rule.code}]" in page
@@ -61,3 +61,25 @@ def test_write_and_check_round_trip(tmp_path: Path) -> None:
     assert (tmp_path / "docs" / "rules" / "IEFS001.md").exists()
     assert "`source-root`" in (tmp_path / "README.md").read_text(encoding="utf-8")
     assert docs.main(["--check", "--root", str(tmp_path)]) == 0
+
+
+def test_site_index_rewrites_links_for_the_site(tmp_path: Path) -> None:
+    (tmp_path / "CHECKS.md").write_text("", encoding="utf-8")
+    readme = (
+        "# x\n\nSee [rules](docs/CHECKS.md), [pages](docs/rules/), [out](docs/output.md), "
+        "[release](RELEASING.md), [ext](https://example.test/a) and [same](#anchor).\n"
+    )
+    index = docs.site_index(readme, tmp_path)
+    assert index.startswith("# x\n")
+    assert docs.GENERATED_NOTE in index
+    assert "[rules](CHECKS.md)" in index
+    assert "[pages](CHECKS.md)" in index
+    assert "[out](output.md)" in index
+    assert f"[release]({docs.REPO_BLOB}RELEASING.md)" in index
+    assert "[ext](https://example.test/a)" in index
+    assert "[same](#anchor)" in index
+
+
+def test_committed_site_index_matches_readme() -> None:
+    assert (REPO / "docs" / "index.md").exists()
+    assert docs.stale_files(REPO) == []
