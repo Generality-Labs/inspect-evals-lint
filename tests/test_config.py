@@ -99,7 +99,10 @@ def test_kebab_and_snake_keys_override_preset() -> None:
     assert cfg.allowlists["model_role_resolution"] == frozenset(
         {("moru", "grader"), ("makemesay", "judge"), ("makemesay", "<dynamic>")}
     )
-    assert cfg.rule_options == {"readme": {"todo_marker": "FIXME"}}
+    assert cfg.rule_options == {
+        "readme": {"todo_marker": "FIXME"},
+        **PRESETS["monorepo"].rule_options,  # a user table adds to the preset's defaults
+    }
     assert cfg.source_root == "src/inspect_evals"
 
 

@@ -238,6 +238,8 @@ PRESETS: dict[str, LintConfig] = {
     "template": LintConfig(),
     # The UKGovernmentBEIS/inspect_evals monorepo: evals under a shared package,
     # registered by a hand-maintained module, some with isolated dependency sets.
+    # Its root project is the host, so a sandbox build that copies the root
+    # lock is coupled to unrelated dependency updates.
     "monorepo": LintConfig(
         source_root="src/inspect_evals",
         import_prefix="inspect_evals",
@@ -245,6 +247,7 @@ PRESETS: dict[str, LintConfig] = {
         registry_module="src/inspect_evals/_registry.py",
         ignore_dirs=frozenset(),
         isolated_packages_dir="packages",
+        rule_options={"dockerfile_locking": {"host_lock_coupling": "warn"}},
     ),
     # An upstream repo listed in the inspect_evals register: one evaluation,
     # tests directly under tests/, README at the repo root, and eval.yaml held
