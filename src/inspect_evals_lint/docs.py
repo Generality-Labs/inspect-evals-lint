@@ -2,9 +2,10 @@
 
 ``python -m inspect_evals_lint.docs`` writes ``docs/rules/<code>.md`` (one page
 per rule, from its docstring), ``docs/CHECKS.md`` (the index, grouped by
-category), ``docs/index.md`` (the README as the site's front page) and the
+category), ``docs/index.md`` (the README as the site's front page), the
 configuration table in ``README.md`` (from
-:class:`~inspect_evals_lint.config.LintConfig` field metadata). The ``docs/``
+:class:`~inspect_evals_lint.config.LintConfig` field metadata), and the
+agent-facing ``docs/llms.txt``, ``docs/llms-full.txt`` and ``docs/rules.json``. The ``docs/``
 directory is published with mkdocs by ``.github/workflows/docs.yml``. ``--check``
 exits non-zero when a committed file differs from what would be generated;
 pre-commit runs it so the docs are always current.
@@ -29,6 +30,9 @@ CATEGORY_TITLES: dict[str, str] = {
     "tests": "Tests",
     "best_practices": "Best practices",
 }
+
+SITE_URL = "https://inspect-evals-lint.generality.org/"
+"""Where docs.yml publishes the site. Must match ``site_url`` in mkdocs.yml (a test checks)."""
 
 README_TABLE_START = "<!-- config-table:start -->"
 README_TABLE_END = "<!-- config-table:end -->"
@@ -230,16 +234,98 @@ def site_index(readme: str, docs_dir: Path) -> str:
     return f"{first_heading}\n\n{GENERATED_NOTE}\n{rest}"
 
 
+def _page_body(markdown: str) -> str:
+    """A generated page without the generated-file note, for the concatenated text file."""
+    return markdown.replace(GENERATED_NOTE + "\n\n", "").replace(GENERATED_NOTE + "\n", "")
+
+
+def rules_json() -> str:
+    """``rules.json``: every rule with its code, name, category, scopes, summary and page URLs."""
+    import json
+
+    return (
+        json.dumps(
+            {
+                "site": SITE_URL,
+                "rules": [
+                    {
+                        "code": r.code,
+                        "name": r.name,
+                        "category": r.category,
+                        "scopes": sorted(r.scopes),
+                        "allowlist": r.allowlist,
+                        "summary": r.summary,
+                        "url": f"{SITE_URL}rules/{r.code}/",
+                        "markdown": f"{SITE_URL}rules/{r.code}.md",
+                    }
+                    for r in rules()
+                ],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+
+def llms_txt() -> str:
+    """``llms.txt`` (https://llmstxt.org): an index an agent can read first, linking to raw Markdown."""
+    lines = [
+        "# inspect-evals-lint",
+        "",
+        "> Static checks for Inspect AI evaluations: file structure, test coverage conventions, best practices and sandbox image pinning. Every check is a rule with a code (IEFS, IECQ, IETS, IEBP prefixes for the four categories) and a name.",
+        "",
+        "Every HTML page on this site is also available as raw Markdown at the same path with a `.md` suffix (for example `rules/IEBP002.md`). The full documentation is concatenated in `llms-full.txt`. `rules.json` lists every rule with its code, name, category, scopes and page URLs. Suppress a finding with `# inspect-evals-lint: ignore[<code or name>]` on the offending line; configure the linter under `[tool.inspect-evals-lint]` in `pyproject.toml`. Locally, `inspect-evals-lint --explain <code>` prints a rule's page and `inspect-evals-lint --list-rules --output-format json` lists them.",
+        "",
+        "## Reference",
+        "",
+        f"- [Overview, installation, configuration]({SITE_URL}index.md): the README",
+        f"- [Rule index]({SITE_URL}CHECKS.md): every rule by category, how suppression works",
+        f"- [Output formats]({SITE_URL}output.md): the JSON schema and GitHub annotations",
+        f"- [rules.json]({SITE_URL}rules.json): machine-readable rule list",
+        "",
+    ]
+    for category in CATEGORIES:
+        lines += [f"## {CATEGORY_TITLES[category]}", ""]
+        for rule in (r for r in rules() if r.category == category):
+            lines.append(
+                f"- [{rule.code} {rule.name}]({SITE_URL}rules/{rule.code}.md): {rule.summary}"
+            )
+        lines.append("")
+    return "\n".join(lines)
+
+
+def llms_full_txt(root: Path, readme: str | None) -> str:
+    """``llms-full.txt``: the whole documentation in one Markdown file, README first.
+
+    ``readme`` is the README text as it will be after its own table is regenerated,
+    so the concatenation cannot lag one generation behind it.
+    """
+    parts: list[str] = []
+    if readme is not None:
+        parts.append(_page_body(formatted(site_index(readme, root / "docs"))))
+    parts.append(_page_body(formatted(index_page())))
+    output = root / "docs" / "output.md"
+    if output.exists():
+        parts.append(output.read_text(encoding="utf-8"))
+    for rule in rules():
+        parts.append(_page_body(formatted(rule_page(rule))))
+    return "\n\n---\n\n".join(p.strip() + "\n" for p in parts)
+
+
 def generated_files(root: Path) -> dict[Path, str]:
     """Every generated file and its intended content, formatted as the mdformat hook would leave it."""
     out: dict[Path, str] = {root / "docs" / "CHECKS.md": formatted(index_page())}
     for rule in rules():
         out[root / "docs" / "rules" / f"{rule.code}.md"] = formatted(rule_page(rule))
     readme = root / "README.md"
+    updated_readme: str | None = None
     if readme.exists():
         updated_readme = formatted(readme_with_table(readme.read_text(encoding="utf-8")))
         out[readme] = updated_readme
         out[root / "docs" / "index.md"] = formatted(site_index(updated_readme, root / "docs"))
+    out[root / "docs" / "llms.txt"] = llms_txt()
+    out[root / "docs" / "llms-full.txt"] = llms_full_txt(root, updated_readme)
+    out[root / "docs" / "rules.json"] = rules_json()
     return out
 
 

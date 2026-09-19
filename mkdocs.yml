@@ -10,6 +10,10 @@ edit_uri: ""
 docs_dir: docs
 strict: true
 
+# Copies each page's Markdown source into the site next to its HTML, for agents.
+hooks:
+  - mkdocs_hooks.py
+
 theme:
   name: material
   features:

@@ -133,14 +133,10 @@ class LintConfig:
         metadata={"doc": "Sub-directories of ``source_root`` that are never linted."},
     )
 
-    eval_yaml_required_fields: tuple[str, ...] = (
-        "title",
-        "description",
-        "group",
-        "contributors",
-        "tasks",
+    eval_yaml_required_fields: tuple[str, ...] = field(
+        default=("title", "description", "group", "contributors", "tasks"),
+        metadata={"doc": "Top-level keys every ``eval.yaml`` must define."},
     )
-    """Top-level keys every ``eval.yaml`` must define."""
 
     isolated_packages_dir: str | None = field(
         default=None,
