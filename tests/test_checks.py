@@ -1,26 +1,29 @@
 """Tests for individual check helpers, ported from inspect_evals."""
 
 import ast
+from dataclasses import replace
 
-from inspect_evals_lint.checks import dependencies
-from inspect_evals_lint.checks.code_quality import check_unscored_reason
-from inspect_evals_lint.checks.dependencies import (
+from inspect_evals_lint.config import PRESETS
+from inspect_evals_lint.context import LintContext
+from inspect_evals_lint.rules import dependencies
+from inspect_evals_lint.rules.code_quality import unscored_reason
+from inspect_evals_lint.rules.dependencies import (
     _extract_package_name,
     _get_imports_from_file,
     _get_stdlib_modules,
     _normalize_name,
-    check_external_dependencies,
+    external_dependencies,
 )
-from inspect_evals_lint.checks.file_structure import (
+from inspect_evals_lint.rules.file_structure import (
     _find_task_functions,
     _get_exported_names,
 )
-from inspect_evals_lint.checks.sandbox import (
-    check_gpu_sandbox_check,
-    check_sandbox_image_pinning,
+from inspect_evals_lint.rules.sandbox import (
+    gpu_sandbox_check,
+    sandbox_image_pinning,
 )
-from inspect_evals_lint.checks.tests import _has_eval_call
-from inspect_evals_lint.models import LintReport
+from inspect_evals_lint.rules.tests import _has_eval_call
+from tests.conftest import context_for
 
 
 class TestHasEvalCall:
@@ -136,11 +139,7 @@ class TestCheckExternalDependenciesNormalisation:
 
     @staticmethod
     def _status(root, config, eval_name="alpha"):
-        report = LintReport(eval_name=eval_name)
-        check_external_dependencies(
-            root, eval_name, config.eval_dir(root, eval_name), config, report
-        )
-        (result,) = report.results
+        (result,) = external_dependencies(LintContext.build(root, eval_name, config))
         return result
 
     def test_hyphenated_core_dependency_covers_underscore_import(self, template_repo):
@@ -412,15 +411,15 @@ __all__ = ["my_eval", "CONSTANT"]
 
 
 class TestSandboxImagePinning:
-    """Tests for check_sandbox_image_pinning."""
+    """Tests for the sandbox_image_pinning rule."""
 
     def run_check(self, tmp_path, compose_content, eval_name="my_eval", allowlist=frozenset()):
         eval_path = tmp_path / eval_name
         eval_path.mkdir()
         (eval_path / "compose.yaml").write_text(compose_content)
-        report = LintReport(eval_name=eval_name)
-        check_sandbox_image_pinning(eval_path, report, allowlist)
-        return [r for r in report.results if r.name == "sandbox_image_pinning"]
+        config = replace(PRESETS["template"], sandbox_image_allowlist=allowlist)
+        results = sandbox_image_pinning(context_for(eval_path, config))
+        return [r for r in results if r.name == "sandbox_image_pinning"]
 
     def test_untagged_registry_image_fails(self, tmp_path):
         results = self.run_check(
@@ -491,9 +490,7 @@ class TestSandboxImagePinning:
     def test_no_compose_files_skips(self, tmp_path):
         eval_path = tmp_path / "my_eval"
         eval_path.mkdir()
-        report = LintReport(eval_name="my_eval")
-        check_sandbox_image_pinning(eval_path, report)
-        results = [r for r in report.results if r.name == "sandbox_image_pinning"]
+        results = list(sandbox_image_pinning(context_for(eval_path)))
         assert [r.status for r in results] == ["skip"]
 
     def test_allowlisted_image_warns(self, tmp_path):
@@ -521,9 +518,7 @@ class TestSandboxImagePinning:
         (eval_path / "challenges" / "foo" / "compose.yml").write_text(
             "services:\n  default:\n    image: example/untagged\n"
         )
-        report = LintReport(eval_name="my_eval")
-        check_sandbox_image_pinning(eval_path, report)
-        results = [r for r in report.results if r.name == "sandbox_image_pinning"]
+        results = list(sandbox_image_pinning(context_for(eval_path)))
         assert [r.status for r in results] == ["fail"]
 
     def test_invalid_yaml_warns(self, tmp_path):
@@ -537,9 +532,7 @@ class TestCheckUnscoredReason:
         eval_dir = tmp_path / "alpha"
         eval_dir.mkdir()
         (eval_dir / "scorer.py").write_text(source, encoding="utf-8")
-        report = LintReport(eval_name="alpha")
-        check_unscored_reason(eval_dir, report)
-        return report.results
+        return list(unscored_reason(context_for(eval_dir)))
 
     def test_skips_when_nothing_is_unscored(self, tmp_path):
         results = self._run(tmp_path, "x = Score(value=1)")
@@ -611,7 +604,7 @@ class TestCheckUnscoredReason:
 
 
 class TestGpuSandboxCheck:
-    """Tests for check_gpu_sandbox_check."""
+    """Tests for the gpu_sandbox_check rule."""
 
     GPU_TASKS = "tasks:\n  - name: my_eval\n    dataset_samples: 10\n"
 
@@ -620,9 +613,8 @@ class TestGpuSandboxCheck:
         eval_path.mkdir()
         if eval_yaml is not None:
             (eval_path / "eval.yaml").write_text(eval_yaml)
-        report = LintReport(eval_name=eval_name)
-        check_gpu_sandbox_check(eval_path, report)
-        return [r for r in report.results if r.name == "gpu_sandbox_check"]
+        results = gpu_sandbox_check(context_for(eval_path))
+        return [r for r in results if r.name == "gpu_sandbox_check"]
 
     def test_missing_eval_yaml_skips(self, tmp_path):
         results = self.run_check(tmp_path, None)

@@ -15,7 +15,7 @@ from rich.text import Text
 from inspect_evals_lint import __version__
 from inspect_evals_lint.config import LintConfig
 from inspect_evals_lint.models import LintReport, LintResult
-from inspect_evals_lint.runner import category_of
+from inspect_evals_lint.registry import category_of
 
 console = Console()
 stderr_console = Console(stderr=True)

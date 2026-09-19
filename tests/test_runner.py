@@ -15,13 +15,7 @@ from inspect_evals_lint import (
     get_all_helper_names,
     lint_evaluation,
 )
-from inspect_evals_lint.runner import (
-    CHECK_CATEGORIES,
-    CHECK_SCOPES,
-    CHECKS,
-    HELPER_CHECKS,
-    category_of,
-)
+from inspect_evals_lint.registry import CATEGORIES, category_of, rules
 from tests.conftest import (
     make_eval,
     make_helper,
@@ -42,20 +36,18 @@ def statuses(
     return out
 
 
+HELPER_RULES = {r.name for r in rules() if "helper" in r.scopes}
+
+
 def test_all_check_names_are_registered() -> None:
-    assert get_all_check_names() == sorted(["eval_location", *CHECKS])
+    assert get_all_check_names() == sorted(r.name for r in rules())
     assert len(get_all_check_names()) == 23
 
 
 def test_every_check_has_a_category() -> None:
-    assert set(CHECK_CATEGORIES) == set(get_all_check_names())
-    assert set(CHECK_CATEGORIES.values()) == {
-        "file_structure",
-        "code_quality",
-        "tests",
-        "best_practices",
-    }
+    assert {r.category for r in rules()} == set(CATEGORIES)
     assert category_of("readme") == "file_structure"
+    assert category_of("IEFS006") == "file_structure"
     assert category_of("invalid_check") is None
 
 
@@ -79,7 +71,8 @@ def test_results_follow_registry_order(monorepo: tuple[Path, LintConfig]) -> Non
     root, config = monorepo
     names = [r.name for r in lint_evaluation(root, "alpha", config).results]
     deduped = list(dict.fromkeys(names))
-    assert deduped == ["eval_location", *CHECKS]
+    assert deduped == [r.name for r in rules()]
+    assert deduped.index("main_file") < deduped.index("init_exports")
 
 
 def test_missing_eval_reports_only_location(monorepo: tuple[Path, LintConfig]) -> None:
@@ -90,15 +83,13 @@ def test_missing_eval_reports_only_location(monorepo: tuple[Path, LintConfig]) -
 
 
 def test_every_check_has_a_scope() -> None:
-    assert set(CHECK_SCOPES) == set(get_all_check_names())
-    assert all(scope <= {"eval", "helper"} and "eval" in scope for scope in CHECK_SCOPES.values())
-    assert {name for name, scope in CHECK_SCOPES.items() if "helper" in scope} == HELPER_CHECKS
+    assert all(r.scopes <= {"eval", "helper"} and "eval" in r.scopes for r in rules())
     # Structure and registration are properties of an evaluation, not of shared code.
     for name in ("main_file", "init_exports", "readme", "registry", "eval_yaml", "e2e_test"):
-        assert name not in HELPER_CHECKS, name
+        assert name not in HELPER_RULES, name
     # The checks that guard scoring behaviour apply wherever the code lives.
     for name in ("model_role_resolution", "private_api_imports", "unscored_reason"):
-        assert name in HELPER_CHECKS, name
+        assert name in HELPER_RULES, name
 
 
 def test_helper_dir_is_linted_with_the_helper_scope(monorepo: tuple[Path, LintConfig]) -> None:
@@ -107,7 +98,7 @@ def test_helper_dir_is_linted_with_the_helper_scope(monorepo: tuple[Path, LintCo
     assert report.kind == "helper"
     assert report.passed()
     ran = {r.name for r in report.results}
-    assert ran == {"eval_location", *HELPER_CHECKS}
+    assert ran == HELPER_RULES
 
 
 def test_ignored_dir_is_skipped(tmp_path: Path) -> None:
@@ -351,6 +342,7 @@ def test_only_one_check_runs_with_filter(monorepo: tuple[Path, LintConfig]) -> N
     root, config = monorepo
     result = statuses(root, config, check="readme")
     assert set(result) == {"readme"}
+    assert statuses(root, config, check="IEFS006") == result
 
 
 def test_invalid_check_name(monorepo: tuple[Path, LintConfig]) -> None:

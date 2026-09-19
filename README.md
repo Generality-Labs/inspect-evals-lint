@@ -78,7 +78,7 @@ The `register` preset is for an upstream repository listed in the [inspect_evals
 
 ## Checks
 
-See [docs/CHECKS.md](docs/CHECKS.md) for the full list with the reasoning behind each check.
+See [docs/CHECKS.md](docs/CHECKS.md) for the full list with the reasoning behind each check. Each check is a *rule* with a code (`IEFS001`, `IECQ001`, `IETS001`, `IEBP001` for the four categories) declared with the `@rule` decorator in `src/inspect_evals_lint/rules/`; `--check` accepts either the code or the name.
 
 ## Python API
 
