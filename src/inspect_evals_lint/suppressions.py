@@ -15,7 +15,7 @@ from pathlib import Path
 from inspect_evals_lint.config import ConfigError, LintConfig, selector_matches
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic
-from inspect_evals_lint.rules._ast import iter_python_files
+from inspect_evals_lint.rules._ast import is_dockerfile, iter_dockerfiles, iter_python_files
 
 LINE_PATTERN = re.compile(r"#\s*inspect-evals-lint:\s*ignore\[([^\]]*)\]")
 FILE_PATTERN = re.compile(r"#\s*inspect-evals-lint:\s*ignore-file\[([^\]]*)\]")
@@ -62,11 +62,68 @@ def _selectors(raw: str, where: str) -> set[str]:
     return selectors
 
 
+def _next_instruction_line(lines: list[str], index: int) -> int | None:
+    """The 1-based number of the first instruction at or after ``index`` (0-based), if any."""
+    for offset in range(index, len(lines)):
+        stripped = lines[offset].strip()
+        if stripped and not stripped.startswith("#"):
+            return offset + 1
+    return None
+
+
+def _dockerfile_target(lines: list[str], index: int) -> int:
+    """Where a comment in a Dockerfile applies.
+
+    Dockerfile instructions take no trailing comment (``FROM x # c`` fails the
+    build), so a comment on its own line covers the instruction that follows
+    it; a comment inside a shell-form ``RUN`` stays on its own line.
+    """
+    if lines[index].strip().startswith("#"):
+        return _next_instruction_line(lines, index + 1) or index + 1
+    return index + 1
+
+
+def _read_comments(path: Path, suppressions: Suppressions) -> None:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return
+    dockerfile = is_dockerfile(path)
+
+    for index, source_line in enumerate(lines):
+        i = index + 1
+        where = f"{path}:{i}"
+        if LEGACY_PATTERN.search(source_line):
+            raise ConfigError(f"{where}: {LEGACY_HELP}")
+        file_match = FILE_PATTERN.search(source_line)
+        if file_match:
+            if i > MAX_FILE_HEADER_LINES:
+                raise ConfigError(
+                    f"{where}: ignore-file must appear within the first {MAX_FILE_HEADER_LINES} lines"
+                )
+            suppressions.file_level.setdefault(path, set()).update(
+                _selectors(file_match.group(1), where)
+            )
+            continue
+        line_match = LINE_PATTERN.search(source_line)
+        if line_match:
+            target = _dockerfile_target(lines, index) if dockerfile else i
+            suppressions.line_level.setdefault(path, {}).setdefault(target, set()).update(
+                _selectors(line_match.group(1), where)
+            )
+            continue
+        if MALFORMED_PATTERN.search(source_line):
+            raise ConfigError(
+                f"{where}: an ignore comment must name at least one rule, e.g. ignore[IEFS006]"
+            )
+
+
 def load_suppressions(ctx: LintContext) -> Suppressions:
-    """Collect ignore comments from the package's Python files, skipping ``exclude``d ones.
+    """Collect ignore comments from the package's Python files and Dockerfiles, skipping ``exclude``d ones.
 
     Excluded files are never linted, so nothing in them can be suppressed and a
     stray comment there (in code shipped into a sandbox, say) is not an error.
+    In a Dockerfile a comment on its own line applies to the instruction below it.
 
     Raises:
         ConfigError: a comment is malformed, or uses the removed ``noautolint`` syntax.
@@ -76,37 +133,8 @@ def load_suppressions(ctx: LintContext) -> Suppressions:
         raise ConfigError(f"{legacy_files[0]}: .noautolint files are no longer read; {LEGACY_HELP}")
 
     suppressions = Suppressions()
-    for py_file in iter_python_files(ctx):
-        try:
-            lines = py_file.read_text(encoding="utf-8").splitlines()
-        except (OSError, UnicodeDecodeError):
-            continue
-
-        for i, source_line in enumerate(lines, start=1):
-            where = f"{py_file}:{i}"
-            if LEGACY_PATTERN.search(source_line):
-                raise ConfigError(f"{where}: {LEGACY_HELP}")
-            file_match = FILE_PATTERN.search(source_line)
-            if file_match:
-                if i > MAX_FILE_HEADER_LINES:
-                    raise ConfigError(
-                        f"{where}: ignore-file must appear within the first {MAX_FILE_HEADER_LINES} lines"
-                    )
-                suppressions.file_level.setdefault(py_file, set()).update(
-                    _selectors(file_match.group(1), where)
-                )
-                continue
-            line_match = LINE_PATTERN.search(source_line)
-            if line_match:
-                suppressions.line_level.setdefault(py_file, {}).setdefault(i, set()).update(
-                    _selectors(line_match.group(1), where)
-                )
-                continue
-            if MALFORMED_PATTERN.search(source_line):
-                raise ConfigError(
-                    f"{where}: an ignore comment must name at least one rule, e.g. ignore[IEFS006]"
-                )
-
+    for path in (*iter_python_files(ctx), *iter_dockerfiles(ctx)):
+        _read_comments(path, suppressions)
     return suppressions
 
 

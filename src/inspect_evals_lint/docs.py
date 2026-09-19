@@ -121,7 +121,7 @@ def index_page() -> str:
         "",
         "## Suppression",
         "",
-        "- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. `ignore` without a bracketed list is a configuration error.",
+        "- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. `ignore` without a bracketed list is a configuration error. In a Dockerfile, on the line above the instruction.",
         "- File: `# inspect-evals-lint: ignore-file[<rule>]` within the first ten lines.",
         '- Paths: `per-file-ignores = { "<glob>" = ["<rule>"] }` in `[tool.inspect-evals-lint]`.',
         '- Never read: `exclude = ["<glob>"]` keeps files out of the AST-based rules entirely, for code shipped into a sandbox.',
@@ -150,8 +150,27 @@ def _format_value(value: object) -> str:
             return "`[" + ", ".join(f'"{v}"' for v in seq) + "]`"
         return "`{}`"
     if isinstance(value, Mapping):
-        return "`{}`"
+        table = cast(Mapping[str, object], value)
+        if not table:
+            return "`{}`"
+        return "`{ " + ", ".join(f"{k} = {_toml_value(v)}" for k, v in table.items()) + " }`"
     return f"`{value}`"
+
+
+def _toml_value(value: object) -> str:
+    """``value`` as inline TOML, for a preset's rule options; keys are written kebab-case as a user would."""
+    if isinstance(value, Mapping):
+        table = cast(Mapping[str, object], value)
+        return (
+            "{ "
+            + ", ".join(f"{k.replace('_', '-')} = {_toml_value(v)}" for k, v in table.items())
+            + " }"
+        )
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return f'"{value}"'
+    return str(value)
 
 
 def config_table() -> str:

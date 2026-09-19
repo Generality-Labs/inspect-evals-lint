@@ -187,7 +187,7 @@ class LintConfig:
     rule_options: Mapping[str, Mapping[str, object]] = field(
         default_factory=_no_options,
         metadata={
-            "doc": "``[tool.inspect-evals-lint.<rule>]`` tables, passed through to the rule that declares them."
+            "doc": "``[tool.inspect-evals-lint.<rule>]`` tables, passed through to the rule that declares them. Keys may be kebab-case; a preset's default for a key applies when the table leaves it unset."
         },
     )
 
@@ -238,6 +238,8 @@ PRESETS: dict[str, LintConfig] = {
     "template": LintConfig(),
     # The UKGovernmentBEIS/inspect_evals monorepo: evals under a shared package,
     # registered by a hand-maintained module, some with isolated dependency sets.
+    # Its root project is the host, so a sandbox build that copies the root
+    # lock is coupled to unrelated dependency updates.
     "monorepo": LintConfig(
         source_root="src/inspect_evals",
         import_prefix="inspect_evals",
@@ -245,6 +247,7 @@ PRESETS: dict[str, LintConfig] = {
         registry_module="src/inspect_evals/_registry.py",
         ignore_dirs=frozenset(),
         isolated_packages_dir="packages",
+        rule_options={"dockerfile_locking": {"host_lock_coupling": "warn"}},
     ),
     # An upstream repo listed in the inspect_evals register: one evaluation,
     # tests directly under tests/, README at the repo root, and eval.yaml held
@@ -367,8 +370,10 @@ def _coerce(key: str, value: object) -> object:
 def config_from_table(table: Mapping[str, Any]) -> LintConfig:
     """Build a :class:`LintConfig` from a ``[tool.inspect-evals-lint]`` table.
 
-    Keys may be written in kebab-case (``source-root``) or snake_case. A key that
-    is a rule's name is that rule's option table.
+    Keys may be written in kebab-case (``source-root``) or snake_case, in the
+    table and inside a rule's option table alike. A key that is a rule's name is
+    that rule's option table; it is merged over the preset's defaults for that
+    rule, key by key, so setting one option leaves the others at their defaults.
     """
     from inspect_evals_lint.registry import get_rule  # lazy, see _known_selectors
 
@@ -387,13 +392,23 @@ def config_from_table(table: Mapping[str, Any]) -> LintConfig:
             continue
         rule = get_rule(key)
         if rule is not None:
-            rule_options[rule.name] = dict(cast(dict[str, object], _expect(value, dict, key)))
+            options: dict[object, object] = _expect(value, dict, key)
+            rule_options[rule.name] = {
+                _expect(option, str, key).replace("-", "_"): option_value
+                for option, option_value in options.items()
+            }
             continue
         raise ConfigError(f"Unknown [tool.{TOOL_TABLE}] key {key!r}")
+    preset = PRESETS[preset_name]
     if rule_options:
-        overrides["rule_options"] = rule_options
+        merged: dict[str, dict[str, object]] = {
+            name: dict(defaults) for name, defaults in preset.rule_options.items()
+        }
+        for name, options_table in rule_options.items():
+            merged.setdefault(name, {}).update(options_table)
+        overrides["rule_options"] = merged
 
-    config = replace(PRESETS[preset_name], **overrides)
+    config = replace(preset, **overrides)
     if config.registry == "module" and not config.registry_module:
         raise ConfigError("registry = \"module\" requires 'registry-module' to be set")
     return config
