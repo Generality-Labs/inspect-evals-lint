@@ -1,4 +1,4 @@
-"""File-structure checks: eval location, main file, exports, registry, eval.yaml, README."""
+"""File-structure rules: package location, main file, exports, registry, eval.yaml, README."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from typing import Any, cast
 import yaml
 
 from inspect_evals_lint.config import LintConfig
-from inspect_evals_lint.context import LintContext, get_eval_path
-from inspect_evals_lint.models import LintResult
+from inspect_evals_lint.context import LintContext, is_package
+from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
 from inspect_evals_lint.registry import rule
 from inspect_evals_lint.rules._ast import get_decorator_name
 
@@ -64,65 +64,61 @@ def _get_exported_names(init_file: Path) -> set[str]:
 
 @rule(
     code="IEFS001",
-    name="eval_location",
+    name="package_location",
     category="file_structure",
     scopes=("eval", "helper"),
     summary="The package exists at <source-root>/<name>/ with an __init__.py",
 )
-def eval_location(ctx: LintContext) -> Iterable[LintResult]:
-    """Check the package lives at ``<source_root>/<eval_name>``; returns its path.
+def package_location(ctx: LintContext) -> Iterable[Finding]:
+    """The package exists at ``<source-root>/<name>/`` with an ``__init__.py``.
 
-    A directory that exists but has no ``__init__.py`` is skipped rather than
-    failed: it is documentation or data, not code, and the same rule keeps it
-    out of ``--all-evals`` discovery.
+    ## What it does
+    Checks that the directory named on the command line, or found under
+    ``source-root``, is a Python package. Every other rule depends on this one
+    and does not run when it does not hold.
+
+    ## Why is this bad?
+    A directory that exists but has no ``__init__.py`` is documentation or data,
+    not code: a README left where evaluations used to live, a fixtures folder. It
+    is reported as a skip rather than a failure, and the same test keeps it out of
+    ``--all`` discovery, so it needs no configuration.
+
+    ## Example
+    ```text
+    src/inspect_evals/gdm_capabilities/README.md     # skipped: not a package
+    src/inspect_evals/gpqa/__init__.py               # linted
+    ```
     """
-    repo_root, eval_name, config = ctx.root, ctx.name, ctx.config
-    eval_path = get_eval_path(repo_root, eval_name, config)
-    if eval_path:
-        yield LintResult(
-            name="eval_location",
-            status="pass",
-            message=f"Package located at {eval_path.relative_to(repo_root).as_posix()}",
-        )
-
+    if is_package(ctx.path):
+        yield Outcome("pass", f"Package located at {ctx.path.relative_to(ctx.root).as_posix()}")
         return
-    location = f"{config.source_root}/{eval_name}"
-    if config.eval_dir(repo_root, eval_name).is_dir():
-        yield LintResult(
-            name="eval_location",
-            status="skip",
-            message=(
-                f"{location} has no __init__.py, so it is not a Python package; "
-                "documentation-only directories are not linted"
-            ),
+    location = f"{ctx.config.source_root}/{ctx.name}"
+    if ctx.path.is_dir():
+        yield Outcome(
+            "skip",
+            f"{location} has no __init__.py, so it is not a Python package; "
+            "documentation-only directories are not linted",
         )
-
         return
-    yield LintResult(
-        name="eval_location",
-        status="fail",
-        message=f"Evaluation directory not found: {location}",
-    )
-
-    return None
+    yield Diagnostic(f"Evaluation directory not found: {location}", file=ctx.path)
 
 
 MAIN_FILE_ALTERNATIVE = "tasks.py"
-"""Also accepted as the module holding the ``@task`` functions, alongside ``<eval_name>.py``."""
+"""Also accepted as the module holding the ``@task`` functions, alongside ``<name>.py``."""
 
 
-def main_file_candidates(eval_path: Path, eval_name: str) -> tuple[Path, ...]:
-    return (eval_path / f"{eval_name}.py", eval_path / MAIN_FILE_ALTERNATIVE)
+def main_file_candidates(package_path: Path, name: str) -> tuple[Path, ...]:
+    return (package_path / f"{name}.py", package_path / MAIN_FILE_ALTERNATIVE)
 
 
-def find_main_file(eval_path: Path, eval_name: str) -> Path:
-    """The module the checks treat as the evaluation's main file.
+def find_main_file(package_path: Path, name: str) -> Path:
+    """The module the rules treat as the evaluation's main file.
 
     The first candidate that defines a ``@task`` wins, then the first that exists,
-    so a stray empty ``<eval_name>.py`` does not hide the tasks in ``tasks.py``.
-    Falls back to ``<eval_name>.py`` when neither exists, for the failure message.
+    so a stray empty ``<name>.py`` does not hide the tasks in ``tasks.py``.
+    Falls back to ``<name>.py`` when neither exists, for the failure message.
     """
-    candidates = main_file_candidates(eval_path, eval_name)
+    candidates = main_file_candidates(package_path, name)
     for candidate in candidates:
         if _find_task_functions(candidate):
             return candidate
@@ -138,53 +134,46 @@ def find_main_file(eval_path: Path, eval_name: str) -> Path:
     category="file_structure",
     summary="<name>.py or tasks.py exists and defines at least one @task function",
 )
-def main_file(ctx: LintContext) -> Iterable[LintResult]:
-    """Check ``<eval_name>.py`` or ``tasks.py`` exists with at least one ``@task``; returns the task names."""
-    eval_path, eval_name = ctx.path, ctx.name
-    main_file = find_main_file(eval_path, eval_name)
+def main_file(ctx: LintContext) -> Iterable[Finding]:
+    """``<name>.py`` or ``tasks.py`` exists and defines at least one ``@task`` function.
 
-    if not main_file.exists():
-        expected = " or ".join(c.name for c in main_file_candidates(eval_path, eval_name))
-        yield LintResult(
-            name="main_file",
-            status="fail",
-            message=f"Missing main file: {expected}",
-            file=str(main_file),
-        )
+    ## What it does
+    Looks for ``<name>.py`` first and ``tasks.py`` second, preferring whichever
+    defines a ``@task``, so a stray empty ``<name>.py`` does not hide the tasks in
+    ``tasks.py``. Fails when neither exists, when the file does not parse, or when
+    it defines no task.
 
+    ## Why is this bad?
+    Keeping tasks in a predictably named module lets tooling and readers find them
+    without opening every file in the package.
+
+    ## Example
+    ```text
+    src/my_eval/my_eval.py     # defines @task my_eval()
+    src/my_eval/tasks.py       # accepted alternative
+    ```
+    """
+    target = find_main_file(ctx.path, ctx.name)
+
+    if not target.exists():
+        expected = " or ".join(c.name for c in main_file_candidates(ctx.path, ctx.name))
+        yield Diagnostic(f"Missing main file: {expected}", file=target)
         return
 
     try:
-        ast.parse(main_file.read_text(encoding="utf-8"))
+        ast.parse(target.read_text(encoding="utf-8"))
     except SyntaxError as e:
-        yield LintResult(
-            name="main_file",
-            status="fail",
-            message=f"Syntax error in {main_file.name}: {e}",
-            file=str(main_file),
-        )
-
+        yield Diagnostic(f"Syntax error in {target.name}: {e}", file=target, line=e.lineno)
         return
 
-    task_functions = _find_task_functions(main_file)
+    task_functions = _find_task_functions(target)
     if not task_functions:
-        yield LintResult(
-            name="main_file",
-            status="fail",
-            message=f"{main_file.name} has no @task decorated functions",
-            file=str(main_file),
-        )
-
+        yield Diagnostic(f"{target.name} has no @task decorated functions", file=target)
         return
 
-    yield LintResult(
-        name="main_file",
-        status="pass",
-        message=f"{main_file.name} has {len(task_functions)} @task function(s): {task_functions}",
-        file=str(main_file),
+    yield Outcome(
+        "pass", f"{target.name} has {len(task_functions)} @task function(s): {task_functions}"
     )
-
-    return task_functions
 
 
 @rule(
@@ -193,72 +182,58 @@ def main_file(ctx: LintContext) -> Iterable[LintResult]:
     category="file_structure",
     summary="__init__.py exports every @task function from the main file",
 )
-def init_exports(ctx: LintContext) -> Iterable[LintResult]:
-    """Check ``__init__.py`` re-exports every ``@task`` function from the main file."""
-    eval_path, eval_name = ctx.path, ctx.name
-    init_file = eval_path / "__init__.py"
-    main_file = find_main_file(eval_path, eval_name)
+def init_exports(ctx: LintContext) -> Iterable[Finding]:
+    """``__init__.py`` exports every ``@task`` function from the main file.
+
+    ## What it does
+    Reads the task functions from the main file and checks each name appears in
+    ``__init__.py``, either in ``__all__`` or imported with ``from ... import``.
+    One diagnostic per missing task.
+
+    ## Why is this bad?
+    ``inspect eval my_eval/task`` resolves tasks through the package, so a task the
+    package does not export is a task nobody can run by name.
+
+    ## Example
+    ```python
+    # __init__.py
+    from .my_eval import my_eval, my_eval_hard
+
+    __all__ = ["my_eval", "my_eval_hard"]
+    ```
+    """
+    init_file = ctx.path / "__init__.py"
+    target = find_main_file(ctx.path, ctx.name)
 
     if not init_file.exists():
-        yield LintResult(
-            name="init_exports",
-            status="fail",
-            message="Missing __init__.py file",
-            file=str(init_file),
-        )
-
+        yield Diagnostic("Missing __init__.py file", file=init_file)
         return
 
     try:
         ast.parse(init_file.read_text(encoding="utf-8"))
     except SyntaxError as e:
-        yield LintResult(
-            name="init_exports",
-            status="fail",
-            message=f"Syntax error in __init__.py: {e}",
-            file=str(init_file),
-        )
-
+        yield Diagnostic(f"Syntax error in __init__.py: {e}", file=init_file, line=e.lineno)
         return
 
-    if not main_file.exists():
-        yield LintResult(
-            name="init_exports",
-            status="skip",
-            message=f"Main file {main_file.name} not found, cannot check exports",
-            file=str(init_file),
-        )
-
+    if not target.exists():
+        yield Outcome("skip", f"Main file {target.name} not found, cannot check exports")
         return
 
-    task_functions = _find_task_functions(main_file)
+    task_functions = _find_task_functions(target)
     if not task_functions:
-        yield LintResult(
-            name="init_exports",
-            status="skip",
-            message="No task functions to check for exports",
-            file=str(init_file),
-        )
-
+        yield Outcome("skip", "No task functions to check for exports")
         return
 
     exported_names = _get_exported_names(init_file)
-    missing_exports = [fn for fn in task_functions if fn not in exported_names]
-    if missing_exports:
-        yield LintResult(
-            name="init_exports",
-            status="fail",
-            message=f"__init__.py does not export task functions: {missing_exports}",
-            file=str(init_file),
+    missing = [fn for fn in task_functions if fn not in exported_names]
+    for fn in missing:
+        yield Diagnostic(
+            f"__init__.py does not export the @task function {fn!r}",
+            file=init_file,
+            hint=f"add `from .{target.stem} import {fn}` and list it in __all__",
         )
-
-    else:
-        yield LintResult(
-            name="init_exports",
-            status="pass",
-            message=f"__init__.py exports all {len(task_functions)} task function(s)",
-            file=str(init_file),
-        )
+    if not missing:
+        yield Outcome("pass", f"__init__.py exports all {len(task_functions)} task function(s)")
 
 
 def _table(mapping: dict[str, Any], key: str) -> dict[str, Any]:
@@ -276,65 +251,46 @@ def _entry_point_modules(pyproject: Path) -> dict[str, str]:
     return {str(k): str(v) for k, v in group.items()}
 
 
-def _check_registry_module(
-    repo_root: Path, eval_name: str, config: LintConfig
-) -> Iterable[LintResult]:
+def _registry_module(repo_root: Path, name: str, config: LintConfig) -> Iterable[Finding]:
     registry_file = repo_root / (config.registry_module or "")
-    display = registry_file.name
     if not registry_file.exists():
-        yield LintResult(name="registry", status="skip", message=f"{display} not found")
+        yield Outcome("skip", f"{registry_file.name} not found")
         return
 
-    module = config.module_name(eval_name)
+    module = config.module_name(name)
     pattern = rf"from {re.escape(module)}\b|^\s*import {re.escape(module)}\b"
     if re.search(pattern, registry_file.read_text(encoding="utf-8"), re.MULTILINE):
-        yield LintResult(
-            name="registry",
-            status="pass",
-            message=f"Evaluation registered in {display}",
-            file=str(registry_file),
-        )
-
+        yield Outcome("pass", f"Evaluation registered in {registry_file.name}")
     else:
-        yield LintResult(
-            name="registry",
-            status="fail",
-            message=f"Evaluation not imported in {display} (expected: from {module} import ...)",
-            file=str(registry_file),
+        yield Diagnostic(
+            f"Evaluation not imported in {registry_file.name}",
+            file=registry_file,
+            hint=f"add `from {module} import ...`",
         )
 
 
-def _check_registry_entry_points(
-    repo_root: Path, eval_name: str, config: LintConfig
-) -> Iterable[LintResult]:
+def _registry_entry_points(repo_root: Path, name: str, config: LintConfig) -> Iterable[Finding]:
     pyproject = repo_root / "pyproject.toml"
     if not pyproject.exists():
-        yield LintResult(name="registry", status="skip", message="pyproject.toml not found")
+        yield Outcome("skip", "pyproject.toml not found")
         return
 
-    module = config.module_name(eval_name)
+    module = config.module_name(name)
     entry_points = _entry_point_modules(pyproject)
-    registered = eval_name in entry_points or any(
+    registered = name in entry_points or any(
         value == module or value.startswith((module + ".", module + ":"))
         for value in entry_points.values()
     )
     if registered:
-        yield LintResult(
-            name="registry",
-            status="pass",
-            message="Evaluation registered in pyproject.toml under [project.entry-points.inspect_ai]",
-            file=str(pyproject),
+        yield Outcome(
+            "pass",
+            "Evaluation registered in pyproject.toml under [project.entry-points.inspect_ai]",
         )
-
     else:
-        yield LintResult(
-            name="registry",
-            status="fail",
-            message=(
-                "Evaluation not registered. Add to pyproject.toml: "
-                f'[project.entry-points.inspect_ai]\n{eval_name} = "{module}"'
-            ),
-            file=str(pyproject),
+        yield Diagnostic(
+            "Evaluation not registered",
+            file=pyproject,
+            hint=f'add to pyproject.toml: [project.entry-points.inspect_ai]\n{name} = "{module}"',
         )
 
 
@@ -344,20 +300,35 @@ def _check_registry_entry_points(
     category="file_structure",
     summary="The evaluation is registered so inspect eval can find its tasks",
 )
-def registry(ctx: LintContext) -> Iterable[LintResult]:
-    """Check the evaluation is registered so ``inspect eval`` can find its tasks."""
-    repo_root, eval_name, config = ctx.root, ctx.name, ctx.config
-    if config.registry == "none":
-        yield LintResult(
-            name="registry",
-            status="skip",
-            message='Registry check disabled (registry = "none")',
-        )
+def registry(ctx: LintContext) -> Iterable[Finding]:
+    """The evaluation is registered so ``inspect eval`` can find its tasks.
 
-    elif config.registry == "module":
-        yield from _check_registry_module(repo_root, eval_name, config)
+    ## What it does
+    With ``registry = "entry-points"`` (the template layout) the package or its
+    module must appear under ``[project.entry-points.inspect_ai]`` in
+    ``pyproject.toml``. With ``registry = "module"`` (the inspect_evals monorepo)
+    the registry module must import it. ``registry = "none"`` skips the rule.
+
+    ## Why is this bad?
+    An unregistered evaluation runs from a file path in development and then cannot
+    be found by name anywhere else.
+
+    ## Example
+    ```toml
+    [project.entry-points.inspect_ai]
+    my_eval = "my_eval"
+    ```
+
+    ## Options
+    - `registry`
+    - `registry-module`
+    """
+    if ctx.config.registry == "none":
+        yield Outcome("skip", 'Registry check disabled (registry = "none")')
+    elif ctx.config.registry == "module":
+        yield from _registry_module(ctx.root, ctx.name, ctx.config)
     else:
-        yield from _check_registry_entry_points(repo_root, eval_name, config)
+        yield from _registry_entry_points(ctx.root, ctx.name, ctx.config)
 
 
 @rule(
@@ -366,70 +337,59 @@ def registry(ctx: LintContext) -> Iterable[LintResult]:
     category="file_structure",
     summary="eval.yaml exists, is a mapping, and defines the required fields",
 )
-def eval_yaml(ctx: LintContext) -> Iterable[LintResult]:
-    """Check ``eval.yaml`` exists, is a mapping, and defines the configured required fields.
+def eval_yaml(ctx: LintContext) -> Iterable[Finding]:
+    """``eval.yaml`` exists, is a mapping, and defines the required fields.
 
-    A missing file is a skip rather than a failure when ``config.eval_yaml_required`` is
-    false; a present file is validated either way.
+    ## What it does
+    Parses ``eval.yaml`` in the package and reports one diagnostic per required
+    field that is missing, or one for a file that is not valid YAML or not a
+    mapping. With ``eval-yaml-required = false`` a missing file is a skip, for
+    repositories whose metadata lives in the inspect_evals register; a present
+    file is still validated.
+
+    ## Why is this bad?
+    ``eval.yaml`` is what listings, the register and the README generator read.
+    A missing field there is a missing field everywhere downstream.
+
+    ## Example
+    ```yaml
+    title: GPQA
+    description: Graduate-level science questions.
+    group: Knowledge
+    contributors: [someone]
+    tasks:
+      - name: gpqa_diamond
+    ```
+
+    ## Options
+    - `eval-yaml-required`
+    - `eval-yaml-required-fields`
     """
-    repo_root, eval_name, config = ctx.root, ctx.name, ctx.config
-    eval_yaml_file = config.eval_dir(repo_root, eval_name) / "eval.yaml"
+    eval_yaml_file = ctx.path / "eval.yaml"
     if not eval_yaml_file.exists():
-        if config.eval_yaml_required:
-            yield LintResult(
-                name="eval_yaml",
-                status="fail",
-                message=f"Missing eval.yaml in {config.source_root}/{eval_name}/",
-                file=str(eval_yaml_file),
+        if ctx.config.eval_yaml_required:
+            yield Diagnostic(
+                f"Missing eval.yaml in {ctx.config.source_root}/{ctx.name}/", file=eval_yaml_file
             )
-
         else:
-            yield LintResult(
-                name="eval_yaml",
-                status="skip",
-                message="No eval.yaml; not required in this layout",
-            )
-
+            yield Outcome("skip", "No eval.yaml; not required in this layout")
         return
 
     try:
         data = yaml.safe_load(eval_yaml_file.read_text(encoding="utf-8"))
     except yaml.YAMLError as e:
-        yield LintResult(
-            name="eval_yaml",
-            status="fail",
-            message=f"eval.yaml is not valid YAML: {e}",
-            file=str(eval_yaml_file),
-        )
-
+        yield Diagnostic(f"eval.yaml is not valid YAML: {e}", file=eval_yaml_file)
         return
 
     if not isinstance(data, dict):
-        yield LintResult(
-            name="eval_yaml",
-            status="fail",
-            message="eval.yaml is not a mapping",
-            file=str(eval_yaml_file),
-        )
-
+        yield Diagnostic("eval.yaml is not a mapping", file=eval_yaml_file)
         return
 
-    missing_fields = [name for name in config.eval_yaml_required_fields if name not in data]
-    if missing_fields:
-        yield LintResult(
-            name="eval_yaml",
-            status="fail",
-            message=f"eval.yaml missing fields: {missing_fields}",
-            file=str(eval_yaml_file),
-        )
-
-    else:
-        yield LintResult(
-            name="eval_yaml",
-            status="pass",
-            message="eval.yaml has all required fields",
-            file=str(eval_yaml_file),
-        )
+    missing = [name for name in ctx.config.eval_yaml_required_fields if name not in data]
+    for name in missing:
+        yield Diagnostic(f"eval.yaml is missing the required field {name!r}", file=eval_yaml_file)
+    if not missing:
+        yield Outcome("pass", "eval.yaml has all required fields")
 
 
 @rule(
@@ -438,42 +398,44 @@ def eval_yaml(ctx: LintContext) -> Iterable[LintResult]:
     category="file_structure",
     summary="README.md exists and has no TODO markers",
 )
-def readme(ctx: LintContext) -> Iterable[LintResult]:
-    """Check ``README.md`` exists; warn if it still contains ``TODO:`` markers.
+def readme(ctx: LintContext) -> Iterable[Finding]:
+    """``README.md`` exists and has no ``TODO:`` markers.
 
-    ``fallback`` is a second acceptable location (the repository root's README) used
-    when the evaluation directory has none.
+    ## What it does
+    Checks the package has a ``README.md``; with ``readme-location = "repo-root"``
+    the repository's top-level README is accepted when the package has none. Warns
+    once per line that still contains ``TODO:``.
+
+    ## Why is this bad?
+    The README is the evaluation's front door. A missing one leaves users guessing
+    at what the evaluation measures; a leftover ``TODO:`` is a section the author
+    meant to write.
+
+    ## Options
+    - `readme-location`
     """
-    eval_path = ctx.path
+    readme_file = ctx.path / "README.md"
     fallback = ctx.root / "README.md" if ctx.config.readme_location == "repo-root" else None
-    readme_file = eval_path / "README.md"
     if not readme_file.exists() and fallback is not None and fallback.exists():
         readme_file = fallback
     if not readme_file.exists():
         message = "Missing README.md"
         if fallback is not None:
-            message += f" (looked in {eval_path.name}/ and {fallback.parent.name}/)"
-        yield LintResult(
-            name="readme",
-            status="fail",
-            message=message,
-            file=str(readme_file),
-        )
-
+            message += f" (looked in {ctx.path.name}/ and {fallback.parent.name}/)"
+        yield Diagnostic(message, file=readme_file)
         return
 
-    if "TODO:" in readme_file.read_text(encoding="utf-8"):
-        yield LintResult(
-            name="readme",
-            status="warn",
-            message="README.md contains TODO markers",
-            file=str(readme_file),
+    todos = [
+        i
+        for i, line in enumerate(readme_file.read_text(encoding="utf-8").splitlines(), start=1)
+        if "TODO:" in line
+    ]
+    for line in todos:
+        yield Diagnostic(
+            "README.md still contains a TODO marker",
+            file=readme_file,
+            line=line,
+            severity="warning",
         )
-
-    else:
-        yield LintResult(
-            name="readme",
-            status="pass",
-            message="README.md exists",
-            file=str(readme_file),
-        )
+    if not todos:
+        yield Outcome("pass", "README.md exists")

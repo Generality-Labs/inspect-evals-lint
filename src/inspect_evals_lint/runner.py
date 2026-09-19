@@ -1,4 +1,4 @@
-"""Per-package orchestration: which rules run, in what order, and how results are gathered."""
+"""Per-package orchestration: which rules run, in what order, and how findings are gathered."""
 
 from __future__ import annotations
 
@@ -7,106 +7,140 @@ from pathlib import Path
 from inspect_evals_lint.config import LintConfig, load_config
 from inspect_evals_lint.context import (
     LintContext,
-    get_all_eval_names,
-    get_all_helper_names,
+    evaluation_names,
+    helper_names,
     is_package,
     package_kind,
 )
-from inspect_evals_lint.models import LintReport, LintResult
-from inspect_evals_lint.registry import (
-    CATEGORIES,
-    Rule,
-    category_of,
-    get_rule,
-    rule_names,
-    rules,
-)
+from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome, PackageReport, RunReport
+from inspect_evals_lint.registry import Rule, get_rule, rule_names, rules
 from inspect_evals_lint.suppressions import apply_suppressions, load_suppressions
 
-__all__ = [
-    "CATEGORIES",
-    "LOCATION_RULE",
-    "category_of",
-    "get_all_check_names",
-    "get_all_eval_names",
-    "get_all_helper_names",
-    "lint_evaluation",
-    "package_kind",
-]
-
-LOCATION_RULE = "eval_location"
+LOCATION_RULE = "package_location"
 """The rule that establishes the package exists. Nothing else runs when it does not."""
 
 
-def get_all_check_names() -> list[str]:
-    """Every rule name, sorted."""
-    return rule_names()
+def _selected(rule: Rule, only: Rule | None, config: LintConfig) -> bool:
+    if only is not None:
+        return rule is only
+    return config.selects(rule)
 
 
-def _selected(rule: Rule, only: str | None, config: LintConfig) -> bool:
-    if only is not None and only not in (rule.name, rule.code):
-        return False
-    return rule.name not in config.disabled_checks
+def _run_rule(rule: Rule, context: LintContext, report: PackageReport) -> None:
+    findings = list(rule.run(context))
+    for finding in findings:
+        finding.rule = rule
+    if rule.allowlist:
+        findings.extend(_apply_allowlist(rule, context, findings))
+    if any(isinstance(f, Diagnostic) for f in findings):
+        # A rule cannot both pass and point at something; a skip can stand beside a warning.
+        findings = [f for f in findings if not (isinstance(f, Outcome) and f.status == "pass")]
+    for finding in findings:
+        report.add(finding)
+    if not findings:
+        report.add(Outcome("pass", rule.summary, rule=rule))
 
 
-def lint_evaluation(
+def _apply_allowlist(rule: Rule, context: LintContext, findings: list[Finding]) -> list[Diagnostic]:
+    """Turn allowlisted failures into warnings; return warnings for entries nothing matched.
+
+    The ratchet: an existing surface can be burned down while new violations are
+    blocked, and a stale entry is reported so it gets removed.
+    """
+    allowed = context.config.allowlist_for(rule, context.name)
+    seen: set[str] = set()
+    for finding in findings:
+        if isinstance(finding, Diagnostic) and finding.key is not None and finding.key in allowed:
+            seen.add(finding.key)
+            finding.severity = "warning"
+            finding.message = f"Allowlisted: {finding.message}"
+            finding.hint = (
+                f"{finding.hint}, then remove the allowlist entry"
+                if finding.hint
+                else "remove the allowlist entry once fixed"
+            )
+    return [
+        Diagnostic(
+            f"Allowlist entry {key!r} for {rule.name} on {context.name!r} is no longer needed",
+            file=context.root / "pyproject.toml",
+            severity="warning",
+            hint=f"remove it from [tool.inspect-evals-lint.allowlists.{rule.name}]",
+            key=key,
+            rule=rule,
+        )
+        for key in sorted(allowed - seen)
+    ]
+
+
+def lint_package(
     repo_root: Path,
-    eval_name: str,
+    name: str,
     config: LintConfig | None = None,
     check: str | None = None,
-) -> LintReport:
+) -> PackageReport:
     """Run every enabled rule against one package and return its report.
 
     Args:
         repo_root: Repository root.
-        eval_name: Directory name of the evaluation or helper package under ``config.source_root``.
+        name: Directory name of the evaluation or helper package under ``config.source_root``.
         config: Layout configuration; loaded from ``repo_root/pyproject.toml`` when omitted.
         check: Run only this rule, by name or code.
+
+    Raises:
+        ValueError: ``check`` names no rule.
     """
     config = config or load_config(repo_root)
-    kind = package_kind(eval_name, config)
-    report = LintReport(eval_name=eval_name, kind=kind)
+    kind = package_kind(name, config)
+    report = PackageReport(name=name, kind=kind)
 
-    if eval_name in config.ignore_dirs:
-        report.add(
-            LintResult(
-                name="ignored_directory",
-                status="skip",
-                message=f"'{eval_name}' is listed in ignore-dirs",
-            )
-        )
+    if name in config.ignore_dirs:
+        report.skipped = f"'{name}' is listed in ignore-dirs"
         return report
 
+    only: Rule | None = None
     if check is not None:
-        selected = get_rule(check)
-        if selected is None:
+        only = get_rule(check)
+        if only is None:
+            raise ValueError(f"Unknown check: '{check}'. Available checks: {rule_names()}")
+        if not only.applies_to(kind):
             report.add(
-                LintResult(
-                    name="invalid_check",
-                    status="fail",
-                    message=f"Unknown check: '{check}'. Available checks: {rule_names()}",
-                )
-            )
-            return report
-        if not selected.applies_to(kind):
-            report.add(
-                LintResult(
-                    name=selected.name,
-                    status="skip",
-                    message=f"'{selected.name}' does not apply to a {kind} package",
-                )
+                Outcome("skip", f"'{only.name}' does not apply to a {kind} package", rule=only)
             )
             return report
 
-    context = LintContext.build(repo_root, eval_name, config)
+    context = LintContext.build(repo_root, name, config)
     for rule in rules():
-        if not rule.applies_to(kind) or not _selected(rule, check, config):
-            if rule.name == LOCATION_RULE and not is_package(context.path):
-                return report
-            continue
-        report.results.extend(rule.run(context))
+        if rule.applies_to(kind) and _selected(rule, only, config):
+            _run_rule(rule, context, report)
         if rule.name == LOCATION_RULE and not is_package(context.path):
             return report
 
-    apply_suppressions(report.results, load_suppressions(context.path))
+    apply_suppressions(report.diagnostics, load_suppressions(context), config, repo_root)
     return report
+
+
+def lint_repository(
+    repo_root: Path,
+    config: LintConfig | None = None,
+    names: list[str] | None = None,
+    check: str | None = None,
+) -> RunReport:
+    """Lint every evaluation and helper package in the repository (or just ``names``)."""
+    config = config or load_config(repo_root)
+    if names is None:
+        names = [*evaluation_names(repo_root, config), *helper_names(repo_root, config)]
+    return RunReport(
+        root=repo_root,
+        packages=[lint_package(repo_root, name, config, check=check) for name in names],
+    )
+
+
+__all__ = [
+    "LOCATION_RULE",
+    "Diagnostic",
+    "evaluation_names",
+    "helper_names",
+    "lint_package",
+    "lint_repository",
+    "package_kind",
+]

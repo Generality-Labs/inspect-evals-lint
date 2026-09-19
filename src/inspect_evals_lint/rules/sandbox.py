@@ -1,4 +1,4 @@
-"""Sandbox checks: registry-pulled compose images must be pinned."""
+"""Sandbox rules: pinned compose images, and a sandbox check task for GPU evaluations."""
 
 from __future__ import annotations
 
@@ -8,18 +8,14 @@ from typing import Any, cast
 import yaml
 
 from inspect_evals_lint.context import LintContext
-from inspect_evals_lint.models import LintResult
+from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
 from inspect_evals_lint.registry import rule
 
-CHECK_NAME = "sandbox_image_pinning"
-
-PIN_ADVICE = (
+PIN_HINT = (
     "pin it: use a dated tag you publish yourself for images you rebuild "
     "(e.g. ':2026-08-01'), an immutable upstream tag for images you don't "
     "control, or an @sha256 digest if no immutable tag exists"
 )
-
-ALLOWLIST_LOCATION = "[tool.inspect-evals-lint.sandbox_image_allowlist] in pyproject.toml"
 
 
 def _is_pinned(image: str) -> bool:
@@ -38,37 +34,52 @@ def _is_pinned(image: str) -> bool:
     allowlist=True,
     summary="Registry images in compose files use an immutable tag or digest",
 )
-def sandbox_image_pinning(ctx: LintContext) -> Iterable[LintResult]:
-    """Fail on untagged or ``:latest`` images in ``compose*.y*ml`` files under ``eval_path``.
+def sandbox_image_pinning(ctx: LintContext) -> Iterable[Finding]:
+    """Registry images in compose files use an immutable tag or digest.
 
-    A floating reference resolves to whatever the registry currently holds, so a
-    registry push silently changes the evaluation environment. Services built
-    locally (``build:``) and env-var interpolated references are skipped.
-    ``allowlist`` entries ``(eval_name, image)`` warn instead of failing, and a
-    stale entry warns so it gets removed.
+    ## What it does
+    Reads every ``compose*.y*ml`` under the package and flags each service whose
+    ``image`` is untagged or ``:latest``. Services built locally (``build:``) and
+    ``${VAR}`` interpolated references are skipped. Each diagnostic is keyed by the
+    image reference, which is what an allowlist entry names.
+
+    ## Why is this bad?
+    A floating reference resolves to whatever the registry holds today. A push
+    upstream silently changes the evaluation environment, and results stop being
+    comparable across runs without anything in the repository changing.
+
+    ## Example
+    ```yaml
+    services:
+      default:
+        image: aisiuk/inspect-tool-support
+    ```
+    Use instead:
+    ```yaml
+    services:
+      default:
+        image: aisiuk/inspect-tool-support:1.4.2
+        # or: aisiuk/inspect-tool-support@sha256:...
+    ```
+
+    ## Options
+    - `allowlists.sandbox_image_pinning`: `{ package = ["image/ref"] }` entries reported as warnings while they are pinned.
     """
-    eval_path, allowlist = ctx.path, ctx.config.sandbox_image_allowlist
-    eval_name = eval_path.name
-    compose_files = sorted(eval_path.rglob("compose*.y*ml"))
+    compose_files = sorted(ctx.path.rglob("compose*.y*ml"))
     if not compose_files:
-        yield LintResult(name=CHECK_NAME, status="skip", message="No compose files found")
+        yield Outcome("skip", "No compose files found")
         return
 
-    seen_allowlisted: set[tuple[str, str]] = set()
-    failed = False
+    issues = 0
     checked_images = 0
     for compose_file in compose_files:
         try:
             compose: Any = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
         except yaml.YAMLError as e:
-            yield LintResult(
-                name=CHECK_NAME,
-                status="warn",
-                message=f"Could not parse compose file: {e}",
-                file=str(compose_file),
+            issues += 1
+            yield Diagnostic(
+                f"Could not parse compose file: {e}", file=compose_file, severity="warning"
             )
-
-            failed = True
             continue
         if not isinstance(compose, dict):
             continue
@@ -90,57 +101,24 @@ def sandbox_image_pinning(ctx: LintContext) -> Iterable[LintResult]:
                     checked_images += 1
                 continue
             checked_images += 1
-            if (eval_name, image) in allowlist:
-                seen_allowlisted.add((eval_name, image))
-                yield LintResult(
-                    name=CHECK_NAME,
-                    status="warn",
-                    message=(
-                        f"Service '{service_name}' uses allowlisted unpinned "
-                        f"image '{image}'; {PIN_ADVICE}, then remove the "
-                        "allowlist entry"
-                    ),
-                    file=str(compose_file),
-                )
-
-                continue
-            failed = True
-            yield LintResult(
-                name=CHECK_NAME,
-                status="fail",
-                message=(
-                    f"Service '{service_name}' image '{image}' is untagged or "
-                    f":latest, so registry pushes silently change the eval "
-                    f"environment; {PIN_ADVICE}"
-                ),
-                file=str(compose_file),
+            issues += 1
+            yield Diagnostic(
+                f"Service '{service_name}' image '{image}' is untagged or :latest, "
+                "so registry pushes silently change the eval environment",
+                file=compose_file,
+                hint=PIN_HINT,
+                key=image,
             )
 
-    stale = {(name, image) for (name, image) in allowlist if name == eval_name} - seen_allowlisted
-    for _, image in sorted(stale):
-        yield LintResult(
-            name=CHECK_NAME,
-            status="warn",
-            message=(
-                f"Allowlist entry for image '{image}' is no longer needed; "
-                f"remove it from {ALLOWLIST_LOCATION}"
-            ),
-        )
-
-    if not failed and not seen_allowlisted:
-        yield LintResult(
-            name=CHECK_NAME,
-            status="pass",
-            message=(
-                f"All {checked_images} registry image reference(s) in "
-                f"{len(compose_files)} compose file(s) are pinned"
-            ),
+    if not issues:
+        yield Outcome(
+            "pass",
+            f"All {checked_images} registry image reference(s) in "
+            f"{len(compose_files)} compose file(s) are pinned",
         )
 
 
-GPU_CHECK_NAME = "gpu_sandbox_check"
-
-GPU_CHECK_ADVICE = (
+GPU_CHECK_HINT = (
     "declare a task named '<eval>_sandbox_check' with 'kind: maintenance' in "
     "eval.yaml that runs the eval's scorer over fixture answers with known "
     "verdicts inside the pinned image (see inspect_evals.utils.sandbox_check "
@@ -165,44 +143,43 @@ def _requires_gpu(data: dict[str, Any]) -> bool:
     category="best_practices",
     summary="An evaluation requiring a GPU ships a maintenance sandbox check task",
 )
-def gpu_sandbox_check(ctx: LintContext) -> Iterable[LintResult]:
-    """An eval that declares ``metadata.requires.gpu`` ships a sandbox check task.
+def gpu_sandbox_check(ctx: LintContext) -> Iterable[Finding]:
+    """An evaluation requiring a GPU ships a maintenance sandbox check task.
 
-    GPU sandbox images cannot be exercised in ordinary CI, so a broken image
-    (missing package, wrong Python, CUDA toolchain not working) would only show
-    up as errored samples in a real run. The check task certifies the image on
-    GPU hardware through the eval's own scorer. It must appear in ``tasks`` with
-    a name ending ``_sandbox_check`` and ``kind: maintenance``, so listings and
-    reports do not present its accuracy as a model result.
+    ## What it does
+    When ``eval.yaml`` declares ``metadata.requires.gpu``, ``tasks`` must include a
+    task whose name ends ``_sandbox_check`` and which is declared with
+    ``kind: maintenance``.
+
+    ## Why is this bad?
+    GPU sandbox images cannot be exercised in ordinary CI, so a broken image (a
+    missing package, the wrong Python, a CUDA toolchain that does not work) would
+    only show up as errored samples in a real run. The check task certifies the
+    image on GPU hardware through the evaluation's own scorer, and ``kind:
+    maintenance`` keeps its accuracy out of listings that present model results.
+
+    ## Example
+    ```yaml
+    tasks:
+      - name: kernelbench
+      - name: kernelbench_sandbox_check
+        kind: maintenance
+    metadata:
+      requires:
+        gpu: true
+    ```
     """
-    eval_path = ctx.path
-    eval_yaml_file = eval_path / "eval.yaml"
+    eval_yaml_file = ctx.path / "eval.yaml"
     if not eval_yaml_file.exists():
-        yield LintResult(
-            name=GPU_CHECK_NAME,
-            status="skip",
-            message="No eval.yaml to read a GPU requirement from",
-        )
-
+        yield Outcome("skip", "No eval.yaml to read a GPU requirement from")
         return
     try:
         data: Any = yaml.safe_load(eval_yaml_file.read_text(encoding="utf-8"))
     except yaml.YAMLError as e:
-        yield LintResult(
-            name=GPU_CHECK_NAME,
-            status="warn",
-            message=f"Could not parse eval.yaml: {e}",
-            file=str(eval_yaml_file),
-        )
-
+        yield Diagnostic(f"Could not parse eval.yaml: {e}", file=eval_yaml_file, severity="warning")
         return
     if not isinstance(data, dict) or not _requires_gpu(cast(dict[str, Any], data)):
-        yield LintResult(
-            name=GPU_CHECK_NAME,
-            status="skip",
-            message="No GPU requirement declared under metadata.requires",
-        )
-
+        yield Outcome("skip", "No GPU requirement declared under metadata.requires")
         return
 
     tasks: Any = cast(dict[str, Any], data).get("tasks")
@@ -214,19 +191,18 @@ def gpu_sandbox_check(ctx: LintContext) -> Iterable[LintResult]:
     maintenance = [t for t in check_tasks if t.get("kind") == "maintenance"]
     if maintenance:
         names = ", ".join(str(t["name"]) for t in maintenance)
-        yield LintResult(
-            name=GPU_CHECK_NAME,
-            status="pass",
-            message=f"GPU eval ships sandbox check task(s): {names}",
-        )
-
+        yield Outcome("pass", f"GPU eval ships sandbox check task(s): {names}")
         return
     if check_tasks:
         names = ", ".join(str(t["name"]) for t in check_tasks)
-        message = (
-            f"Sandbox check task(s) {names} must be declared with 'kind: maintenance' "
-            "so their accuracy is not presented as a model result"
+        yield Diagnostic(
+            f"Sandbox check task(s) {names} must be declared with 'kind: maintenance'",
+            file=eval_yaml_file,
+            hint="so their accuracy is not presented as a model result",
         )
     else:
-        message = f"eval.yaml declares metadata.requires.gpu but no sandbox check task; {GPU_CHECK_ADVICE}"
-    yield LintResult(name=GPU_CHECK_NAME, status="fail", message=message, file=str(eval_yaml_file))
+        yield Diagnostic(
+            "eval.yaml declares metadata.requires.gpu but no sandbox check task",
+            file=eval_yaml_file,
+            hint=GPU_CHECK_HINT,
+        )

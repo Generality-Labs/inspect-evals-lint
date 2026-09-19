@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from inspect_evals_lint.config import LintConfig, load_config
-from inspect_evals_lint.models import PackageKind
+from inspect_evals_lint.diagnostics import PackageKind
 
 
 def is_package(path: Path) -> bool:
@@ -14,9 +14,9 @@ def is_package(path: Path) -> bool:
     return path.is_dir() and (path / "__init__.py").is_file()
 
 
-def get_eval_path(repo_root: Path, name: str, config: LintConfig) -> Path | None:
+def package_path(repo_root: Path, name: str, config: LintConfig) -> Path | None:
     """The package directory, or None if it does not exist or is not a package."""
-    path = config.eval_dir(repo_root, name)
+    path = config.package_dir(repo_root, name)
     return path if is_package(path) else None
 
 
@@ -36,7 +36,7 @@ def _candidate_dirs(repo_root: Path, config: LintConfig) -> list[Path]:
     )
 
 
-def get_all_eval_names(repo_root: Path, config: LintConfig | None = None) -> list[str]:
+def evaluation_names(repo_root: Path, config: LintConfig | None = None) -> list[str]:
     """Evaluation package names under ``config.source_root``.
 
     A directory counts when it has an ``__init__.py`` and is not hidden,
@@ -47,7 +47,7 @@ def get_all_eval_names(repo_root: Path, config: LintConfig | None = None) -> lis
     return [item.name for item in _candidate_dirs(repo_root, config) if item.name not in excluded]
 
 
-def get_all_helper_names(repo_root: Path, config: LintConfig | None = None) -> list[str]:
+def helper_names(repo_root: Path, config: LintConfig | None = None) -> list[str]:
     """Helper package names under ``config.source_root``: entries of ``helper_dirs`` that are packages."""
     config = config or load_config(repo_root)
     return [
@@ -107,7 +107,7 @@ class LintContext:
         return cls(
             root=repo_root,
             name=name,
-            path=config.eval_dir(repo_root, name),
+            path=config.package_dir(repo_root, name),
             kind=kind,
             config=config,
             test_path=test_path,

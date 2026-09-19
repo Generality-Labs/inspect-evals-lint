@@ -1,4 +1,4 @@
-"""End-to-end behaviour of lint_evaluation on both layouts."""
+"""End-to-end behaviour of lint_package on both layouts."""
 
 from __future__ import annotations
 
@@ -9,11 +9,12 @@ import pytest
 
 from inspect_evals_lint import (
     PRESETS,
+    ConfigError,
     LintConfig,
-    get_all_check_names,
-    get_all_eval_names,
-    get_all_helper_names,
-    lint_evaluation,
+    evaluation_names,
+    helper_names,
+    lint_package,
+    rule_names,
 )
 from inspect_evals_lint.registry import CATEGORIES, category_of, rules
 from tests.conftest import (
@@ -29,19 +30,21 @@ from tests.conftest import (
 def statuses(
     root: Path, config: LintConfig, name: str = "alpha", **kwargs: object
 ) -> dict[str, list[str]]:
-    report = lint_evaluation(root, name, config, **kwargs)  # type: ignore[arg-type]
-    out: dict[str, list[str]] = {}
-    for r in report.results:
-        out.setdefault(r.name, []).append(r.status)
-    return out
+    report = lint_package(root, name, config, **kwargs)  # type: ignore[arg-type]
+    return dict(report.statuses())
+
+
+def first(report, name: str):
+    """The first finding a rule produced."""
+    return next(r for r in report.items() if r.rule is not None and r.rule.name == name)
 
 
 HELPER_RULES = {r.name for r in rules() if "helper" in r.scopes}
 
 
 def test_all_check_names_are_registered() -> None:
-    assert get_all_check_names() == sorted(r.name for r in rules())
-    assert len(get_all_check_names()) == 23
+    assert rule_names() == sorted(r.name for r in rules())
+    assert len(rule_names()) == 23
 
 
 def test_every_check_has_a_category() -> None:
@@ -59,17 +62,16 @@ def test_well_formed_eval_passes_every_check(tmp_path: Path, layout: str) -> Non
         "register": make_register_repo,
     }
     config = builders[layout](tmp_path)
-    report = lint_evaluation(tmp_path, "alpha", config)
-    failing = [(r.name, r.message) for r in report.results if r.status == "fail"]
+    report = lint_package(tmp_path, "alpha", config)
+    failing = [(d.rule.name, d.message) for d in report.diagnostics if d.status == "fail"]
     assert failing == []
     assert report.passed()
-    ran = {r.name for r in report.results}
-    assert ran == set(get_all_check_names())
+    assert set(report.statuses()) == set(rule_names())
 
 
 def test_results_follow_registry_order(monorepo: tuple[Path, LintConfig]) -> None:
     root, config = monorepo
-    names = [r.name for r in lint_evaluation(root, "alpha", config).results]
+    names = [r.rule.name for r in lint_package(root, "alpha", config).items()]
     deduped = list(dict.fromkeys(names))
     assert deduped == [r.name for r in rules()]
     assert deduped.index("main_file") < deduped.index("init_exports")
@@ -77,9 +79,9 @@ def test_results_follow_registry_order(monorepo: tuple[Path, LintConfig]) -> Non
 
 def test_missing_eval_reports_only_location(monorepo: tuple[Path, LintConfig]) -> None:
     root, config = monorepo
-    report = lint_evaluation(root, "nope", config)
-    assert [(r.name, r.status) for r in report.results] == [("eval_location", "fail")]
-    assert "src/inspect_evals/nope" in report.results[0].message
+    report = lint_package(root, "nope", config)
+    assert report.statuses() == {"package_location": ["fail"]}
+    assert "src/inspect_evals/nope" in report.diagnostics[0].message
 
 
 def test_every_check_has_a_scope() -> None:
@@ -94,40 +96,42 @@ def test_every_check_has_a_scope() -> None:
 
 def test_helper_dir_is_linted_with_the_helper_scope(monorepo: tuple[Path, LintConfig]) -> None:
     root, config = monorepo
-    report = lint_evaluation(root, "utils", config)
+    report = lint_package(root, "utils", config)
     assert report.kind == "helper"
     assert report.passed()
-    ran = {r.name for r in report.results}
-    assert ran == HELPER_RULES
+    assert set(report.statuses()) == HELPER_RULES
 
 
 def test_ignored_dir_is_skipped(tmp_path: Path) -> None:
     config = make_template_repo(tmp_path)
     write(tmp_path / "src/examples/__init__.py", "")
-    report = lint_evaluation(tmp_path, "examples", config)
-    assert [(r.name, r.status) for r in report.results] == [("ignored_directory", "skip")]
+    report = lint_package(tmp_path, "examples", config)
+    assert report.skipped is not None
+    assert "ignore-dirs" in report.skipped
+    assert report.items() == []
+    assert report.passed()
 
 
 def test_directory_without_init_is_not_a_package(monorepo: tuple[Path, LintConfig]) -> None:
     """A documentation-only directory such as inspect_evals' gdm_capabilities/ is skipped, not failed."""
     root, config = monorepo
     write(root / "src/inspect_evals/moved_evals/README.md", "# Moved\n")
-    report = lint_evaluation(root, "moved_evals", config)
-    assert [(r.name, r.status) for r in report.results] == [("eval_location", "skip")]
-    assert "__init__.py" in report.results[0].message
+    report = lint_package(root, "moved_evals", config)
+    assert report.statuses() == {"package_location": ["skip"]}
+    assert "__init__.py" in report.outcomes[0].message
     assert report.passed()
     # Under --check the location check is bypassed, and the outcome is the same.
-    report = lint_evaluation(root, "moved_evals", config, check="readme")
-    assert report.results == []
+    report = lint_package(root, "moved_evals", config, check="readme")
+    assert report.items() == []
 
 
 def test_check_outside_helper_scope_is_reported_as_not_applicable(
     monorepo: tuple[Path, LintConfig],
 ) -> None:
     root, config = monorepo
-    report = lint_evaluation(root, "utils", config, check="readme")
-    assert [(r.name, r.status) for r in report.results] == [("readme", "skip")]
-    assert "helper" in report.results[0].message
+    report = lint_package(root, "utils", config, check="readme")
+    assert report.statuses() == {"readme": ["skip"]}
+    assert "helper" in report.outcomes[0].message
 
 
 def test_helper_model_role_fallback_fails(monorepo: tuple[Path, LintConfig]) -> None:
@@ -147,7 +151,9 @@ def test_helper_model_role_fallback_fails(monorepo: tuple[Path, LintConfig]) -> 
         ),
     )
     assert statuses(root, config, "utils")["model_role_resolution"] == ["fail"]
-    config = replace(config, model_role_allowlist=frozenset({("utils", "<dynamic>")}))
+    config = replace(
+        config, allowlists={"model_role_resolution": frozenset({("utils", "<dynamic>")})}
+    )
     assert statuses(root, config, "utils")["model_role_resolution"] == ["warn"]
 
 
@@ -156,8 +162,8 @@ def test_helper_module_level_import_must_be_a_core_dependency(
 ) -> None:
     root, config = monorepo
     make_helper(root, config, code="import definitely_not_installed_pkg\n")
-    report = lint_evaluation(root, "utils", config)
-    result = next(r for r in report.results if r.name == "external_dependencies")
+    report = lint_package(root, "utils", config)
+    result = first(report, "external_dependencies")
     assert result.status == "fail"
     assert "[project].dependencies" in result.message
     # Declaring it in an optional group is not enough: every evaluation imports the helper.
@@ -197,13 +203,15 @@ def test_helper_lazy_import_needs_only_an_optional_group(
             "    return lazy_pkg\n"
         ),
     )
-    report = lint_evaluation(root, "utils", config)
-    result = next(r for r in report.results if r.name == "external_dependencies")
-    assert result.status == "fail"
-    assert "optional-dependenc" in result.message
-    assert "[project].dependencies" not in result.message
+    report = lint_package(root, "utils", config)
+    findings = [d for d in report.diagnostics if d.rule.name == "external_dependencies"]
+    assert [d.status for d in findings] == ["fail", "fail", "fail"]
+    assert all("optional-dependenc" in d.message for d in findings)
+    assert all("[project].dependencies" not in d.message for d in findings)
+    assert sorted(d.file.name for d in findings) == ["helpers.py"] * 3
+    assert {d.line for d in findings} == {3, 5, 10}
     for name in ("lazy_pkg", "guarded_pkg", "typed_only_pkg"):
-        assert name in result.message
+        assert any(name in d.message for d in findings)
     write(
         root / "pyproject.toml",
         '[project]\nname = "inspect_evals"\ndependencies = ["inspect_ai"]\n\n'
@@ -236,7 +244,7 @@ def test_eval_dependency_rule_is_unchanged_by_import_position(
     """Evaluations keep the group-per-evaluation rule wherever the import sits."""
     root, config = monorepo
     write(
-        config.eval_dir(root, "alpha") / "extra.py",
+        config.package_dir(root, "alpha") / "extra.py",
         "def load():\n    import definitely_not_installed_pkg\n",
     )
     assert statuses(root, config)["external_dependencies"] == ["fail"]
@@ -281,13 +289,13 @@ def test_get_all_helper_names_lists_only_helper_packages(tmp_path: Path) -> None
     config = replace(config, helper_dirs=frozenset({"utils", "common", "docs_dir"}))
     write(tmp_path / "src/inspect_evals/common/__init__.py", "")
     write(tmp_path / "src/inspect_evals/docs_dir/README.md", "")
-    assert get_all_helper_names(tmp_path, config) == ["common", "utils"]
-    assert "common" not in get_all_eval_names(tmp_path, config)
+    assert helper_names(tmp_path, config) == ["common", "utils"]
+    assert "common" not in evaluation_names(tmp_path, config)
 
 
 def test_missing_readme_fails(monorepo: tuple[Path, LintConfig]) -> None:
     root, config = monorepo
-    (config.eval_dir(root, "alpha") / "README.md").unlink()
+    (config.package_dir(root, "alpha") / "README.md").unlink()
     assert statuses(root, config)["readme"] == ["fail"]
 
 
@@ -347,23 +355,63 @@ def test_only_one_check_runs_with_filter(monorepo: tuple[Path, LintConfig]) -> N
 
 def test_invalid_check_name(monorepo: tuple[Path, LintConfig]) -> None:
     root, config = monorepo
-    result = statuses(root, config, check="bogus")
-    assert result == {"invalid_check": ["fail"]}
+    with pytest.raises(ValueError, match="Unknown check"):
+        lint_package(root, "alpha", config, check="bogus")
 
 
 def test_disabled_checks_do_not_run(monorepo: tuple[Path, LintConfig]) -> None:
     root, config = monorepo
-    config = replace(config, disabled_checks=frozenset({"registry", "tests_init"}))
+    config = replace(config, ignore=("registry", "IETS002"))
     result = statuses(root, config)
     assert "registry" not in result
     assert "tests_init" not in result
 
 
+def test_select_prefix_runs_only_that_category(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    result = statuses(root, replace(config, select=("IEFS",)))
+    assert set(result) == {r.name for r in rules() if r.category == "file_structure"}
+
+
+def test_exclude_keeps_files_out_of_the_ast_rules(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    write(config.package_dir(root, "alpha") / "challenges" / "bad.py", "print 'python 2'\n")
+    assert statuses(root, config)["private_api_imports"] == ["fail"]  # the parse failure
+    config = replace(config, exclude=("src/inspect_evals/*/challenges/**",))
+    assert statuses(root, config)["private_api_imports"] == ["pass"]
+
+
+def test_unparsable_file_is_reported_and_the_rest_still_checked(
+    monorepo: tuple[Path, LintConfig],
+) -> None:
+    root, config = monorepo
+    eval_dir = config.package_dir(root, "alpha")
+    write(eval_dir / "broken.py", "def (:\n")
+    write(eval_dir / "private.py", "from inspect_ai.model._model import x\n")
+    report = lint_package(root, "alpha", config, check="private_api_imports")
+    assert sorted(d.file.name for d in report.diagnostics) == ["broken.py", "private.py"]
+
+
+def test_per_file_ignores_suppress_by_glob(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    write(config.package_dir(root, "alpha") / "data" / "gen.py", "s = Sample(input='x')\n")
+    assert statuses(root, config)["sample_ids"] == ["fail"]
+    config = replace(config, per_file_ignores=(("src/inspect_evals/*/data/**", ("IEBP003",)),))
+    assert statuses(root, config)["sample_ids"] == ["suppressed"]
+
+
+def test_legacy_noautolint_is_a_configuration_error(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    write(config.package_dir(root, "alpha") / ".noautolint", "readme\n")
+    with pytest.raises(ConfigError, match="noautolint"):
+        lint_package(root, "alpha", config)
+
+
 def test_custom_required_yaml_fields(template_repo: tuple[Path, LintConfig]) -> None:
     root, config = template_repo
     config = replace(config, eval_yaml_required_fields=("title", "license"))
-    report = lint_evaluation(root, "alpha", config)
-    yaml_result = next(r for r in report.results if r.name == "eval_yaml")
+    report = lint_package(root, "alpha", config)
+    yaml_result = first(report, "eval_yaml")
     assert yaml_result.status == "fail"
     assert "license" in yaml_result.message
 
@@ -374,24 +422,24 @@ def test_get_all_eval_names_skips_non_evals_and_private_dirs(tmp_path: Path) -> 
     write(tmp_path / "src/inspect_evals/no_init/README.md", "")
     config = replace(config, ignore_dirs=frozenset({"scratch"}))
     write(tmp_path / "src/inspect_evals/scratch/__init__.py", "")
-    assert get_all_eval_names(tmp_path, config) == ["alpha", "beta"]
+    assert evaluation_names(tmp_path, config) == ["alpha", "beta"]
 
 
 def test_get_all_eval_names_template_layout(tmp_path: Path) -> None:
     config = make_template_repo(tmp_path, eval_names=("alpha", "beta"))
     write(tmp_path / "src/examples/__init__.py", "")
-    assert get_all_eval_names(tmp_path, config) == ["alpha", "beta"]
+    assert evaluation_names(tmp_path, config) == ["alpha", "beta"]
 
 
 def test_config_loaded_from_pyproject_when_omitted(monorepo: tuple[Path, LintConfig]) -> None:
     root, _ = monorepo
-    assert lint_evaluation(root, "alpha").passed()
+    assert lint_package(root, "alpha").passed()
 
 
 def test_isolated_package_satisfies_dependency_check(monorepo: tuple[Path, LintConfig]) -> None:
     root, config = monorepo
     write(
-        config.eval_dir(root, "alpha") / "extra.py",
+        config.package_dir(root, "alpha") / "extra.py",
         "import definitely_not_installed_pkg\n",
     )
     assert statuses(root, config)["external_dependencies"] == ["fail"]
@@ -405,12 +453,39 @@ def test_isolated_package_satisfies_dependency_check(monorepo: tuple[Path, LintC
 def test_sandbox_allowlist_from_config(monorepo: tuple[Path, LintConfig]) -> None:
     root, config = monorepo
     write(
-        config.eval_dir(root, "alpha") / "compose.yaml",
+        config.package_dir(root, "alpha") / "compose.yaml",
         "services:\n  default:\n    image: example/untagged\n",
     )
     assert statuses(root, config)["sandbox_image_pinning"] == ["fail"]
-    config = replace(config, sandbox_image_allowlist=frozenset({("alpha", "example/untagged")}))
+    config = replace(
+        config, allowlists={"sandbox_image_pinning": frozenset({("alpha", "example/untagged")})}
+    )
     assert statuses(root, config)["sandbox_image_pinning"] == ["warn"]
+    (warning,) = lint_package(root, "alpha", config).statuses()["sandbox_image_pinning"]
+    assert warning == "warn"
+
+
+def test_stale_allowlist_entry_warns_at_pyproject(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    config = replace(
+        config, allowlists={"sandbox_image_pinning": frozenset({("alpha", "example/untagged")})}
+    )
+    report = lint_package(root, "alpha", config, check="sandbox_image_pinning")
+    assert report.statuses()["sandbox_image_pinning"] == ["skip", "warn"]
+    (stale,) = report.diagnostics
+    assert stale.file.name == "pyproject.toml"
+    assert "no longer needed" in stale.message
+    assert "allowlists.sandbox_image_pinning" in (stale.hint or "")
+
+
+def test_allowlist_is_scoped_to_the_package(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    write(
+        config.package_dir(root, "alpha") / "scorer.py",
+        'from inspect_ai.model import get_model\n\ngrader = get_model(role="grader")\n',
+    )
+    config = replace(config, allowlists={"model_role_resolution": frozenset({("beta", "grader")})})
+    assert statuses(root, config)["model_role_resolution"] == ["fail"]
 
 
 def test_register_layout_statuses(register_repo: tuple[Path, LintConfig]) -> None:
@@ -439,8 +514,8 @@ def test_flat_layout_prefers_per_eval_directory(register_repo: tuple[Path, LintC
     """A template-derived repo that kept tests/<eval>/ is linted as before, __init__.py included."""
     root, config = register_repo
     write(config.tests_dir(root) / "alpha" / "test_other.py", "def test_x():\n    pass\n")
-    report = lint_evaluation(root, "alpha", config)
-    by_name = {r.name: r for r in report.results}
+    report = lint_package(root, "alpha", config)
+    by_name = {r.rule.name: r for r in report.items()}
     assert "tests/alpha" in by_name["tests_exist"].message
     assert by_name["tests_init"].status == "fail"  # tests/alpha has no __init__.py
     assert by_name["e2e_test"].status == "fail"  # the flat file is no longer in scope
@@ -459,14 +534,14 @@ def test_root_readme_fallback_only_when_eval_dir_has_none(
     register_repo: tuple[Path, LintConfig],
 ) -> None:
     root, config = register_repo
-    write(config.eval_dir(root, "alpha") / "README.md", "# alpha\n\nTODO: write me\n")
-    report = lint_evaluation(root, "alpha", config)
-    readme = next(r for r in report.results if r.name == "readme")
+    write(config.package_dir(root, "alpha") / "README.md", "# alpha\n\nTODO: write me\n")
+    report = lint_package(root, "alpha", config)
+    readme = first(report, "readme")
     assert readme.status == "warn"  # the eval-dir README wins and its TODO is reported
-    (config.eval_dir(root, "alpha") / "README.md").unlink()
+    (config.package_dir(root, "alpha") / "README.md").unlink()
     (root / "README.md").unlink()
-    report = lint_evaluation(root, "alpha", config)
-    readme = next(r for r in report.results if r.name == "readme")
+    report = lint_package(root, "alpha", config)
+    readme = first(report, "readme")
     assert readme.status == "fail"
     assert "alpha/" in readme.message
 
@@ -475,20 +550,20 @@ def test_optional_eval_yaml_is_still_validated_when_present(
     register_repo: tuple[Path, LintConfig],
 ) -> None:
     root, config = register_repo
-    write(config.eval_dir(root, "alpha") / "eval.yaml", "title: Alpha\n")
-    report = lint_evaluation(root, "alpha", config)
-    result = next(r for r in report.results if r.name == "eval_yaml")
+    write(config.package_dir(root, "alpha") / "eval.yaml", "title: Alpha\n")
+    report = lint_package(root, "alpha", config)
+    result = first(report, "eval_yaml")
     assert result.status == "fail"
     assert "description" in result.message
 
 
 def test_tasks_py_accepted_as_main_file(template_repo: tuple[Path, LintConfig]) -> None:
     root, config = template_repo
-    eval_dir = config.eval_dir(root, "alpha")
+    eval_dir = config.package_dir(root, "alpha")
     (eval_dir / "alpha.py").rename(eval_dir / "tasks.py")
     write(eval_dir / "__init__.py", "from .tasks import alpha\n\n__all__ = ['alpha']\n")
-    report = lint_evaluation(root, "alpha", config)
-    by_name = {r.name: r for r in report.results}
+    report = lint_package(root, "alpha", config)
+    by_name = {r.rule.name: r for r in report.items()}
     assert by_name["main_file"].status == "pass"
     assert "tasks.py" in by_name["main_file"].message
     assert by_name["init_exports"].status == "pass"
@@ -496,7 +571,7 @@ def test_tasks_py_accepted_as_main_file(template_repo: tuple[Path, LintConfig]) 
 
 def test_tasks_py_exports_are_checked(template_repo: tuple[Path, LintConfig]) -> None:
     root, config = template_repo
-    eval_dir = config.eval_dir(root, "alpha")
+    eval_dir = config.package_dir(root, "alpha")
     (eval_dir / "alpha.py").rename(eval_dir / "tasks.py")
     write(eval_dir / "__init__.py", "")
     result = statuses(root, config)
@@ -506,10 +581,10 @@ def test_tasks_py_exports_are_checked(template_repo: tuple[Path, LintConfig]) ->
 
 def test_named_main_file_preferred_over_tasks_py(template_repo: tuple[Path, LintConfig]) -> None:
     root, config = template_repo
-    eval_dir = config.eval_dir(root, "alpha")
+    eval_dir = config.package_dir(root, "alpha")
     write(eval_dir / "tasks.py", "from inspect_ai import task\n\n@task\ndef other():\n    ...\n")
-    report = lint_evaluation(root, "alpha", config)
-    main = next(r for r in report.results if r.name == "main_file")
+    report = lint_package(root, "alpha", config)
+    main = first(report, "main_file")
     assert main.status == "pass"
     assert main.message.startswith("alpha.py")
 
@@ -518,7 +593,7 @@ def test_empty_named_main_file_does_not_hide_tasks_py(
     template_repo: tuple[Path, LintConfig],
 ) -> None:
     root, config = template_repo
-    eval_dir = config.eval_dir(root, "alpha")
+    eval_dir = config.package_dir(root, "alpha")
     (eval_dir / "alpha.py").rename(eval_dir / "tasks.py")
     write(eval_dir / "alpha.py", "CONSTANT = 1\n")
     write(eval_dir / "__init__.py", "from .tasks import alpha\n")
@@ -529,9 +604,9 @@ def test_empty_named_main_file_does_not_hide_tasks_py(
 
 def test_missing_main_file_names_both_candidates(template_repo: tuple[Path, LintConfig]) -> None:
     root, config = template_repo
-    (config.eval_dir(root, "alpha") / "alpha.py").unlink()
-    report = lint_evaluation(root, "alpha", config)
-    by_name = {r.name: r for r in report.results}
+    (config.package_dir(root, "alpha") / "alpha.py").unlink()
+    report = lint_package(root, "alpha", config)
+    by_name = {r.rule.name: r for r in report.items()}
     assert by_name["main_file"].status == "fail"
     assert by_name["main_file"].message == "Missing main file: alpha.py or tasks.py"
     assert by_name["init_exports"].status == "skip"
@@ -540,9 +615,23 @@ def test_missing_main_file_names_both_candidates(template_repo: tuple[Path, Lint
 def test_model_role_allowlist_from_config(monorepo: tuple[Path, LintConfig]) -> None:
     root, config = monorepo
     write(
-        config.eval_dir(root, "alpha") / "scorer.py",
+        config.package_dir(root, "alpha") / "scorer.py",
         'from inspect_ai.model import get_model\n\ngrader = get_model(role="grader")\n',
     )
     assert statuses(root, config)["model_role_resolution"] == ["fail"]
-    config = replace(config, model_role_allowlist=frozenset({("alpha", "grader")}))
+    config = replace(config, allowlists={"model_role_resolution": frozenset({("alpha", "grader")})})
     assert statuses(root, config)["model_role_resolution"] == ["warn"]
+    report = lint_package(root, "alpha", config, check="model_role_resolution")
+    (d,) = report.diagnostics
+    assert d.message.startswith("Allowlisted:")
+    assert "remove the allowlist entry" in (d.hint or "")
+
+
+def test_per_file_ignores_cover_a_finding_about_the_directory_itself(
+    monorepo: tuple[Path, LintConfig],
+) -> None:
+    root, config = monorepo
+    (root / "tests/alpha/test_alpha.py").write_text("def test_x():\n    pass\n")
+    assert statuses(root, config, check="e2e_test")["e2e_test"] == ["fail"]
+    config = replace(config, per_file_ignores=(("tests/alpha/**", ("e2e_test",)),))
+    assert statuses(root, config, check="e2e_test")["e2e_test"] == ["suppressed"]

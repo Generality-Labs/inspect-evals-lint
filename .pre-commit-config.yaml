@@ -89,3 +89,12 @@ repos:
         # Formatting config (wrap, number, ...) lives in .mdformat.toml.
         additional_dependencies:
           - mdformat-gfm # padded/aligned tables + GFM extensions (task lists, strikethrough)
+
+  - repo: local
+    hooks:
+      - id: generated-docs
+        name: generated docs are current (python -m inspect_evals_lint.docs --check)
+        entry: uv run python -m inspect_evals_lint.docs --check
+        language: system
+        pass_filenames: false
+        files: ^(src/inspect_evals_lint/|docs/|README\.md)

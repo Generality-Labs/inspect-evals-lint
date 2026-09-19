@@ -80,7 +80,7 @@ def write(path: Path, content: str) -> Path:
 
 def make_eval(root: Path, config: LintConfig, name: str, *, with_tests: bool = True) -> Path:
     """Create a passing evaluation named ``name`` under ``root`` for ``config``'s layout."""
-    eval_dir = config.eval_dir(root, name)
+    eval_dir = config.package_dir(root, name)
     write(eval_dir / "__init__.py", EVAL_INIT.format(name=name))
     write(eval_dir / f"{name}.py", EVAL_MAIN.format(name=name))
     write(eval_dir / "eval.yaml", EVAL_YAML.format(name=name, title=name.title()))
@@ -149,7 +149,7 @@ def make_register_repo(root: Path, name: str = "alpha") -> LintConfig:
         '[project]\nname = "my-eval"\ndependencies = ["inspect-ai"]\n\n'
         f'[project.entry-points.inspect_ai]\n{name} = "{name}"\n',
     )
-    eval_dir = config.eval_dir(root, name)
+    eval_dir = config.package_dir(root, name)
     write(eval_dir / "__init__.py", EVAL_INIT.format(name=name))
     write(eval_dir / f"{name}.py", EVAL_MAIN.format(name=name))
     write(root / "README.md", f"# {name}\n")

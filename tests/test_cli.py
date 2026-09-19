@@ -21,22 +21,49 @@ def run(*argv: str) -> int:
     return int(exc.value.code or 0)
 
 
-def test_list_checks(capsys: pytest.CaptureFixture[str]) -> None:
-    assert run("--list-checks") == 0
+def test_list_rules(capsys: pytest.CaptureFixture[str]) -> None:
+    assert run("--list-rules") == 0
     out = capsys.readouterr().out
-    assert "eval_location" in out
+    assert "IEFS001" in out
+    assert "package_location" in out
     assert "sandbox_image_pinning" in out
 
 
-def test_unknown_check_is_usage_error() -> None:
-    assert run("--check", "bogus", "--all-evals") == 2
+def test_list_rules_json(capsys: pytest.CaptureFixture[str]) -> None:
+    assert run("--list-rules", "--output-format", "json") == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data[0]["code"] == "IEFS001"
+    assert {"code", "name", "category", "scopes", "summary", "allowlist"} <= set(data[0])
 
 
-def test_requires_eval_or_all() -> None:
+def test_explain_by_code_and_name(capsys: pytest.CaptureFixture[str]) -> None:
+    assert run("--explain", "IEBP002") == 0
+    out = capsys.readouterr().out
+    assert "model_role_resolution" in out
+    assert "allowlists.model_role_resolution" in out
+    assert "Why is this bad?" in out
+    assert run("--explain", "readme", "--output-format", "json") == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["code"] == "IEFS006"
+    assert "TODO" in data["doc"]
+    assert data["doc"] in Path("docs/rules/IEFS006.md").read_text(encoding="utf-8")
+
+
+def test_explain_unknown_rule_is_usage_error() -> None:
+    assert run("--explain", "bogus") == 2
+
+
+def test_unknown_selector_is_usage_error(tmp_path: Path) -> None:
+    make_template_repo(tmp_path)
+    assert run("--all", "--root", str(tmp_path), "--select", "NOPE") == 2
+    assert run("--all", "--root", str(tmp_path), "--ignore", "IEXX") == 2
+
+
+def test_requires_package_or_all() -> None:
     assert run() == 2
 
 
-def test_single_eval_pass(
+def test_single_package_pass(
     monorepo: tuple[Path, LintConfig], capsys: pytest.CaptureFixture[str]
 ) -> None:
     root, _ = monorepo
@@ -44,28 +71,56 @@ def test_single_eval_pass(
     assert "All required checks passed" in capsys.readouterr().out
 
 
-def test_single_eval_fail_prints_hints(
+def test_single_package_fail_prints_hints(
     monorepo: tuple[Path, LintConfig], capsys: pytest.CaptureFixture[str]
 ) -> None:
     root, config = monorepo
-    (config.eval_dir(root, "alpha") / "README.md").unlink()
+    (config.package_dir(root, "alpha") / "README.md").unlink()
     assert run("alpha", "--root", str(root)) == 1
     out = capsys.readouterr().out
-    assert "# noautolint: readme" in out
-    assert "src/inspect_evals/alpha/.noautolint" in out
+    assert "IEFS006 readme" in out
+    assert "# inspect-evals-lint: ignore[readme]" in out
+    assert 'per-file-ignores = { "src/inspect_evals/alpha/**"' in out
 
 
-def test_all_evals_and_check_summary(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_all_prints_summaries(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     make_template_repo(tmp_path, eval_names=("alpha", "beta"))
-    assert run("--all-evals", "--root", str(tmp_path)) == 0
+    assert run("--all", "--root", str(tmp_path)) == 0
     out = capsys.readouterr().out
     assert "Linting 2 evaluations and 1 helper package" in out
     assert "3/3 packages passed" in out
     assert "utils (helper)" in out
+    assert "CHECK COMPLIANCE SUMMARY" in out
     assert "using the 'template' preset" in out
 
-    assert run("--check-summary", "--root", str(tmp_path)) == 0
-    assert "CHECK COMPLIANCE SUMMARY" in capsys.readouterr().out
+
+def test_several_named_packages(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    make_template_repo(tmp_path, eval_names=("alpha", "beta"))
+    assert run("alpha", "beta", "--root", str(tmp_path), "--output-format", "json") == 0
+    data = json.loads(capsys.readouterr().out)
+    assert [p["name"] for p in data["packages"]] == ["alpha", "beta"]
+
+
+def test_select_and_ignore_flags(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    make_template_repo(tmp_path)
+    assert (
+        run(
+            "alpha",
+            "--root",
+            str(tmp_path),
+            "--select",
+            "IEFS",
+            "--ignore",
+            "readme",
+            "--output-format",
+            "json",
+        )
+        == 0
+    )
+    data = json.loads(capsys.readouterr().out)
+    (package,) = data["packages"]
+    ran = {o["rule"] for o in package["outcomes"]} | {d["rule"] for d in package["diagnostics"]}
+    assert ran == {"package_location", "main_file", "init_exports", "registry", "eval_yaml"}
 
 
 def test_preset_flag_overrides_table(tmp_path: Path) -> None:
@@ -75,43 +130,51 @@ def test_preset_flag_overrides_table(tmp_path: Path) -> None:
         run("alpha", "--root", str(tmp_path)) == 1
     )  # monorepo layout: src/inspect_evals/alpha missing
     assert run("alpha", "--root", str(tmp_path), "--preset", "template") == 1  # no entry points now
-    assert run("alpha", "--root", str(tmp_path), "--preset", "template", "--check", "readme") == 0
+    assert run("alpha", "--root", str(tmp_path), "--preset", "template", "--select", "readme") == 0
 
 
 def test_config_error_is_exit_2(tmp_path: Path) -> None:
     write(tmp_path / "pyproject.toml", "[tool.inspect-evals-lint]\npreset = 'nope'\n")
-    assert run("--all-evals", "--root", str(tmp_path)) == 2
+    assert run("--all", "--root", str(tmp_path)) == 2
 
 
-def test_json_single_eval(
+def test_legacy_suppression_is_exit_2(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    write(config.package_dir(root, "alpha") / ".noautolint", "readme\n")
+    assert run("alpha", "--root", str(root)) == 2
+
+
+def test_json_single_package(
     monorepo: tuple[Path, LintConfig], capsys: pytest.CaptureFixture[str]
 ) -> None:
     root, config = monorepo
-    (config.eval_dir(root, "alpha") / "README.md").unlink()
-    assert run("alpha", "--root", str(root), "--json") == 1
+    (config.package_dir(root, "alpha") / "README.md").unlink()
+    assert run("alpha", "--root", str(root), "--output-format", "json") == 1
     captured = capsys.readouterr()
     data = json.loads(captured.out)  # stdout is the document and nothing else
     assert data["passed"] is False
     assert data["root"] == str(root.resolve())
-    (evaluation,) = data["evaluations"]
-    assert evaluation["name"] == "alpha"
-    readme = next(r for r in evaluation["results"] if r["check"] == "readme")
+    (package,) = data["packages"]
+    assert package["name"] == "alpha"
+    (readme,) = [d for d in package["diagnostics"] if d["rule"] == "readme"]
     assert readme["status"] == "fail"
+    assert readme["code"] == "IEFS006"
     assert readme["file"] == "src/inspect_evals/alpha/README.md"
 
 
-def test_json_all_evals_sends_progress_to_stderr(
+def test_json_all_sends_progress_to_stderr(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     make_template_repo(tmp_path, eval_names=("alpha", "beta"))
-    assert run("--all-evals", "--root", str(tmp_path), "--json") == 0
+    assert run("--all", "--root", str(tmp_path), "--output-format", "json") == 0
     captured = capsys.readouterr()
     data = json.loads(captured.out)
     assert data["passed"] is True
-    assert data["evaluations_total"] == 2
-    assert [e["name"] for e in data["evaluations"]] == ["alpha", "beta"]
-    assert data["helpers_total"] == 1
-    assert [(h["name"], h["kind"]) for h in data["helpers"]] == [("utils", "helper")]
+    assert [(p["name"], p["kind"]) for p in data["packages"]] == [
+        ("alpha", "eval"),
+        ("beta", "eval"),
+        ("utils", "helper"),
+    ]
     assert "Linting 2 evaluations and 1 helper package" in captured.err
     assert "No [tool.inspect-evals-lint] table" in captured.err
 
@@ -135,24 +198,15 @@ def test_helper_failure_sets_exit_code(
         config.source_dir(root) / "utils" / "grader.py",
         'from inspect_ai.model import get_model\n\ngrader = get_model(role="grader")\n',
     )
-    assert run("--all-evals", "--root", str(root)) == 1
-    assert "src/inspect_evals/utils/.noautolint" in capsys.readouterr().out
-
-
-def test_json_with_check_summary_still_emits_document(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    make_template_repo(tmp_path)
-    assert run("--check-summary", "--root", str(tmp_path), "--json", "--check", "readme") == 0
-    data = json.loads(capsys.readouterr().out)
-    assert {r["check"] for e in data["evaluations"] for r in e["results"]} == {"readme"}
+    assert run("--all", "--root", str(root)) == 1
+    assert 'per-file-ignores = { "src/inspect_evals/utils/**"' in capsys.readouterr().out
 
 
 def test_missing_table_message_keeps_brackets(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     make_template_repo(tmp_path)
-    assert run("--all-evals", "--root", str(tmp_path)) == 0
+    assert run("--all", "--root", str(tmp_path)) == 0
     assert "No [tool.inspect-evals-lint] table" in capsys.readouterr().out
 
 
@@ -166,7 +220,7 @@ def test_non_utf8_locale_still_reads_source_files(monorepo: tuple[Path, LintConf
     locale, so both are disabled to make Python's default encoding really be ASCII.
     """
     root, config = monorepo
-    main_file = config.eval_dir(root, "alpha") / "alpha.py"
+    main_file = config.package_dir(root, "alpha") / "alpha.py"
     main_file.write_text(
         '"""Évaluation — naïve façade."""\n' + main_file.read_text(), encoding="utf-8"
     )
@@ -174,7 +228,16 @@ def test_non_utf8_locale_still_reads_source_files(monorepo: tuple[Path, LintConf
     for var in ("PYTHONIOENCODING", "LANG", "LC_CTYPE"):
         env.pop(var, None)
     result = subprocess.run(
-        [sys.executable, "-m", "inspect_evals_lint", "alpha", "--root", str(root), "--json"],
+        [
+            sys.executable,
+            "-m",
+            "inspect_evals_lint",
+            "alpha",
+            "--root",
+            str(root),
+            "--output-format",
+            "json",
+        ],
         env=env,
         capture_output=True,
         text=True,

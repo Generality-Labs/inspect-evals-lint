@@ -1,13 +1,12 @@
-"""Tests for the best-practice AST visitors, ported from inspect_evals."""
+"""Best-practice rules and their AST visitors."""
 
 import ast
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from inspect_evals_lint.config import PRESETS
-from inspect_evals_lint.rules._ast import get_call_name, get_decorator_name
+from inspect_evals_lint.registry import get_rule
 from inspect_evals_lint.rules.best_practices import (
     GetModelVisitor,
     ModelRoleVisitor,
@@ -18,98 +17,6 @@ from inspect_evals_lint.rules.best_practices import (
 )
 from inspect_evals_lint.suppressions import apply_suppressions, load_suppressions
 from tests.conftest import context_for
-
-
-class TestGetDecoratorName:
-    """Test the get_decorator_name function."""
-
-    def test_simple_decorator(self):
-        """Test @decorator pattern."""
-        code = "@solver\ndef foo(): pass"
-        tree = ast.parse(code)
-        func = tree.body[0]
-        assert get_decorator_name(func.decorator_list[0]) == "solver"
-
-    def test_decorator_with_call(self):
-        """Test @decorator() pattern."""
-        code = "@solver()\ndef foo(): pass"
-        tree = ast.parse(code)
-        func = tree.body[0]
-        assert get_decorator_name(func.decorator_list[0]) == "solver"
-
-    def test_module_decorator(self):
-        """Test @module.decorator pattern."""
-        code = "@inspect_ai.solver\ndef foo(): pass"
-        tree = ast.parse(code)
-        func = tree.body[0]
-        assert get_decorator_name(func.decorator_list[0]) == "solver"
-
-    def test_module_decorator_with_call(self):
-        """Test @module.decorator() pattern."""
-        code = "@inspect_ai.solver()\ndef foo(): pass"
-        tree = ast.parse(code)
-        func = tree.body[0]
-        assert get_decorator_name(func.decorator_list[0]) == "solver"
-
-    def test_subscript_decorator_returns_none(self):
-        """Test that subscript decorators return None."""
-        code = "@decorators[0]\ndef foo(): pass"
-        tree = ast.parse(code)
-        func = tree.body[0]
-        assert get_decorator_name(func.decorator_list[0]) is None
-
-    def test_chained_call_decorator_returns_none(self):
-        """Test that chained call decorators return None."""
-        code = "@get_decorator()()\ndef foo(): pass"
-        tree = ast.parse(code)
-        func = tree.body[0]
-        assert get_decorator_name(func.decorator_list[0]) is None
-
-
-class TestGetCallName:
-    """Test the get_call_name function."""
-
-    def test_simple_call(self):
-        """Test foo() pattern."""
-        code = "foo()"
-        tree = ast.parse(code)
-        call = tree.body[0].value
-        assert get_call_name(call) == "foo"
-
-    def test_method_call(self):
-        """Test obj.foo() pattern."""
-        code = "obj.foo()"
-        tree = ast.parse(code)
-        call = tree.body[0].value
-        assert get_call_name(call) == "foo"
-
-    def test_chained_method_call(self):
-        """Test obj.bar.foo() pattern - returns innermost name."""
-        code = "obj.bar.foo()"
-        tree = ast.parse(code)
-        call = tree.body[0].value
-        assert get_call_name(call) == "foo"
-
-    def test_subscript_call_returns_none(self):
-        """Test callbacks[0]() pattern returns None."""
-        code = "callbacks[0]()"
-        tree = ast.parse(code)
-        call = tree.body[0].value
-        assert get_call_name(call) is None
-
-    def test_chained_call_returns_none(self):
-        """Test get_func()() pattern returns None."""
-        code = "get_func()()"
-        tree = ast.parse(code)
-        call = tree.body[0].value
-        assert get_call_name(call) is None
-
-    def test_lambda_call_returns_none(self):
-        """Test (lambda x: x)() pattern returns None."""
-        code = "(lambda x: x)(5)"
-        tree = ast.parse(code)
-        call = tree.body[0].value
-        assert get_call_name(call) is None
 
 
 class TestGetModelVisitor:
@@ -450,11 +357,10 @@ class TestModelRoleVisitor:
 
 class TestCheckModelRoleResolution:
     @staticmethod
-    def _run(eval_dir: Path, source: str, allowlist: frozenset[tuple[str, str]] = frozenset()):
+    def _run(eval_dir: Path, source: str):
         eval_dir.mkdir(exist_ok=True)
         (eval_dir / "scorer.py").write_text(source, encoding="utf-8")
-        config = replace(PRESETS["template"], model_role_allowlist=allowlist)
-        return list(model_role_resolution(context_for(eval_dir, config)))
+        return list(model_role_resolution(context_for(eval_dir)))
 
     def test_skips_when_no_role_calls(self, tmp_path: Path):
         results = self._run(tmp_path / "alpha", "x = get_model()")
@@ -470,41 +376,26 @@ class TestCheckModelRoleResolution:
         results = self._run(tmp_path / "alpha", source)
         assert [r.status for r in results] == ["fail", "fail"]
         assert [r.line for r in results] == [1, 2]
-        assert results[0].file is not None
-        assert results[0].file.endswith("scorer.py")
+        assert results[0].file.name == "scorer.py"
+        assert results[0].column == 5
         assert "role='grader'" in results[0].message
         assert "role='judge'" in results[1].message
 
-    def test_allowlisted_role_warns_instead(self, tmp_path: Path):
+    def test_diagnostics_are_keyed_by_role_for_the_allowlist(self, tmp_path: Path):
         results = self._run(
-            tmp_path / "alpha",
-            'a = get_model(role="grader")\nb = get_model(role="judge")\n',
-            allowlist=frozenset({("alpha", "grader")}),
+            tmp_path / "alpha", 'a = get_model(role="grader")\nb = get_model(role=name)\n'
         )
-        assert [(r.status, r.line) for r in results] == [("warn", 1), ("fail", 2)]
-        assert "remove the allowlist entry" in results[0].message
-
-    def test_allowlist_is_scoped_to_the_eval(self, tmp_path: Path):
-        results = self._run(
-            tmp_path / "alpha",
-            'a = get_model(role="grader")',
-            allowlist=frozenset({("beta", "grader")}),
-        )
-        assert [r.status for r in results] == ["fail"]
-
-    def test_stale_allowlist_entry_warns(self, tmp_path: Path):
-        results = self._run(
-            tmp_path / "alpha",
-            'a = get_model(role="grader", required=True)',
-            allowlist=frozenset({("alpha", "grader")}),
-        )
-        assert [r.status for r in results] == ["warn"]
-        assert "no longer needed" in results[0].message
+        assert [r.key for r in results] == ["grader", "<dynamic>"]
 
     def test_line_level_suppression_silences_a_call_site(self, tmp_path: Path):
         eval_dir = tmp_path / "alpha"
         results = self._run(
-            eval_dir, 'x = get_model(role="grader")  # noautolint: model_role_resolution\n'
+            eval_dir,
+            'x = get_model(role="grader")  # inspect-evals-lint: ignore[model_role_resolution]\n',
         )
-        apply_suppressions(results, load_suppressions(eval_dir))
+        for r in results:
+            r.rule = get_rule("model_role_resolution")
+        apply_suppressions(
+            results, load_suppressions(context_for(eval_dir)), PRESETS["template"], tmp_path
+        )
         assert [r.status for r in results] == ["suppressed"]
