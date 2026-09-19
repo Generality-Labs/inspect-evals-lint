@@ -1,6 +1,6 @@
 # inspect-evals-lint
 
-Static checks for [Inspect AI](https://inspect.aisi.org.uk/) evaluations: file structure, test coverage conventions, best practices and sandbox image pinning. Documentation, including a page per rule, is at [generality.org/inspect-evals-lint](https://generality.org/inspect-evals-lint/).
+Static checks for [Inspect AI](https://inspect.aisi.org.uk/) evaluations: file structure, test coverage conventions, best practices and sandbox image pinning. Documentation, including a page per rule, is at [inspect-evals-lint.generality.org](https://inspect-evals-lint.generality.org/).
 
 These checks began life as the `autolint` tool inside [inspect_evals](https://github.com/UKGovernmentBEIS/inspect_evals). They are packaged here so any repository of Inspect evaluations can run the same checks, including standalone repos built from the [inspect-evals-template](https://github.com/Generality-Labs/inspect-evals-template) and submitted to the inspect_evals register.
 

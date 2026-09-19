@@ -3,7 +3,7 @@
 # derived from the files, so a new rule page appears without editing this file.
 site_name: inspect-evals-lint
 site_description: Static checks for Inspect AI evaluations
-site_url: https://generality.org/inspect-evals-lint/
+site_url: https://inspect-evals-lint.generality.org/
 repo_url: https://github.com/Generality-Labs/inspect-evals-lint
 repo_name: Generality-Labs/inspect-evals-lint
 edit_uri: ""
