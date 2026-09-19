@@ -103,6 +103,30 @@ def test_kebab_and_snake_keys_override_preset() -> None:
     assert cfg.source_root == "src/inspect_evals"
 
 
+def test_rule_option_keys_accept_kebab_case() -> None:
+    cfg = config_from_table({"readme": {"todo-marker": "FIXME"}})
+    assert cfg.rule_options == {"readme": {"todo_marker": "FIXME"}}
+
+
+def test_rule_option_table_merges_over_the_preset_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Setting one option leaves the preset's other options, and other rules' tables, in place."""
+    from dataclasses import replace
+
+    preset = replace(
+        PRESETS["template"],
+        rule_options={"readme": {"todo_marker": "TODO", "max_lines": 10}, "sample_ids": {"x": 1}},
+    )
+    monkeypatch.setitem(PRESETS, "with-options", preset)
+    cfg = config_from_table({"preset": "with-options", "readme": {"todo-marker": "FIXME"}})
+    assert cfg.rule_options == {
+        "readme": {"todo_marker": "FIXME", "max_lines": 10},
+        "sample_ids": {"x": 1},
+    }
+    assert config_from_table({"preset": "with-options"}).rule_options == preset.rule_options
+
+
 def test_selection_by_name_code_and_prefix() -> None:
     readme, sample_ids, tests_init = (
         get_rule("readme"),
@@ -172,6 +196,7 @@ def test_allowlist_lookup_is_per_package() -> None:
         {"allowlists": {"nope": {"alpha": ["x"]}}},
         {"allowlists": {"sandbox_image_pinning": {"alpha": "img"}}},
         {"readme": "not a table"},
+        {"readme": {1: "x"}},
         {"tests-layout": "nested"},
         {"readme-location": "anywhere"},
         {"eval-yaml-required": "no"},
