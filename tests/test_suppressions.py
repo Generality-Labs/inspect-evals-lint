@@ -110,3 +110,34 @@ def test_comments_in_excluded_files_are_not_read(tmp_path: Path) -> None:
     config = replace(PRESETS["template"], exclude=("e/challenges/**",))  # root is pkg.parent
     s = load_suppressions(context_for(pkg, config))
     assert list(s.line_level) == [pkg / "ok.py"]
+
+
+def test_comment_on_any_line_of_a_multiline_statement(monorepo: tuple[Path, LintConfig]) -> None:
+    """Formatters move a trailing comment inside a parenthesised import; it still applies."""
+    root, config = monorepo
+    write(
+        config.package_dir(root, "alpha") / "private.py",
+        "from inspect_ai._util.file import (\n"
+        "    file,  # inspect-evals-lint: ignore[private_api_imports]\n"
+        ")\n"
+        "from inspect_ai.model._model import (  # inspect-evals-lint: ignore[IECQ001]\n"
+        "    thing,\n"
+        ")\n"
+        "import definitely_not_installed_pkg  # inspect-evals-lint: ignore[external_dependencies]\n",
+    )
+    report = lint_package(root, "alpha", config)
+    assert report.statuses()["private_api_imports"] == ["suppressed", "suppressed"]
+    assert report.statuses()["external_dependencies"] == ["suppressed"]
+
+
+def test_comment_inside_a_function_body_does_not_cover_its_definition(
+    monorepo: tuple[Path, LintConfig],
+) -> None:
+    root, config = monorepo
+    write(
+        config.package_dir(root, "alpha") / "alpha.py",
+        "from inspect_ai import task\n\n\n@task\ndef alpha(solver):\n"
+        "    return None  # inspect-evals-lint: ignore[task_overridable_defaults]\n",
+    )
+    report = lint_package(root, "alpha", config, check="task_overridable_defaults")
+    assert report.statuses()["task_overridable_defaults"] == ["fail"]

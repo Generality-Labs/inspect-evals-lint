@@ -112,6 +112,13 @@ def parse_failures(results: ParseResults) -> list[Diagnostic]:
     ]
 
 
+def end_line_of(node: ast.AST) -> int | None:
+    """Last line of a node that spans more than one line; None for a single-line node."""
+    start = getattr(node, "lineno", None)
+    end = getattr(node, "end_lineno", None)
+    return end if isinstance(start, int) and isinstance(end, int) and end > start else None
+
+
 def column_of(node: ast.AST) -> int | None:
     """1-based column of an AST node, when it has one."""
     offset = getattr(node, "col_offset", None)

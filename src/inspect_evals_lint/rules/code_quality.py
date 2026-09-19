@@ -10,6 +10,7 @@ from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
 from inspect_evals_lint.registry import rule
 from inspect_evals_lint.rules._ast import (
     column_of,
+    end_line_of,
     get_call_name,
     parse_failures,
     parse_python_files,
@@ -63,6 +64,7 @@ def private_api_imports(ctx: LintContext) -> Iterable[Finding]:
                     file=parsed.path,
                     line=node.lineno,
                     column=column_of(node),
+                    end_line=end_line_of(node),
                 )
     if not found:
         yield Outcome("pass", "No private API imports found")
@@ -117,6 +119,7 @@ def score_constants(ctx: LintContext) -> Iterable[Finding]:
                         file=parsed.path,
                         line=node.lineno,
                         column=column_of(node),
+                        end_line=end_line_of(node),
                         hint="use the CORRECT / INCORRECT constants from inspect_ai.scorer",
                     )
     if not found:
@@ -205,6 +208,7 @@ def unscored_reason(ctx: LintContext) -> Iterable[Finding]:
                             file=parsed.path,
                             line=node.lineno,
                             column=column_of(node),
+                            end_line=end_line_of(node),
                             hint="pass reason= (e.g. 'grader_failed') so the sample records why it was left unscored",
                         )
                     )
@@ -219,6 +223,7 @@ def unscored_reason(ctx: LintContext) -> Iterable[Finding]:
                         file=parsed.path,
                         line=node.lineno,
                         column=column_of(node),
+                        end_line=end_line_of(node),
                         hint="pass reason= to Score.unscored() and read score.reason",
                     )
                 )

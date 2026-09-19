@@ -57,7 +57,7 @@ Each rule belongs to one of exactly four categories, the sections above. The JSO
 
 ## Suppression
 
-- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line; names, codes and code prefixes, comma-separated. `ignore` without a bracketed list is a configuration error.
+- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. `ignore` without a bracketed list is a configuration error.
 - File: `# inspect-evals-lint: ignore-file[<rule>]` within the first ten lines.
 - Paths: `per-file-ignores = { "<glob>" = ["<rule>"] }` in `[tool.inspect-evals-lint]`.
 - Never read: `exclude = ["<glob>"]` keeps files out of the AST-based rules entirely, for code shipped into a sandbox.

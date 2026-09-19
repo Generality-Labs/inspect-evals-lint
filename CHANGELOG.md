@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-19
+
+### Fixed
+
+- A suppression comment on any line of a multi-line statement applies to a finding reported on that statement. Ruff's formatter moves a trailing comment inside a parenthesised import (`from x import (\n    y,  # inspect-evals-lint: ignore[...]\n)`), which left the import's first line, where the finding is reported, without a comment. `Diagnostic` gains `end_line` for statement-shaped findings (imports and calls); findings on a `def` line are unchanged, so a comment deep in a function body does not silence a rule about its signature.
+
 ## [0.3.0] - 2026-09-19
 
 This release is the refactor specified in [#13](https://github.com/Generality-Labs/inspect-evals-lint/issues/13). It is a breaking release: names, configuration keys, the suppression syntax and the output document change, and nothing old is aliased. Both known consumers pin 0.2.1 and get an update PR.

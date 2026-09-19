@@ -42,6 +42,8 @@ class Diagnostic:
     file: Path
     line: int | None = None
     column: int | None = None
+    end_line: int | None = None
+    """Last line of a multi-line statement the finding is about, so a suppression comment on any of its lines applies."""
     severity: Severity = "error"
     hint: str | None = None
     """What to do about it, in one sentence."""

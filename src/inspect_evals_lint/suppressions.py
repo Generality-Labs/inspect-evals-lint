@@ -45,7 +45,11 @@ class Suppressions:
             return False
         selectors = set(self.file_level.get(diagnostic.file, set()))
         if diagnostic.line is not None:
-            selectors |= self.line_level.get(diagnostic.file, {}).get(diagnostic.line, set())
+            # A formatter may move a trailing comment onto any line of a multi-line
+            # statement, so every line the statement spans counts.
+            lines = self.line_level.get(diagnostic.file, {})
+            for line in range(diagnostic.line, (diagnostic.end_line or diagnostic.line) + 1):
+                selectors |= lines.get(line, set())
         return any(selector_matches(s, rule) for s in selectors)
 
 

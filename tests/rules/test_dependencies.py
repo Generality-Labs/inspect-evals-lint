@@ -228,7 +228,7 @@ async def h():
         assert error is None
         assert set(eager) == {"eager_a", "eager_b", "typing"}
         assert set(lazy) == {"typed_only", "guarded", "in_function", "nested", "in_async"}
-        assert eager["eager_a"] == (2, 1)
+        assert eager["eager_a"] == (2, 1, None)
 
     def test_syntax_error_is_reported(self, tmp_path):
         py_file = tmp_path / "test.py"
