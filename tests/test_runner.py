@@ -44,7 +44,7 @@ HELPER_RULES = {r.name for r in rules() if "helper" in r.scopes}
 
 def test_all_check_names_are_registered() -> None:
     assert rule_names() == sorted(r.name for r in rules())
-    assert len(rule_names()) == 23
+    assert len(rule_names()) == 24
 
 
 def test_every_check_has_a_category() -> None:
@@ -635,3 +635,41 @@ def test_per_file_ignores_cover_a_finding_about_the_directory_itself(
     assert statuses(root, config, check="e2e_test")["e2e_test"] == ["fail"]
     config = replace(config, per_file_ignores=(("tests/alpha/**", ("e2e_test",)),))
     assert statuses(root, config, check="e2e_test")["e2e_test"] == ["suppressed"]
+
+
+def test_dockerfile_findings_take_comment_and_path_suppressions(
+    monorepo: tuple[Path, LintConfig],
+) -> None:
+    """A warning in a Dockerfile is suppressed by the comment above its instruction or a per-file glob."""
+    root, config = monorepo
+    eval_dir = config.package_dir(root, "alpha")
+    write(
+        eval_dir / "Dockerfile",
+        "FROM python:3.12\n# inspect-evals-lint: ignore[IEBP007]\nRUN pip install numpy\n",
+    )
+    write(eval_dir / "images/Dockerfile", "FROM python:3.12\n")
+    assert statuses(root, config)["dockerfile_locking"] == ["warn", "suppressed", "warn"]
+    ignoring = replace(
+        config, per_file_ignores=(("src/inspect_evals/*/images/**", ("dockerfile_locking",)),)
+    )
+    assert statuses(root, ignoring)["dockerfile_locking"] == ["warn", "suppressed", "suppressed"]
+    report = lint_package(root, "alpha", ignoring)
+    assert report.passed()
+
+
+def test_dockerfile_locking_reads_its_option_table(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    eval_dir = config.package_dir(root, "alpha")
+    write(root / "uv.lock", "")
+    write(
+        eval_dir / "Dockerfile",
+        "# BUILD_CONTEXT=.\nFROM python:3.12@sha256:" + "a" * 64 + "\n"
+        "COPY pyproject.toml uv.lock ./\nRUN uv sync --locked\n",
+    )
+    (warning,) = lint_package(root, "alpha", config, check="IEBP007").diagnostics
+    assert "host project" in warning.message
+    allowing = replace(config, rule_options={"dockerfile_locking": {"host_lock_coupling": "allow"}})
+    assert statuses(root, allowing, check="IEBP007")["dockerfile_locking"] == ["pass"]
+    broken = replace(config, rule_options={"dockerfile_locking": {"host_lock_coupling": "x"}})
+    with pytest.raises(ConfigError, match="host-lock-coupling"):
+        lint_package(root, "alpha", broken, check="IEBP007")

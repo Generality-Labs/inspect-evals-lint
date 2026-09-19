@@ -47,6 +47,8 @@ def test_config_table_has_a_row_per_field_and_preset_values() -> None:
     assert "| `allowlists.<rule>` |" in table
     assert "| `<rule>` |" in table
     assert "unset" in table  # registry-module in the template preset
+    row = next(line for line in table.splitlines() if line.startswith("| `<rule>` |"))
+    assert '`{ dockerfile_locking = { host-lock-coupling = "warn" } }`' in row
 
 
 def test_write_and_check_round_trip(tmp_path: Path) -> None:

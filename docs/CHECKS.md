@@ -38,18 +38,19 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 
 ## Best practices
 
-| Code                        | Rule                        | Applies to   | Summary                                                                                 |
-| --------------------------- | --------------------------- | ------------ | --------------------------------------------------------------------------------------- |
-| [IEBP001](rules/IEBP001.md) | `get_model_location`        | eval, helper | get_model() is only called inside @solver or @scorer functions                          |
-| [IEBP002](rules/IEBP002.md) | `model_role_resolution`     | eval, helper | get_model(role=...) resolves deliberately: an explicit model, default= or required=True |
-| [IEBP003](rules/IEBP003.md) | `sample_ids`                | eval, helper | Every Sample() passes id=                                                               |
-| [IEBP004](rules/IEBP004.md) | `task_overridable_defaults` | eval, helper | @task parameters naming a solver, scorer, metric, grader or model have defaults         |
-| [IEBP005](rules/IEBP005.md) | `sandbox_image_pinning`     | eval, helper | Registry images in compose files use an immutable tag or digest                         |
-| [IEBP006](rules/IEBP006.md) | `gpu_sandbox_check`         | eval         | An evaluation requiring a GPU ships a maintenance sandbox check task                    |
+| Code                        | Rule                        | Applies to   | Summary                                                                                       |
+| --------------------------- | --------------------------- | ------------ | --------------------------------------------------------------------------------------------- |
+| [IEBP001](rules/IEBP001.md) | `get_model_location`        | eval, helper | get_model() is only called inside @solver or @scorer functions                                |
+| [IEBP002](rules/IEBP002.md) | `model_role_resolution`     | eval, helper | get_model(role=...) resolves deliberately: an explicit model, default= or required=True       |
+| [IEBP003](rules/IEBP003.md) | `sample_ids`                | eval, helper | Every Sample() passes id=                                                                     |
+| [IEBP004](rules/IEBP004.md) | `task_overridable_defaults` | eval, helper | @task parameters naming a solver, scorer, metric, grader or model have defaults               |
+| [IEBP005](rules/IEBP005.md) | `sandbox_image_pinning`     | eval, helper | Registry images in compose files use an immutable tag or digest                               |
+| [IEBP006](rules/IEBP006.md) | `gpu_sandbox_check`         | eval         | An evaluation requiring a GPU ships a maintenance sandbox check task                          |
+| [IEBP007](rules/IEBP007.md) | `dockerfile_locking`        | eval         | Dockerfile builds consume locked inputs: committed locks, digest-pinned images, fixed sources |
 
 ## Helper packages
 
-Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
+Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
 
 ## Categories
 
@@ -57,7 +58,7 @@ Each rule belongs to one of exactly four categories, the sections above. The JSO
 
 ## Suppression
 
-- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. `ignore` without a bracketed list is a configuration error.
+- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. `ignore` without a bracketed list is a configuration error. In a Dockerfile, on the line above the instruction.
 - File: `# inspect-evals-lint: ignore-file[<rule>]` within the first ten lines.
 - Paths: `per-file-ignores = { "<glob>" = ["<rule>"] }` in `[tool.inspect-evals-lint]`.
 - Never read: `exclude = ["<glob>"]` keeps files out of the AST-based rules entirely, for code shipped into a sandbox.

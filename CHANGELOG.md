@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-19
+
+A new rule and the first rule option; nothing existing changes meaning, so pins on 0.3.x can move up without configuration changes. The new rule only warns.
+
+### Added
+
+- `dockerfile_locking` (IEBP007, best practices, warning-only rollout): reads each `Dockerfile*` under an evaluation statically and reports one warning per instruction whose build input is not locked, with the remedy in the hint. Dependency installs must consume a committed `uv.lock` (`uv sync --locked`, copied or bind-mounted in beforehand) or a hashed snapshot (`pip install --require-hashes -r`); `uv lock` or `uv sync` without `--locked` during the build, bare or `==`-pinned package installs, requirements files without hashes, project installs with resolution, `FROM`/`COPY --from` images without an `@sha256` digest, Git dependencies without a full commit and installer scripts piped to a shell all warn; `${VAR}` images, remote or interpolated `COPY` sources, templated package names and unsupported package managers are reported as unverified, never as passing. `COPY` sources are resolved against the build context (inspect_evals' `# BUILD_CONTEXT=` directive, else a compose service's `build.context`, else the Dockerfile's directory). OS package installs cannot be locked by the rule and are named in the pass message instead. The rule's option table `[tool.inspect-evals-lint.dockerfile_locking]` has `host-lock-coupling`: `"warn"` (the `monorepo` preset) reports a sandbox build that copies the repository root's `pyproject.toml`/`uv.lock`, `"allow"` (elsewhere) accepts it for a standalone repository whose root project is the sandbox. First slice of [#6](https://github.com/Generality-Labs/inspect-evals-lint/issues/6); the KernelBench standalone sandbox project is the regression fixture.
+- Suppression comments are read from Dockerfiles as well as Python files. A Dockerfile instruction takes no trailing comment, so `# inspect-evals-lint: ignore[<rule>]` on the line above an instruction covers it; at the end of a shell-form `RUN` it covers that line. Excluded Dockerfiles are not read.
+
+### Changed
+
+- A `[tool.inspect-evals-lint.<rule>]` option table is merged key by key over the preset's defaults for that rule, instead of replacing every rule's options, and its keys accept kebab-case. The README configuration table shows a preset's rule options inline.
+
 ## [0.3.1] - 2026-09-19
 
 ### Fixed

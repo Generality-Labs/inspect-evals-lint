@@ -67,7 +67,7 @@ preset = "template"   # or "monorepo" / "register"
 | `exclude`                   | `[]`                                                         | `[]`                                                         | `[]`                                                         | Glob patterns, relative to the repository root, of files the AST-based rules never read. For code that is shipped into a sandbox rather than run on the host, such as challenge sources that are not even valid Python 3.                                                                                             |
 | `per-file-ignores`          | `[]`                                                         | `[]`                                                         | `[]`                                                         | `(glob, selectors)` pairs: findings in files matching the glob are suppressed for the selected rules.                                                                                                                                                                                                                 |
 | `allowlists.<rule>`         | `{}`                                                         | `{}`                                                         | `{}`                                                         | Per rule, the `(package, key)` pairs it reports as warnings instead of failures. Only rules declared with `allowlist=True` accept one.                                                                                                                                                                                |
-| `<rule>`                    | `{}`                                                         | `{}`                                                         | `{}`                                                         | `[tool.inspect-evals-lint.<rule>]` tables, passed through to the rule that declares them.                                                                                                                                                                                                                             |
+| `<rule>`                    | `{}`                                                         | `{ dockerfile_locking = { host-lock-coupling = "warn" } }`   | `{}`                                                         | `[tool.inspect-evals-lint.<rule>]` tables, passed through to the rule that declares them. Keys may be kebab-case; a preset's default for a key applies when the table leaves it unset.                                                                                                                                |
 
 <!-- config-table:end -->
 
@@ -85,9 +85,12 @@ moru = ["grader"]                                       # package = [keys the ru
 
 [tool.inspect-evals-lint.allowlists.sandbox_image_pinning]
 cybench = ["example/untagged"]
+
+[tool.inspect-evals-lint.dockerfile_locking]                # a rule's own options
+host-lock-coupling = "allow"
 ```
 
-An allowlisted finding is reported as a warning with its message prefixed `Allowlisted:`, and an entry that no finding matches is itself a warning at `pyproject.toml`, so the list can only shrink. Removed keys (`disabled-checks`, `non-eval-dirs`, `sandbox-image-allowlist`, `model-role-allowlist`) are rejected with a message naming their replacement.
+An allowlisted finding is reported as a warning with its message prefixed `Allowlisted:`, and an entry that no finding matches is itself a warning at `pyproject.toml`, so the list can only shrink. A table named after a rule holds that rule's options, merged over the preset's defaults key by key; each rule's page lists what it accepts. Removed keys (`disabled-checks`, `non-eval-dirs`, `sandbox-image-allowlist`, `model-role-allowlist`) are rejected with a message naming their replacement.
 
 Only Python packages are linted: a sub-directory of `source-root` without an `__init__.py` (a README left behind after a move, a data directory) is skipped by `--all` and reported as a skip when named directly, so it needs no `ignore-dirs` entry. `ignore-dirs` is for packages you really do not want checked.
 
@@ -101,7 +104,7 @@ The `register` preset is for an upstream repository listed in the [inspect_evals
 
 Every finding has a file and, where it is in a file's contents, a line, so one comment syntax covers every rule:
 
-- Line: `# inspect-evals-lint: ignore[IEBP003]` on the offending line, or on any line of a multi-line statement (formatters move trailing comments inside parenthesised imports). Names, codes and code prefixes are accepted, comma-separated. A bare `ignore` or `ignore[]` is a configuration error, so a suppression always says what it silences.
+- Line: `# inspect-evals-lint: ignore[IEBP003]` on the offending line, or on any line of a multi-line statement (formatters move trailing comments inside parenthesised imports). Names, codes and code prefixes are accepted, comma-separated. A bare `ignore` or `ignore[]` is a configuration error, so a suppression always says what it silences. In a Dockerfile, whose instructions take no trailing comment, put it on the line above the instruction.
 - File: `# inspect-evals-lint: ignore-file[IEBP003]` within the first ten lines of the file.
 - Paths: `per-file-ignores` in the configuration table, for whole directories.
 - Not linted at all: `exclude`, for code that is shipped into a sandbox rather than run on the host.
