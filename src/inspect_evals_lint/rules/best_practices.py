@@ -10,6 +10,7 @@ from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
 from inspect_evals_lint.registry import rule
 from inspect_evals_lint.rules._ast import (
     column_of,
+    end_line_of,
     get_call_name,
     get_decorator_name,
     parse_failures,
@@ -103,6 +104,7 @@ def get_model_location(ctx: LintContext) -> Iterable[Finding]:
                 file=parsed.path,
                 line=line,
                 column=column_of(node),
+                end_line=end_line_of(node),
                 severity="warning",
                 hint="resolve models inside @solver/@scorer so tasks stay declarative",
             )
@@ -186,6 +188,7 @@ def sample_ids(ctx: LintContext) -> Iterable[Finding]:
                 file=parsed.path,
                 line=line,
                 column=column_of(node),
+                end_line=end_line_of(node),
                 hint="pass a stable id= so the sample survives shuffles and reruns",
             )
 
@@ -424,6 +427,7 @@ def model_role_resolution(ctx: LintContext) -> Iterable[Finding]:
                 file=parsed.path,
                 line=line,
                 column=column_of(node),
+                end_line=end_line_of(node),
                 hint=_MODEL_ROLE_HINT,
                 key=role,
             )

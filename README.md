@@ -99,7 +99,7 @@ The `register` preset is for an upstream repository listed in the [inspect_evals
 
 Every finding has a file and, where it is in a file's contents, a line, so one comment syntax covers every rule:
 
-- Line: `# inspect-evals-lint: ignore[IEBP003]` on the offending line. Names, codes and code prefixes are accepted, comma-separated. A bare `ignore` or `ignore[]` is a configuration error, so a suppression always says what it silences.
+- Line: `# inspect-evals-lint: ignore[IEBP003]` on the offending line, or on any line of a multi-line statement (formatters move trailing comments inside parenthesised imports). Names, codes and code prefixes are accepted, comma-separated. A bare `ignore` or `ignore[]` is a configuration error, so a suppression always says what it silences.
 - File: `# inspect-evals-lint: ignore-file[IEBP003]` within the first ten lines of the file.
 - Paths: `per-file-ignores` in the configuration table, for whole directories.
 - Not linted at all: `exclude`, for code that is shipped into a sandbox rather than run on the host.

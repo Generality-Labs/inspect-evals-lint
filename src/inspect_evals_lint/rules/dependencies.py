@@ -96,8 +96,8 @@ def _get_import_to_package_map() -> dict[str, str]:
     return mapping
 
 
-Site = tuple[int, int | None]
-"""Line and column of an import statement."""
+Site = tuple[int, int | None, int | None]
+"""Line, column and end line (None when single-line) of an import statement."""
 
 
 class _ImportVisitor(ast.NodeVisitor):
@@ -118,7 +118,7 @@ class _ImportVisitor(ast.NodeVisitor):
         target = self.lazy if self._depth else self.eager
         top = name.split(".")[0]
         if top not in target:
-            target[top] = (getattr(node, "lineno", 1), _column(node))
+            target[top] = (getattr(node, "lineno", 1), _column(node), _end_line(node))
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
@@ -151,6 +151,12 @@ def _column(node: ast.AST) -> int | None:
     return offset + 1 if isinstance(offset, int) else None
 
 
+def _end_line(node: ast.AST) -> int | None:
+    start = getattr(node, "lineno", None)
+    end = getattr(node, "end_lineno", None)
+    return end if isinstance(start, int) and isinstance(end, int) and end > start else None
+
+
 def _is_type_checking(test: ast.expr) -> bool:
     return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
         isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
@@ -170,7 +176,7 @@ def _get_imports_from_file(
     return visitor.eager, visitor.lazy, None
 
 
-Location = tuple[Path, int, int | None]
+Location = tuple[Path, int, int | None, int | None]
 
 
 def _get_all_imports_from_package(
@@ -185,10 +191,10 @@ def _get_all_imports_from_package(
         if error:
             failures.append(Diagnostic(f"Could not parse file: {error}", file=py_file, line=1))
             continue
-        for name, (line, column) in file_eager.items():
-            eager.setdefault(name, (py_file, line, column))
-        for name, (line, column) in file_lazy.items():
-            lazy.setdefault(name, (py_file, line, column))
+        for name, (line, column, end_line) in file_eager.items():
+            eager.setdefault(name, (py_file, line, column, end_line))
+        for name, (line, column, end_line) in file_lazy.items():
+            lazy.setdefault(name, (py_file, line, column, end_line))
     for name in eager:
         lazy.pop(name, None)
     return eager, lazy, failures
@@ -305,12 +311,13 @@ def _all_declared_optional(repo_root: Path, config: LintConfig) -> set[str]:
 def _undeclared_diagnostics(
     undeclared: dict[str, Location], message: str, hint: str
 ) -> Iterable[Diagnostic]:
-    for imp, (file, line, column) in sorted(undeclared.items(), key=lambda kv: kv[0]):
+    for imp, (file, line, column, end_line) in sorted(undeclared.items(), key=lambda kv: kv[0]):
         yield Diagnostic(
             message.format(imp=imp, dist=_distribution(imp)),
             file=file,
             line=line,
             column=column,
+            end_line=end_line,
             hint=hint,
         )
 

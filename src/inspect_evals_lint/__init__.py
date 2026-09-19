@@ -18,7 +18,7 @@ from inspect_evals_lint.diagnostics import (
 from inspect_evals_lint.registry import CATEGORIES, Rule, get_rule, rule, rule_names, rules
 from inspect_evals_lint.runner import lint_package, lint_repository
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 __all__ = [
     "CATEGORIES",
