@@ -2,8 +2,10 @@
 
 ``python -m inspect_evals_lint.docs`` writes ``docs/rules/<code>.md`` (one page
 per rule, from its docstring), ``docs/CHECKS.md`` (the index, grouped by
-category) and the configuration table in ``README.md`` (from
-:class:`~inspect_evals_lint.config.LintConfig` field metadata). ``--check``
+category), ``docs/index.md`` (the README as the site's front page) and the
+configuration table in ``README.md`` (from
+:class:`~inspect_evals_lint.config.LintConfig` field metadata). The ``docs/``
+directory is published with mkdocs by ``.github/workflows/docs.yml``. ``--check``
 exits non-zero when a committed file differs from what would be generated;
 pre-commit runs it so the docs are always current.
 """
@@ -66,9 +68,9 @@ def rule_page(rule: Rule) -> str:
     # The first paragraph of the docstring restates the summary; the page has it as a lead already.
     body = doc.split("\n\n", 1)[1] if "\n\n" in doc else ""
     lines = [
-        GENERATED_NOTE,
-        "",
         f"# {rule.code}: {rule.name}",
+        "",
+        GENERATED_NOTE,
         "",
         _markdown(rule.summary) + ".",
         "",
@@ -86,9 +88,9 @@ def rule_page(rule: Rule) -> str:
 def index_page() -> str:
     """``docs/CHECKS.md``: every rule by category, with links to the pages."""
     lines = [
-        GENERATED_NOTE,
+        "# Rule index",
         "",
-        "# Rules",
+        GENERATED_NOTE,
         "",
         "Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four categories below) and a name; either is accepted by `--select`, `--ignore` and in suppression comments, and a prefix selects a whole category. A rule reports one diagnostic per site it finds something wrong at, each with a file and, where the finding is in a file's contents, a line and column. A rule with nothing to point at reports `pass`, or `skip` with the reason. Diagnostics are `fail` or `warn`; only `fail` makes the run exit non-zero. `inspect-evals-lint --explain <code>` prints the same text as a rule's page.",
         "",
@@ -180,6 +182,35 @@ def readme_with_table(readme: str) -> str:
     return pattern.sub(lambda _: replacement, readme)
 
 
+REPO_BLOB = "https://github.com/Generality-Labs/inspect-evals-lint/blob/main/"
+_LINK = re.compile(r"\]\(([^)#][^)]*)\)")
+
+
+def site_index(readme: str, docs_dir: Path) -> str:
+    """``docs/index.md``: the README as the site's front page.
+
+    Links into ``docs/`` lose the prefix, ``docs/rules/`` points at the rules
+    index, and links to other repository files go to GitHub, since the site
+    only carries ``docs/``.
+    """
+
+    def rewrite(match: re.Match[str]) -> str:
+        target = match.group(1)
+        if target.startswith(("http://", "https://", "mailto:")):
+            return match.group(0)
+        if target in ("docs/rules/", "docs/rules"):
+            return "](CHECKS.md)"
+        if target.startswith("docs/"):
+            return f"]({target[len('docs/') :]})"
+        if (docs_dir / target).exists():
+            return match.group(0)
+        return f"]({REPO_BLOB}{target})"
+
+    body = _LINK.sub(rewrite, readme)
+    first_heading, _, rest = body.partition("\n")
+    return f"{first_heading}\n\n{GENERATED_NOTE}\n{rest}"
+
+
 def generated_files(root: Path) -> dict[Path, str]:
     """Every generated file and its intended content, formatted as the mdformat hook would leave it."""
     out: dict[Path, str] = {root / "docs" / "CHECKS.md": formatted(index_page())}
@@ -187,7 +218,9 @@ def generated_files(root: Path) -> dict[Path, str]:
         out[root / "docs" / "rules" / f"{rule.code}.md"] = formatted(rule_page(rule))
     readme = root / "README.md"
     if readme.exists():
-        out[readme] = formatted(readme_with_table(readme.read_text(encoding="utf-8")))
+        updated_readme = formatted(readme_with_table(readme.read_text(encoding="utf-8")))
+        out[readme] = updated_readme
+        out[root / "docs" / "index.md"] = formatted(site_index(updated_readme, root / "docs"))
     return out
 
 

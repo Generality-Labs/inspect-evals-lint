@@ -32,6 +32,11 @@ dev = [
     "mdformat>=1.0.0",
     "mdformat-gfm>=1.0.0",
 ]
+docs = [
+    "mdformat>=1.0.0",
+    "mdformat-gfm>=1.0.0",
+    "mkdocs-material>=9.5",
+]
 
 [tool.hatch.version]
 path = "src/inspect_evals_lint/__init__.py"

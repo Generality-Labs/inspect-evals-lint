@@ -136,7 +136,7 @@ def _explain(rule: Rule, output_format: str) -> None:
 
     from inspect_evals_lint.docs import GENERATED_NOTE, formatted, rule_page
 
-    page = formatted(rule_page(rule)).replace(GENERATED_NOTE, "").lstrip()
+    page = formatted(rule_page(rule).replace(GENERATED_NOTE + "\n\n", ""))
     if output_format == "json":
         sys.stdout.write(json.dumps({**_rule_dict(rule), "doc": page}, indent=2) + "\n")
         return
