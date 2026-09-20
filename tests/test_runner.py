@@ -44,7 +44,7 @@ HELPER_RULES = {r.name for r in rules() if "helper" in r.scopes}
 
 def test_all_check_names_are_registered() -> None:
     assert rule_names() == sorted(r.name for r in rules())
-    assert len(rule_names()) == 24
+    assert len(rule_names()) == 25
 
 
 def test_every_check_has_a_category() -> None:
@@ -400,11 +400,21 @@ def test_per_file_ignores_suppress_by_glob(monorepo: tuple[Path, LintConfig]) ->
     assert statuses(root, config)["sample_ids"] == ["suppressed"]
 
 
-def test_legacy_noautolint_is_a_configuration_error(monorepo: tuple[Path, LintConfig]) -> None:
+def test_legacy_noautolint_is_a_warning_and_the_package_is_still_linted(
+    monorepo: tuple[Path, LintConfig],
+) -> None:
+    """A repository on the old syntax keeps every other result; the register lint service relies on this."""
     root, config = monorepo
-    write(config.package_dir(root, "alpha") / ".noautolint", "readme\n")
-    with pytest.raises(ConfigError, match="noautolint"):
-        lint_package(root, "alpha", config)
+    eval_dir = config.package_dir(root, "alpha")
+    write(eval_dir / ".noautolint", "readme\n")
+    write(
+        eval_dir / "private.py",
+        "from inspect_ai.model._model import a  # noautolint: private_api_imports\n",
+    )
+    report = lint_package(root, "alpha", config)
+    assert report.statuses()["suppression_syntax"] == ["warn", "warn"]
+    assert report.statuses()["private_api_imports"] == ["fail"]  # the legacy comment covers nothing
+    assert set(report.statuses()) == set(rule_names())
 
 
 def test_custom_required_yaml_fields(template_repo: tuple[Path, LintConfig]) -> None:

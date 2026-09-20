@@ -127,6 +127,19 @@
       "markdown": "https://inspect-evals-lint.generality.org/rules/IECQ004.md"
     },
     {
+      "code": "IECQ005",
+      "name": "suppression_syntax",
+      "category": "code_quality",
+      "scopes": [
+        "eval",
+        "helper"
+      ],
+      "allowlist": false,
+      "summary": "Every suppression marker is one the linter reads",
+      "url": "https://inspect-evals-lint.generality.org/rules/IECQ005/",
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IECQ005.md"
+    },
+    {
       "code": "IETS001",
       "name": "tests_exist",
       "category": "tests",

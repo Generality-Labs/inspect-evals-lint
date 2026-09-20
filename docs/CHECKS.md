@@ -23,6 +23,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 | [IECQ002](rules/IECQ002.md) | `score_constants`       | eval, helper | Score() values use the CORRECT/INCORRECT constants, not string literals               |
 | [IECQ003](rules/IECQ003.md) | `unscored_reason`       | eval, helper | Score.unscored() passes a reason= and the legacy unscored_reason metadata key is gone |
 | [IECQ004](rules/IECQ004.md) | `external_dependencies` | eval, helper | Third-party imports are declared in pyproject.toml                                    |
+| [IECQ005](rules/IECQ005.md) | `suppression_syntax`    | eval, helper | Every suppression marker is one the linter reads                                      |
 
 ## Tests
 
@@ -50,7 +51,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 
 ## Helper packages
 
-Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
+Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
 
 ## Categories
 
@@ -58,9 +59,9 @@ Each rule belongs to one of exactly four categories, the sections above. The JSO
 
 ## Suppression
 
-- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. `ignore` without a bracketed list is a configuration error. In a Dockerfile, on the line above the instruction.
+- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. In a Dockerfile, on the line above the instruction.
 - File: `# inspect-evals-lint: ignore-file[<rule>]` within the first ten lines.
 - Paths: `per-file-ignores = { "<glob>" = ["<rule>"] }` in `[tool.inspect-evals-lint]`.
 - Never read: `exclude = ["<glob>"]` keeps files out of the AST-based rules entirely, for code shipped into a sandbox.
 
-Suppressed findings still appear in reports, marked `[suppressed]`, and count as passing. The former `noautolint` comments and `.noautolint` files are rejected with a message naming the replacement.
+Suppressed findings still appear in reports, marked `[suppressed]`, and count as passing. A marker the linter does not read (the former `noautolint` comments and `.noautolint` files, `ignore` without a rule list, a selector naming no rule) suppresses nothing and is reported by `suppression_syntax` with the replacement in its hint.

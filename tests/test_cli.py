@@ -141,10 +141,13 @@ def test_config_error_is_exit_2(tmp_path: Path) -> None:
     assert run("--all", "--root", str(tmp_path)) == 2
 
 
-def test_legacy_suppression_is_exit_2(monorepo: tuple[Path, LintConfig]) -> None:
+def test_legacy_suppression_is_a_warning_not_exit_2(
+    monorepo: tuple[Path, LintConfig], capsys: pytest.CaptureFixture[str]
+) -> None:
     root, config = monorepo
     write(config.package_dir(root, "alpha") / ".noautolint", "readme\n")
-    assert run("alpha", "--root", str(root)) == 2
+    assert run("alpha", "--root", str(root)) == 0
+    assert "suppression_syntax" in capsys.readouterr().out
 
 
 def test_json_single_package(
