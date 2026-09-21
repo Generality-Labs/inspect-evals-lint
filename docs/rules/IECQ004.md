@@ -8,7 +8,7 @@ Third-party imports are declared in pyproject.toml.
 
 ## What it does
 
-Collects every import in the package and treats one as external when it is not in the standard library, not in `[project].dependencies`, not local to the package and not the repository's own package. For an evaluation, each external import must be declared in some `[project.optional-dependencies]` group or `[dependency-groups]` entry (other than `dev`), or in the isolated package's `pyproject.toml` when `isolated-packages-dir` is set, and the evaluation must own a group named after itself unless it is isolated.
+Collects every import in the package and treats one as external when it is not in the standard library, not in `[project].dependencies`, not local to the package and not one of the repository's own packages (the `import-prefix` package, and every package under `source-root` such as a `utils` helper). For an evaluation, each external import must be declared in some `[project.optional-dependencies]` group or `[dependency-groups]` entry (other than `dev`), or in the isolated package's `pyproject.toml` when `isolated-packages-dir` is set, and the evaluation must own a group named after itself unless it is isolated.
 
 For a helper package the rule is different, because every evaluation that imports the helper loads whatever it imports at module level: those imports must be in `[project].dependencies`, while imports inside a function, a `try` block or an `if TYPE_CHECKING:` block are deferred and only need to be declared in some group or in any isolated package. Helpers need no group of their own. One diagnostic per import, at its first site.
 
