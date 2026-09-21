@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-21
+
 ### Fixed
 
 - `external_dependencies` treats every package under `source-root` as first-party, not only the `import-prefix` package. In a template repository `from utils.metadata import ...` imports the repository's own helper, and the rule reported it as an undeclared distribution named `utils`; two register repositories had suppressed the rule for that reason.
