@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from inspect_evals_lint.config import LintConfig
-from inspect_evals_lint.context import LintContext
+from inspect_evals_lint.context import LintContext, is_package
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
 from inspect_evals_lint.registry import rule
 from inspect_evals_lint.rules._ast import iter_python_files
@@ -200,6 +200,18 @@ def _get_all_imports_from_package(
     return eager, lazy, failures
 
 
+def _sibling_packages(repo_root: Path, config: LintConfig) -> set[str]:
+    """Names of every package directly under ``source_root``: evaluations, helpers, ignored directories alike.
+
+    ``from utils.metadata import load_version`` in a template repository imports the
+    repository's own helper package, not a distribution, so it is never declared.
+    """
+    source_dir = config.source_dir(repo_root)
+    if not source_dir.is_dir():
+        return set()
+    return {item.name for item in source_dir.iterdir() if is_package(item)}
+
+
 def _get_local_modules(eval_path: Path) -> set[str]:
     """Module and package names defined inside the evaluation directory."""
     local_modules = {eval_path.name}
@@ -252,8 +264,8 @@ def _external_imports(
     repo_root: Path,
     config: LintConfig,
 ) -> dict[str, Location]:
-    """The imports that are neither standard library, core dependencies, the repo's own package nor local."""
-    local_modules = _get_local_modules(package_path)
+    """The imports that are neither standard library, core dependencies, the repo's own packages nor local."""
+    local_modules = _get_local_modules(package_path) | _sibling_packages(repo_root, config)
     stdlib_modules = _get_stdlib_modules()
     core_deps = _get_core_dependencies(repo_root)
     import_to_package = _get_import_to_package_map()
@@ -376,7 +388,8 @@ def external_dependencies(ctx: LintContext) -> Iterable[Finding]:
     ## What it does
     Collects every import in the package and treats one as external when it is not
     in the standard library, not in ``[project].dependencies``, not local to the
-    package and not the repository's own package. For an evaluation, each external
+    package and not one of the repository's own packages (the ``import-prefix``
+    package, and every package under ``source-root`` such as a ``utils`` helper). For an evaluation, each external
     import must be declared in some ``[project.optional-dependencies]`` group or
     ``[dependency-groups]`` entry (other than ``dev``), or in the isolated
     package's ``pyproject.toml`` when ``isolated-packages-dir`` is set, and the

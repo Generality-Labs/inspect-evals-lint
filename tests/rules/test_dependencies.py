@@ -123,6 +123,33 @@ class TestCheckExternalDependenciesNormalisation:
         assert "'some_extra_pkg' (package: some-extra-pkg)" in result.message
 
 
+class TestSiblingPackagesAreFirstParty:
+    """An evaluation importing the repository's own helper or another evaluation declares nothing."""
+
+    def test_helper_and_sibling_eval_imports_are_not_external(self, tmp_path):
+        from inspect_evals_lint.config import PRESETS
+        from tests.conftest import make_helper, make_template_repo, write
+
+        config = make_template_repo(tmp_path, eval_names=("alpha", "beta"))
+        make_helper(tmp_path, config, "utils", "def stable_id(x): return x\n")
+        write(
+            config.package_dir(tmp_path, "alpha") / "extra.py",
+            "from utils.helpers import stable_id\nimport beta\nfrom examples import thing\n",
+        )
+        write(tmp_path / "src/examples/__init__.py", "")
+        results = list(external_dependencies(LintContext.build(tmp_path, "alpha", config)))
+        assert [r.status for r in results] == ["pass"], [r.message for r in results]
+        assert PRESETS["template"].import_prefix == ""  # nothing else makes these first-party
+
+    def test_a_real_third_party_import_still_fails(self, tmp_path):
+        from tests.conftest import make_template_repo, write
+
+        config = make_template_repo(tmp_path)
+        write(config.package_dir(tmp_path, "alpha") / "extra.py", "import utils_toolkit\n")
+        results = list(external_dependencies(LintContext.build(tmp_path, "alpha", config)))
+        assert [r.status for r in results] == ["fail"]
+
+
 class TestGetStdlibModules:
     """Test the _get_stdlib_modules function from dependencies.py."""
 
