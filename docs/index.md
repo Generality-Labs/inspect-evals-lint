@@ -113,12 +113,12 @@ The documentation site is built to be read by machines as well as people:
 
 Every finding has a file and, where it is in a file's contents, a line, so one comment syntax covers every rule:
 
-- Line: `# inspect-evals-lint: ignore[IEBP003]` on the offending line, or on any line of a multi-line statement (formatters move trailing comments inside parenthesised imports). Names, codes and code prefixes are accepted, comma-separated. A bare `ignore` or `ignore[]` is a configuration error, so a suppression always says what it silences. In a Dockerfile, whose instructions take no trailing comment, put it on the line above the instruction.
+- Line: `# inspect-evals-lint: ignore[IEBP003]` on the offending line, or on any line of a multi-line statement (formatters move trailing comments inside parenthesised imports). Names, codes and code prefixes are accepted, comma-separated. In a Dockerfile, whose instructions take no trailing comment, put it on the line above the instruction.
 - File: `# inspect-evals-lint: ignore-file[IEBP003]` within the first ten lines of the file.
 - Paths: `per-file-ignores` in the configuration table, for whole directories.
 - Not linted at all: `exclude`, for code that is shipped into a sandbox rather than run on the host.
 
-The comment is namespaced with the tool's name rather than reusing ruff's `# noqa`: ruff reads every `# noqa` comment and warns about codes it does not know, so a shared spelling would turn each suppression into a ruff warning. The former `noautolint` comments and `.noautolint` files are rejected with a message naming the replacement. Suppressed findings still appear in reports, marked `[suppressed]`, and count as passing.
+The comment is namespaced with the tool's name rather than reusing ruff's `# noqa`: ruff reads every `# noqa` comment and warns about codes it does not know, so a shared spelling would turn each suppression into a ruff warning. Suppressed findings still appear in reports, marked `[suppressed]`, and count as passing. A marker the linter does not read suppresses nothing and is reported as a warning by `suppression_syntax` (IECQ005) with the replacement in its hint: the former `noautolint` comments and `.noautolint` files, a bare `ignore` or `ignore[]`, an `ignore-file` past the header, or a selector that names no rule.
 
 ## Checks
 

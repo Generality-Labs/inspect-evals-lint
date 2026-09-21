@@ -111,12 +111,12 @@ The documentation site is built to be read by machines as well as people:
 
 Every finding has a file and, where it is in a file's contents, a line, so one comment syntax covers every rule:
 
-- Line: `# inspect-evals-lint: ignore[IEBP003]` on the offending line, or on any line of a multi-line statement (formatters move trailing comments inside parenthesised imports). Names, codes and code prefixes are accepted, comma-separated. A bare `ignore` or `ignore[]` is a configuration error, so a suppression always says what it silences. In a Dockerfile, whose instructions take no trailing comment, put it on the line above the instruction.
+- Line: `# inspect-evals-lint: ignore[IEBP003]` on the offending line, or on any line of a multi-line statement (formatters move trailing comments inside parenthesised imports). Names, codes and code prefixes are accepted, comma-separated. In a Dockerfile, whose instructions take no trailing comment, put it on the line above the instruction.
 - File: `# inspect-evals-lint: ignore-file[IEBP003]` within the first ten lines of the file.
 - Paths: `per-file-ignores` in the configuration table, for whole directories.
 - Not linted at all: `exclude`, for code that is shipped into a sandbox rather than run on the host.
 
-The comment is namespaced with the tool's name rather than reusing ruff's `# noqa`: ruff reads every `# noqa` comment and warns about codes it does not know, so a shared spelling would turn each suppression into a ruff warning. The former `noautolint` comments and `.noautolint` files are rejected with a message naming the replacement. Suppressed findings still appear in reports, marked `[suppressed]`, and count as passing.
+The comment is namespaced with the tool's name rather than reusing ruff's `# noqa`: ruff reads every `# noqa` comment and warns about codes it does not know, so a shared spelling would turn each suppression into a ruff warning. Suppressed findings still appear in reports, marked `[suppressed]`, and count as passing. A marker the linter does not read suppresses nothing and is reported as a warning by `suppression_syntax` (IECQ005) with the replacement in its hint: the former `noautolint` comments and `.noautolint` files, a bare `ignore` or `ignore[]`, an `ignore-file` past the header, or a selector that names no rule.
 
 ## Checks
 
@@ -179,6 +179,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 | [IECQ002](rules/IECQ002.md) | `score_constants`       | eval, helper | Score() values use the CORRECT/INCORRECT constants, not string literals               |
 | [IECQ003](rules/IECQ003.md) | `unscored_reason`       | eval, helper | Score.unscored() passes a reason= and the legacy unscored_reason metadata key is gone |
 | [IECQ004](rules/IECQ004.md) | `external_dependencies` | eval, helper | Third-party imports are declared in pyproject.toml                                    |
+| [IECQ005](rules/IECQ005.md) | `suppression_syntax`    | eval, helper | Every suppression marker is one the linter reads                                      |
 
 ## Tests
 
@@ -206,7 +207,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 
 ## Helper packages
 
-Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
+Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
 
 ## Categories
 
@@ -214,12 +215,12 @@ Each rule belongs to one of exactly four categories, the sections above. The JSO
 
 ## Suppression
 
-- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. `ignore` without a bracketed list is a configuration error. In a Dockerfile, on the line above the instruction.
+- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. In a Dockerfile, on the line above the instruction.
 - File: `# inspect-evals-lint: ignore-file[<rule>]` within the first ten lines.
 - Paths: `per-file-ignores = { "<glob>" = ["<rule>"] }` in `[tool.inspect-evals-lint]`.
 - Never read: `exclude = ["<glob>"]` keeps files out of the AST-based rules entirely, for code shipped into a sandbox.
 
-Suppressed findings still appear in reports, marked `[suppressed]`, and count as passing. The former `noautolint` comments and `.noautolint` files are rejected with a message naming the replacement.
+Suppressed findings still appear in reports, marked `[suppressed]`, and count as passing. A marker the linter does not read (the former `noautolint` comments and `.noautolint` files, `ignore` without a rule list, a selector naming no rule) suppresses nothing and is reported by `suppression_syntax` with the replacement in its hint.
 
 
 ---
@@ -592,6 +593,37 @@ my_eval = ["datasets>=4.0", "scikit-learn"]
 - `import-prefix`
 
 Suppress on a line with `# inspect-evals-lint: ignore[IECQ004]` or `ignore[external_dependencies]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
+
+
+---
+
+# IECQ005: suppression_syntax
+
+Every suppression marker is one the linter reads.
+
+**Category:** code_quality · **Applies to:** eval, helper
+
+## What it does
+
+Reads the `# inspect-evals-lint: ignore[...]` comments in the package's Python files and Dockerfiles (`exclude`d files are skipped) and warns about each marker that suppresses nothing: a comment in the removed `# noautolint` syntax or a `.noautolint` file, an `ignore` or `ignore-file` without a bracketed rule list, an `ignore-file` past the first ten lines, and a selector that names no rule. One warning per marker, at its line. The other selectors in the same comment still apply.
+
+## Why is this bad?
+
+A marker the linter does not read does nothing, silently: the finding it was meant to cover is reported under its own rule while the reader of the code believes it is handled. Earlier releases stopped with a configuration error instead, which lost every other result for the package, so a repository linted by a third party (the register lint service) had no results at all until it migrated.
+
+## Example
+
+```python
+from inspect_ai.model._model import thing  # noautolint: private_api_imports
+```
+
+Use instead:
+
+```python
+from inspect_ai.model._model import thing  # inspect-evals-lint: ignore[private_api_imports]
+```
+
+Suppress on a line with `# inspect-evals-lint: ignore[IECQ005]` or `ignore[suppression_syntax]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
 
 
 ---

@@ -1,4 +1,4 @@
-"""Code-quality rules: private inspect_ai imports, literal score values, unscored reasons."""
+"""Code-quality rules: private inspect_ai imports, literal score values, unscored reasons, suppression markers."""
 
 from __future__ import annotations
 
@@ -236,3 +236,59 @@ def unscored_reason(ctx: LintContext) -> Iterable[Finding]:
         yield Outcome("skip", "No Score.unscored() calls found")
     else:
         yield Outcome("pass", f"All {total_calls} Score.unscored() call(s) give a reason")
+
+
+@rule(
+    code="IECQ005",
+    name="suppression_syntax",
+    category="code_quality",
+    scopes=("eval", "helper"),
+    summary="Every suppression marker is one the linter reads",
+)
+def suppression_syntax(ctx: LintContext) -> Iterable[Finding]:
+    """Every suppression marker is one the linter reads.
+
+    ## What it does
+    Reads the ``# inspect-evals-lint: ignore[...]`` comments in the package's
+    Python files and Dockerfiles (``exclude``d files are skipped) and warns about
+    each marker that suppresses nothing: a comment in the removed ``# noautolint``
+    syntax or a ``.noautolint`` file, an ``ignore`` or ``ignore-file`` without a
+    bracketed rule list, an ``ignore-file`` past the first ten lines, and a selector
+    that names no rule. One warning per marker, at its line. The other selectors in
+    the same comment still apply.
+
+    ## Why is this bad?
+    A marker the linter does not read does nothing, silently: the finding it was
+    meant to cover is reported under its own rule while the reader of the code
+    believes it is handled. Earlier releases stopped with a configuration error
+    instead, which lost every other result for the package, so a repository
+    linted by a third party (the register lint service) had no results at all
+    until it migrated.
+
+    ## Example
+    ```python
+    from inspect_ai.model._model import thing  # noautolint: private_api_imports
+    ```
+    Use instead:
+    ```python
+    from inspect_ai.model._model import thing  # inspect-evals-lint: ignore[private_api_imports]
+    ```
+    """
+    from inspect_evals_lint.suppressions import load_suppressions  # avoids an import cycle
+
+    suppressions = load_suppressions(ctx)
+    for problem in suppressions.problems:
+        yield Diagnostic(
+            problem.message,
+            file=problem.file,
+            line=problem.line,
+            severity="warning",
+            hint=problem.hint,
+        )
+    if not suppressions.problems:
+        yield Outcome(
+            "pass",
+            f"{suppressions.comments} suppression comment(s) read"
+            if suppressions.comments
+            else "No suppression comments",
+        )

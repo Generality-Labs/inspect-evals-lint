@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from inspect_evals_lint import ConfigError, LintConfig, lint_package
+from inspect_evals_lint import LintConfig, lint_package
 from inspect_evals_lint.config import PRESETS
 from inspect_evals_lint.diagnostics import Diagnostic
 from inspect_evals_lint.registry import get_rule
@@ -42,11 +42,13 @@ def test_file_level_in_header(tmp_path: Path) -> None:
     assert s.file_level[pkg / "early.py"] == {"readme", "sample_ids"}
 
 
-def test_file_level_outside_header_is_an_error(tmp_path: Path) -> None:
+def test_file_level_outside_header_is_a_problem_not_a_suppression(tmp_path: Path) -> None:
     pkg = tmp_path / "e"
     write(pkg / "late.py", "\n" * 12 + "# inspect-evals-lint: ignore-file[readme]\n")
-    with pytest.raises(ConfigError, match="first 10 lines"):
-        load_suppressions(context_for(pkg))
+    s = load_suppressions(context_for(pkg))
+    assert s.file_level == {}
+    assert [(p.file.name, p.line) for p in s.problems] == [("late.py", 13)]
+    assert "first 10 lines" in s.problems[0].message
 
 
 @pytest.mark.parametrize(
@@ -57,18 +59,35 @@ def test_file_level_outside_header_is_an_error(tmp_path: Path) -> None:
         "# inspect-evals-lint: ignore-file",
     ],
 )
-def test_ignore_without_a_rule_is_an_error(tmp_path: Path, comment: str) -> None:
+def test_ignore_without_a_rule_is_a_problem(tmp_path: Path, comment: str) -> None:
     pkg = tmp_path / "e"
     write(pkg / "x.py", f"x = 1  {comment}\n")
-    with pytest.raises(ConfigError, match="must name at least one rule"):
-        load_suppressions(context_for(pkg))
+    s = load_suppressions(context_for(pkg))
+    assert s.line_level == {}
+    assert s.file_level == {}
+    assert [p.message for p in s.problems] == [
+        "an ignore comment must name at least one rule, so this one suppresses nothing"
+    ]
+    assert s.problems[0].line == 1
+
+
+def test_unknown_selector_is_a_problem_and_the_known_ones_still_apply(tmp_path: Path) -> None:
+    pkg = tmp_path / "e"
+    write(pkg / "x.py", "x = 1  # inspect-evals-lint: ignore[readme, NOPE, IEZZ]\n")
+    s = load_suppressions(context_for(pkg))
+    assert s.line_level[pkg / "x.py"] == {1: {"readme"}}
+    assert [p.message for p in s.problems] == [
+        "'IEZZ' names no rule, so this selector suppresses nothing",
+        "'NOPE' names no rule, so this selector suppresses nothing",
+    ]
+    assert s.comments == 1
 
 
 @pytest.mark.parametrize(
     "setup",
     ["comment", "file-comment", "dotfile"],
 )
-def test_legacy_syntax_is_an_error_naming_the_replacement(tmp_path: Path, setup: str) -> None:
+def test_legacy_syntax_is_a_problem_naming_the_replacement(tmp_path: Path, setup: str) -> None:
     pkg = tmp_path / "e"
     if setup == "comment":
         write(pkg / "x.py", "x = 1  # noautolint: readme\n")
@@ -76,8 +95,13 @@ def test_legacy_syntax_is_an_error_naming_the_replacement(tmp_path: Path, setup:
         write(pkg / "x.py", "# noautolint-file: readme\n")
     else:
         write(pkg / ".noautolint", "readme\n")
-    with pytest.raises(ConfigError, match="ignore\\[<rule>\\]"):
-        load_suppressions(context_for(pkg))
+    s = load_suppressions(context_for(pkg))
+    (problem,) = s.problems
+    assert "no longer read" in problem.message
+    assert "ignore[<rule>]" in problem.hint or "per-file-ignores" in problem.hint
+    assert problem.line == (None if setup == "dotfile" else 1)
+    assert s.line_level == {}
+    assert s.file_level == {}
 
 
 def test_apply_marks_covered_diagnostics(tmp_path: Path) -> None:
@@ -118,11 +142,11 @@ def test_dockerfile_comment_covers_the_instruction_below_or_its_own_line(tmp_pat
     assert s.line_level[pkg / "dockerfile.py"] == {1: {"IEFS002"}}
 
 
-def test_dockerfile_legacy_comment_is_an_error(tmp_path: Path) -> None:
+def test_dockerfile_legacy_comment_is_a_problem(tmp_path: Path) -> None:
     pkg = tmp_path / "e"
     write(pkg / "Dockerfile.gpu", "FROM x\n# noautolint: readme\n")
-    with pytest.raises(ConfigError, match="ignore\\[<rule>\\]"):
-        load_suppressions(context_for(pkg))
+    s = load_suppressions(context_for(pkg))
+    assert [(p.file.name, p.line) for p in s.problems] == [("Dockerfile.gpu", 2)]
 
 
 def test_comments_in_excluded_files_are_not_read(tmp_path: Path) -> None:
@@ -132,12 +156,13 @@ def test_comments_in_excluded_files_are_not_read(tmp_path: Path) -> None:
     pkg = tmp_path / "src" / "e"
     write(pkg / "challenges" / "solve.py", "print 'py2'  # noautolint: readme\n")
     write(pkg / "challenges" / "Dockerfile", "# noautolint: readme\nFROM x\n")
+    write(pkg / "challenges" / ".noautolint", "readme\n")
     write(pkg / "ok.py", "x = 1  # inspect-evals-lint: ignore[readme]\n")
-    with pytest.raises(ConfigError):
-        load_suppressions(context_for(pkg))
+    assert len(load_suppressions(context_for(pkg)).problems) == 3
     config = replace(PRESETS["template"], exclude=("e/challenges/**",))  # root is pkg.parent
     s = load_suppressions(context_for(pkg, config))
     assert list(s.line_level) == [pkg / "ok.py"]
+    assert s.problems == []
 
 
 def test_comment_on_any_line_of_a_multiline_statement(monorepo: tuple[Path, LintConfig]) -> None:

@@ -12,10 +12,16 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from inspect_evals_lint.config import ConfigError, LintConfig, selector_matches
+from inspect_evals_lint.config import LintConfig, selector_matches
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic
-from inspect_evals_lint.rules._ast import is_dockerfile, iter_dockerfiles, iter_python_files
+from inspect_evals_lint.registry import rules
+from inspect_evals_lint.rules._ast import (
+    is_dockerfile,
+    iter_dockerfiles,
+    iter_package_files,
+    iter_python_files,
+)
 
 LINE_PATTERN = re.compile(r"#\s*inspect-evals-lint:\s*ignore\[([^\]]*)\]")
 FILE_PATTERN = re.compile(r"#\s*inspect-evals-lint:\s*ignore-file\[([^\]]*)\]")
@@ -25,11 +31,28 @@ LEGACY_PATTERN = re.compile(r"#\s*noautolint(?:-file)?:")
 MAX_FILE_HEADER_LINES = 10
 """A file-level suppression must appear within this many lines of the top."""
 
-LEGACY_HELP = (
-    "the noautolint syntax was removed; use `# inspect-evals-lint: ignore[<rule>]` on a line, "
-    "`# inspect-evals-lint: ignore-file[<rule>]` in a file's header, or `per-file-ignores` "
-    "in [tool.inspect-evals-lint] for whole directories"
+LEGACY_COMMENT_HINT = (
+    "use `# inspect-evals-lint: ignore[<rule>]` on the line, or "
+    "`# inspect-evals-lint: ignore-file[<rule>]` in the file's header"
 )
+LEGACY_FILE_HINT = (
+    "list its rules under `per-file-ignores` in [tool.inspect-evals-lint] for this directory, "
+    "or `exclude` the directory if it holds sandbox code"
+)
+SELECTOR_HINT = (
+    "use a rule name, a code such as IEFS006, or a code prefix such as IEFS "
+    "(`--list-rules` shows them)"
+)
+
+
+@dataclass
+class SuppressionProblem:
+    """A marker the linter does not read, so it suppresses nothing. Reported by ``suppression_syntax``."""
+
+    file: Path
+    line: int | None
+    message: str
+    hint: str
 
 
 @dataclass
@@ -38,6 +61,9 @@ class Suppressions:
 
     file_level: dict[Path, set[str]] = field(default_factory=dict)
     line_level: dict[Path, dict[int, set[str]]] = field(default_factory=dict)
+    problems: list[SuppressionProblem] = field(default_factory=list)
+    comments: int = 0
+    """How many well-formed ignore comments were read."""
 
     def covers(self, diagnostic: Diagnostic) -> bool:
         rule = diagnostic.rule
@@ -53,13 +79,30 @@ class Suppressions:
         return any(selector_matches(s, rule) for s in selectors)
 
 
-def _selectors(raw: str, where: str) -> set[str]:
+def _selectors(raw: str, path: Path, line: int, suppressions: Suppressions) -> set[str]:
+    """The selectors in a bracketed list that name a rule; the others are recorded as problems."""
     selectors = {s.strip() for s in raw.split(",") if s.strip()}
     if not selectors:
-        raise ConfigError(
-            f"{where}: an ignore comment must name at least one rule, e.g. ignore[IEFS006]"
+        suppressions.problems.append(
+            SuppressionProblem(
+                path,
+                line,
+                "an ignore comment must name at least one rule, so this one suppresses nothing",
+                "write ignore[<rule>] with a rule name, code or code prefix, e.g. ignore[IEFS006]",
+            )
         )
-    return selectors
+        return set()
+    known = {s for s in selectors if any(selector_matches(s, r) for r in rules())}
+    for selector in sorted(selectors - known):
+        suppressions.problems.append(
+            SuppressionProblem(
+                path,
+                line,
+                f"'{selector}' names no rule, so this selector suppresses nothing",
+                SELECTOR_HINT,
+            )
+        )
+    return known
 
 
 def _next_instruction_line(lines: list[str], index: int) -> int | None:
@@ -92,29 +135,50 @@ def _read_comments(path: Path, suppressions: Suppressions) -> None:
 
     for index, source_line in enumerate(lines):
         i = index + 1
-        where = f"{path}:{i}"
         if LEGACY_PATTERN.search(source_line):
-            raise ConfigError(f"{where}: {LEGACY_HELP}")
+            suppressions.problems.append(
+                SuppressionProblem(
+                    path,
+                    i,
+                    "'# noautolint' comments are no longer read, so this one suppresses nothing",
+                    LEGACY_COMMENT_HINT,
+                )
+            )
+            continue
         file_match = FILE_PATTERN.search(source_line)
         if file_match:
             if i > MAX_FILE_HEADER_LINES:
-                raise ConfigError(
-                    f"{where}: ignore-file must appear within the first {MAX_FILE_HEADER_LINES} lines"
+                suppressions.problems.append(
+                    SuppressionProblem(
+                        path,
+                        i,
+                        f"ignore-file must appear within the first {MAX_FILE_HEADER_LINES} lines, "
+                        "so this one suppresses nothing",
+                        "move it into the file's header, or use ignore[<rule>] on the lines it covers",
+                    )
                 )
-            suppressions.file_level.setdefault(path, set()).update(
-                _selectors(file_match.group(1), where)
-            )
+                continue
+            suppressions.comments += 1
+            known = _selectors(file_match.group(1), path, i, suppressions)
+            if known:
+                suppressions.file_level.setdefault(path, set()).update(known)
             continue
         line_match = LINE_PATTERN.search(source_line)
         if line_match:
-            target = _dockerfile_target(lines, index) if dockerfile else i
-            suppressions.line_level.setdefault(path, {}).setdefault(target, set()).update(
-                _selectors(line_match.group(1), where)
-            )
+            suppressions.comments += 1
+            known = _selectors(line_match.group(1), path, i, suppressions)
+            if known:
+                target = _dockerfile_target(lines, index) if dockerfile else i
+                suppressions.line_level.setdefault(path, {}).setdefault(target, set()).update(known)
             continue
         if MALFORMED_PATTERN.search(source_line):
-            raise ConfigError(
-                f"{where}: an ignore comment must name at least one rule, e.g. ignore[IEFS006]"
+            suppressions.problems.append(
+                SuppressionProblem(
+                    path,
+                    i,
+                    "an ignore comment must name at least one rule, so this one suppresses nothing",
+                    "write ignore[<rule>] with a rule name, code or code prefix, e.g. ignore[IEFS006]",
+                )
             )
 
 
@@ -122,17 +186,24 @@ def load_suppressions(ctx: LintContext) -> Suppressions:
     """Collect ignore comments from the package's Python files and Dockerfiles, skipping ``exclude``d ones.
 
     Excluded files are never linted, so nothing in them can be suppressed and a
-    stray comment there (in code shipped into a sandbox, say) is not an error.
-    In a Dockerfile a comment on its own line applies to the instruction below it.
+    stray comment there (in code shipped into a sandbox, say) is not read. In a
+    Dockerfile a comment on its own line applies to the instruction below it.
 
-    Raises:
-        ConfigError: a comment is malformed, or uses the removed ``noautolint`` syntax.
+    Markers the linter does not read (the removed ``noautolint`` syntax, an
+    ``ignore`` without a rule list, an ``ignore-file`` past the header, a selector
+    naming no rule) are collected as ``problems`` for the ``suppression_syntax``
+    rule to report; they never stop the package from being linted.
     """
-    legacy_files = sorted(ctx.path.rglob(".noautolint"))
-    if legacy_files:
-        raise ConfigError(f"{legacy_files[0]}: .noautolint files are no longer read; {LEGACY_HELP}")
-
     suppressions = Suppressions()
+    for legacy_file in iter_package_files(ctx, ".noautolint"):
+        suppressions.problems.append(
+            SuppressionProblem(
+                legacy_file,
+                None,
+                ".noautolint files are no longer read, so this one suppresses nothing",
+                LEGACY_FILE_HINT,
+            )
+        )
     for path in (*iter_python_files(ctx), *iter_dockerfiles(ctx)):
         _read_comments(path, suppressions)
     return suppressions

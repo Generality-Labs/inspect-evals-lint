@@ -1,8 +1,8 @@
 """Code-quality rules."""
 
 from inspect_evals_lint.config import PRESETS
-from inspect_evals_lint.rules.code_quality import unscored_reason
-from tests.conftest import context_for
+from inspect_evals_lint.rules.code_quality import suppression_syntax, unscored_reason
+from tests.conftest import context_for, write
 
 
 class TestCheckUnscoredReason:
@@ -90,3 +90,57 @@ class TestCheckUnscoredReason:
             tmp_path,
         )
         assert [r.status for r in results] == ["suppressed"]
+
+
+class TestSuppressionSyntax:
+    def test_no_comments_passes(self, tmp_path):
+        pkg = tmp_path / "alpha"
+        write(pkg / "a.py", "x = 1\n")
+        results = list(suppression_syntax(context_for(pkg)))
+        assert [(r.status, r.message) for r in results] == [("pass", "No suppression comments")]
+
+    def test_valid_comments_pass_and_are_counted(self, tmp_path):
+        pkg = tmp_path / "alpha"
+        write(
+            pkg / "a.py",
+            "# inspect-evals-lint: ignore-file[readme]\nx = 1  # inspect-evals-lint: ignore[IEBP003, sample_ids]\n",
+        )
+        write(pkg / "Dockerfile", "# inspect-evals-lint: ignore[IEBP007]\nFROM python:3.12\n")
+        results = list(suppression_syntax(context_for(pkg)))
+        assert [(r.status, r.message) for r in results] == [
+            ("pass", "3 suppression comment(s) read")
+        ]
+
+    def test_every_kind_of_dead_marker_is_one_warning(self, tmp_path):
+        pkg = tmp_path / "alpha"
+        write(pkg / ".noautolint", "readme\n")
+        write(
+            pkg / "a.py",
+            "x = 1  # noautolint: readme\n"
+            "y = 2  # inspect-evals-lint: ignore\n"
+            "z = 3  # inspect-evals-lint: ignore[NOPE]\n"
+            + "\n" * 8
+            + "# inspect-evals-lint: ignore-file[readme]\n",
+        )
+        results = list(suppression_syntax(context_for(pkg)))
+        assert [r.status for r in results] == ["warn"] * 5
+        assert [r.severity for r in results] == ["warning"] * 5
+        assert [(r.file.name, r.line) for r in results] == [
+            (".noautolint", None),
+            ("a.py", 1),
+            ("a.py", 2),
+            ("a.py", 3),
+            ("a.py", 12),
+        ]
+        assert all(r.hint for r in results)
+        assert "per-file-ignores" in results[0].hint
+        assert "ignore[<rule>]" in results[1].hint
+
+    def test_excluded_files_are_not_read(self, tmp_path):
+        from dataclasses import replace
+
+        pkg = tmp_path / "alpha"
+        write(pkg / "challenges" / "solve.py", "print 'py2'  # noautolint: readme\n")
+        config = replace(PRESETS["template"], exclude=("alpha/challenges/**",))
+        results = list(suppression_syntax(context_for(pkg, config)))
+        assert [r.status for r in results] == ["pass"]
