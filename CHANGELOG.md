@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-09-22
+
+### Added
+
+- The package ships a `py.typed` marker (PEP 561), so type checkers in projects that import `inspect_evals_lint` use its inline annotations instead of treating it as untyped. inspect_evals' documentation build had to silence mypy's `import-untyped` error to call the Python API.
+
 ## [0.4.2] - 2026-09-21
 
 ### Fixed
