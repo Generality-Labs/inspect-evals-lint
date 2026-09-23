@@ -24,4 +24,8 @@ def test_e2e():
     assert logs[0].status == "success"
 ```
 
+## See also
+
+- [Reference: eval()](https://inspect.aisi.org.uk/reference/inspect_ai.html#eval)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IETS003]` or `ignore[e2e_test]`; select or ignore it in configuration by either, or by the prefix `IETS`.

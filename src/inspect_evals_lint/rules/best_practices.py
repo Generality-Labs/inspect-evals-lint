@@ -7,7 +7,7 @@ from collections.abc import Iterable
 
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
-from inspect_evals_lint.registry import rule
+from inspect_evals_lint.registry import inspect_docs, rule
 from inspect_evals_lint.rules._ast import (
     column_of,
     end_line_of,
@@ -57,6 +57,11 @@ class GetModelVisitor(ast.NodeVisitor):
     category="best_practices",
     scopes=("eval", "helper"),
     summary="get_model() is only called inside @solver or @scorer functions",
+    references=(
+        inspect_docs("models", "Models: Role Resolution", "role-resolution"),
+        inspect_docs("solvers", "Solvers: Models in Solvers", "models-in-solvers"),
+        inspect_docs("custom-scorers", "Custom Scorers: Models in Scorers", "models-in-scorers"),
+    ),
 )
 def get_model_location(ctx: LintContext) -> Iterable[Finding]:
     """``get_model()`` is only called inside ``@solver`` or ``@scorer`` functions.
@@ -149,6 +154,10 @@ class SampleIdVisitor(ast.NodeVisitor):
     category="best_practices",
     scopes=("eval", "helper"),
     summary="Every Sample() passes id=",
+    references=(
+        inspect_docs("datasets", "Datasets: Dataset Samples", "dataset-samples"),
+        inspect_docs("eval-logs", "Log Files: IDs and Shuffling", "ids-and-shuffling"),
+    ),
 )
 def sample_ids(ctx: LintContext) -> Iterable[Finding]:
     """Every ``Sample()`` passes ``id=``.
@@ -233,6 +242,12 @@ OVERRIDABLE_PARAMS = {"solver", "scorer", "metric", "metrics", "grader", "model"
     category="best_practices",
     scopes=("eval", "helper"),
     summary="@task parameters naming a solver, scorer, metric, grader or model have defaults",
+    references=(
+        inspect_docs("tasks", "Tasks: Parameters", "parameters"),
+        inspect_docs("tasks", "Tasks: Solver Parameter", "solver-parameter"),
+        inspect_docs("tasks", "Tasks: Scorer Override", "scorer-override"),
+        inspect_docs("extensions-components", "Extensions: Components: Tasks", "tasks"),
+    ),
 )
 def task_overridable_defaults(ctx: LintContext) -> Iterable[Finding]:
     """``@task`` parameters naming a solver, scorer, metric, grader or model have defaults.
@@ -378,6 +393,11 @@ _MODEL_ROLE_HINT = (
     scopes=("eval", "helper"),
     allowlist=True,
     summary="get_model(role=...) resolves deliberately: an explicit model, default= or required=True",
+    references=(
+        inspect_docs("models", "Models: Model Roles", "model-roles"),
+        inspect_docs("models", "Models: Role Defaults", "role-defaults"),
+        inspect_docs("tasks", "Tasks: Model Roles", "model-roles"),
+    ),
 )
 def model_role_resolution(ctx: LintContext) -> Iterable[Finding]:
     """``get_model(role=...)`` resolves deliberately: an explicit model, ``default=`` or ``required=True``.

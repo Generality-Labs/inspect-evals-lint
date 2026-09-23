@@ -8,7 +8,7 @@ from pathlib import Path
 
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
-from inspect_evals_lint.registry import rule
+from inspect_evals_lint.registry import inspect_docs, rule
 from inspect_evals_lint.rules._ast import (
     ParsedFile,
     column_of,
@@ -85,6 +85,7 @@ def _no_test_dir(ctx: LintContext) -> Diagnostic:
     name="e2e_test",
     category="tests",
     summary="Some test runs eval() against mockllm/model",
+    references=(inspect_docs("reference/inspect_ai", "Reference: eval()", "eval"),),
 )
 def e2e_test(ctx: LintContext) -> Iterable[Finding]:
     """Some test runs ``eval()`` against ``mockllm/model``.
@@ -150,6 +151,7 @@ def _first_mention(files: Iterable[Path], needle: str) -> tuple[Path, int] | Non
     name="record_to_sample_test",
     category="tests",
     summary="record_to_sample is exercised by a test when the evaluation uses it",
+    references=(inspect_docs("datasets", "Datasets: Field Mapping", "field-mapping"),),
 )
 def record_to_sample_test(ctx: LintContext) -> Iterable[Finding]:
     """``record_to_sample`` is exercised by a test when the evaluation uses it.
@@ -241,6 +243,7 @@ def _custom_component_tests(ctx: LintContext, decorator_type: str) -> Iterable[F
     category="tests",
     scopes=("eval", "helper"),
     summary="Every @solver function name appears somewhere in the tests",
+    references=(inspect_docs("solvers", "Solvers: Custom Solvers", "custom-solvers"),),
 )
 def custom_solver_tests(ctx: LintContext) -> Iterable[Finding]:
     """Every ``@solver`` function name appears somewhere in the tests.
@@ -266,6 +269,7 @@ def custom_solver_tests(ctx: LintContext) -> Iterable[Finding]:
     category="tests",
     scopes=("eval", "helper"),
     summary="Every @scorer function name appears somewhere in the tests",
+    references=(inspect_docs("custom-scorers", "Custom Scorers"),),
 )
 def custom_scorer_tests(ctx: LintContext) -> Iterable[Finding]:
     """Every ``@scorer`` function name appears somewhere in the tests.
@@ -291,6 +295,7 @@ def custom_scorer_tests(ctx: LintContext) -> Iterable[Finding]:
     category="tests",
     scopes=("eval", "helper"),
     summary="Every @tool function name appears somewhere in the tests",
+    references=(inspect_docs("tools", "Tools: Custom Tools", "custom-tools"),),
 )
 def custom_tool_tests(ctx: LintContext) -> Iterable[Finding]:
     """Every ``@tool`` function name appears somewhere in the tests.

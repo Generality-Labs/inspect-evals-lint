@@ -21,4 +21,9 @@ src/my_eval/my_eval.py     # defines @task my_eval()
 src/my_eval/tasks.py       # accepted alternative
 ```
 
+## See also
+
+- [Tasks: Task Basics](https://inspect.aisi.org.uk/tasks.html#task-basics)
+- [Extensions: Components: Registration](https://inspect.aisi.org.uk/extensions-components.html#registration)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IEFS002]` or `ignore[main_file]`; select or ignore it in configuration by either, or by the prefix `IEFS`.

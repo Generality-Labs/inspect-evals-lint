@@ -119,6 +119,7 @@ def _rule_dict(rule: Rule) -> dict[str, object]:
         "scopes": sorted(rule.scopes),
         "summary": rule.summary,
         "allowlist": rule.allowlist,
+        "references": [{"title": ref.title, "url": ref.url} for ref in rule.references],
     }
 
 

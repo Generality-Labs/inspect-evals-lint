@@ -14,7 +14,7 @@ import yaml
 from inspect_evals_lint.config import LintConfig
 from inspect_evals_lint.context import LintContext, is_package
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
-from inspect_evals_lint.registry import rule
+from inspect_evals_lint.registry import inspect_docs, rule
 from inspect_evals_lint.rules._ast import get_decorator_name
 
 
@@ -68,6 +68,12 @@ def _get_exported_names(init_file: Path) -> set[str]:
     category="file_structure",
     scopes=("eval", "helper"),
     summary="The package exists at <source-root>/<name>/ with an __init__.py",
+    references=(
+        inspect_docs("tasks", "Tasks: Packaging", "packaging"),
+        inspect_docs(
+            "extensions-components", "Extensions: Components: Registration", "registration"
+        ),
+    ),
 )
 def package_location(ctx: LintContext) -> Iterable[Finding]:
     """The package exists at ``<source-root>/<name>/`` with an ``__init__.py``.
@@ -133,6 +139,12 @@ def find_main_file(package_path: Path, name: str) -> Path:
     name="main_file",
     category="file_structure",
     summary="<name>.py or tasks.py exists and defines at least one @task function",
+    references=(
+        inspect_docs("tasks", "Tasks: Task Basics", "task-basics"),
+        inspect_docs(
+            "extensions-components", "Extensions: Components: Registration", "registration"
+        ),
+    ),
 )
 def main_file(ctx: LintContext) -> Iterable[Finding]:
     """``<name>.py`` or ``tasks.py`` exists and defines at least one ``@task`` function.
@@ -181,6 +193,11 @@ def main_file(ctx: LintContext) -> Iterable[Finding]:
     name="init_exports",
     category="file_structure",
     summary="__init__.py exports every @task function from the main file",
+    references=(
+        inspect_docs(
+            "extensions-components", "Extensions: Components: Registration", "registration"
+        ),
+    ),
 )
 def init_exports(ctx: LintContext) -> Iterable[Finding]:
     """``__init__.py`` exports every ``@task`` function from the main file.
@@ -299,6 +316,12 @@ def _registry_entry_points(repo_root: Path, name: str, config: LintConfig) -> It
     name="registry",
     category="file_structure",
     summary="The evaluation is registered so inspect eval can find its tasks",
+    references=(
+        inspect_docs(
+            "extensions-components", "Extensions: Components: Registration", "registration"
+        ),
+        inspect_docs("extensions-components", "Extensions: Components: Tasks", "tasks"),
+    ),
 )
 def registry(ctx: LintContext) -> Iterable[Finding]:
     """The evaluation is registered so ``inspect eval`` can find its tasks.

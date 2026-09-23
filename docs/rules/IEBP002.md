@@ -32,4 +32,10 @@ grader = get_model(role="grader", required=True)
 
 - `allowlists.model_role_resolution`: `{ package = ["role"] }` entries reported as warnings while an existing surface is burned down.
 
+## See also
+
+- [Models: Model Roles](https://inspect.aisi.org.uk/models.html#model-roles)
+- [Models: Role Defaults](https://inspect.aisi.org.uk/models.html#role-defaults)
+- [Tasks: Model Roles](https://inspect.aisi.org.uk/tasks.html#model-roles)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP002]` or `ignore[model_role_resolution]`; select or ignore it in configuration by either, or by the prefix `IEBP`.

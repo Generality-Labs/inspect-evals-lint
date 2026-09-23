@@ -14,4 +14,8 @@ When any file in the package mentions `record_to_sample`, some test file must me
 
 `record_to_sample` is where a dataset's fields become an evaluation's inputs and targets. A field renamed upstream fails silently there unless a test pins a real record.
 
+## See also
+
+- [Datasets: Field Mapping](https://inspect.aisi.org.uk/datasets.html#field-mapping)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IETS004]` or `ignore[record_to_sample_test]`; select or ignore it in configuration by either, or by the prefix `IETS`.

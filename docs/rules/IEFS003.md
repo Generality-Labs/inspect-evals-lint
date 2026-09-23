@@ -23,4 +23,8 @@ from .my_eval import my_eval, my_eval_hard
 __all__ = ["my_eval", "my_eval_hard"]
 ```
 
+## See also
+
+- [Extensions: Components: Registration](https://inspect.aisi.org.uk/extensions-components.html#registration)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IEFS003]` or `ignore[init_exports]`; select or ignore it in configuration by either, or by the prefix `IEFS`.

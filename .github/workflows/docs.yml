@@ -39,6 +39,11 @@ jobs:
           enable-cache: false
       - name: Generated pages are current
         run: uv run --group docs python -m inspect_evals_lint.docs --check
+      - name: Rule references resolve
+        # Fetches every page the rules link to and checks its section anchor exists.
+        env:
+          INSPECT_EVALS_LINT_CHECK_LINKS: "1"
+        run: uv run pytest tests/test_references.py --no-cov -q
       - name: Build the site
         run: uv run --group docs mkdocs build --strict
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
