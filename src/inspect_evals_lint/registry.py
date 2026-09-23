@@ -1,9 +1,10 @@
 """Rules as data: each check declares itself once, next to its implementation.
 
 A rule is a function taking a :class:`LintContext` and yielding results,
-decorated with :func:`rule`, which records its code, name, category, scopes
-and one-line summary. The registry is the single source of truth for what
-exists, in what order it runs, and what the documentation says.
+decorated with :func:`rule`, which records its code, name, category, scopes,
+one-line summary and the documentation it points readers to. The registry is
+the single source of truth for what exists, in what order it runs, and what
+the documentation says.
 """
 
 from __future__ import annotations
@@ -35,7 +36,32 @@ _CODE_PATTERN = re.compile(r"^IE(FS|CQ|TS|BP)\d{3}$")
 REQUIRED_DOC_SECTIONS: tuple[str, ...] = ("## What it does", "## Why is this bad?")
 """Every rule's docstring carries these headings; ``## Example`` and ``## Options`` are optional."""
 
+INSPECT_DOCS = "https://inspect.aisi.org.uk/"
+REFERENCE_SITES: tuple[str, ...] = (
+    INSPECT_DOCS,
+    "https://k8s-sandbox.aisi.org.uk/",
+    "https://meridianlabs-ai.github.io/inspect_sandboxes/",
+)
+"""Where a rule's references may point: the Inspect documentation and the sandbox providers' docs.
+
+A closed list, so the pages a rule sends readers to are ones this project
+vouches for and a link check knows what to fetch.
+"""
+
 RuleFn = Callable[[LintContext], Iterable[Finding]]
+
+
+@dataclass(frozen=True)
+class Reference:
+    """A documentation page, or a section of one, that explains the convention a rule checks."""
+
+    title: str
+    url: str
+
+
+def inspect_docs(page: str, title: str, anchor: str = "") -> Reference:
+    """A reference into the Inspect documentation: ``inspect_docs("tasks", "Tasks: Parameters", "parameters")``."""
+    return Reference(title, f"{INSPECT_DOCS}{page}.html" + (f"#{anchor}" if anchor else ""))
 
 
 class RegistrationError(ValueError):
@@ -54,6 +80,8 @@ class Rule:
     run: RuleFn
     allowlist: bool = False
     """Whether the rule reads ``[tool.inspect-evals-lint.allowlists.<name>]``."""
+    references: tuple[Reference, ...] = ()
+    """Documentation the rule's page links to under *See also*; empty when nothing upstream covers the convention."""
 
     @property
     def doc(self) -> str:
@@ -81,6 +109,7 @@ def rule(
     scopes: Iterable[PackageKind] = ("eval",),
     summary: str,
     allowlist: bool = False,
+    references: Iterable[Reference] = (),
 ) -> Callable[[RuleFn], RuleFn]:
     """Register the decorated function as a rule. Returns the function unchanged."""
 
@@ -108,6 +137,16 @@ def rule(
                 f"{name}: the docstring is the rule's documentation and must have the sections "
                 f"{list(REQUIRED_DOC_SECTIONS)}; missing {missing}"
             )
+        refs = tuple(references)
+        for ref in refs:
+            if not ref.title.strip():
+                raise RegistrationError(f"{name}: a reference needs a title ({ref.url})")
+            if not ref.url.startswith(REFERENCE_SITES):
+                raise RegistrationError(
+                    f"{name}: reference {ref.url!r} is not under one of {list(REFERENCE_SITES)}"
+                )
+        if len({ref.url for ref in refs}) != len(refs):
+            raise RegistrationError(f"{name}: a reference URL is listed twice")
         entry = Rule(
             code=code,
             name=name,
@@ -116,6 +155,7 @@ def rule(
             summary=summary.strip(),
             run=fn,
             allowlist=allowlist,
+            references=refs,
         )
         _RULES[name] = entry
         _BY_CODE[code] = entry

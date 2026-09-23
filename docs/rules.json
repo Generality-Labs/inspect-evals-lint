@@ -12,7 +12,8 @@
       "allowlist": false,
       "summary": "The package exists at <source-root>/<name>/ with an __init__.py",
       "url": "https://inspect-evals-lint.generality.org/rules/IEFS001/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS001.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS001.md",
+      "references": []
     },
     {
       "code": "IEFS002",
@@ -24,7 +25,8 @@
       "allowlist": false,
       "summary": "<name>.py or tasks.py exists and defines at least one @task function",
       "url": "https://inspect-evals-lint.generality.org/rules/IEFS002/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS002.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS002.md",
+      "references": []
     },
     {
       "code": "IEFS003",
@@ -36,7 +38,8 @@
       "allowlist": false,
       "summary": "__init__.py exports every @task function from the main file",
       "url": "https://inspect-evals-lint.generality.org/rules/IEFS003/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS003.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS003.md",
+      "references": []
     },
     {
       "code": "IEFS004",
@@ -48,7 +51,8 @@
       "allowlist": false,
       "summary": "The evaluation is registered so inspect eval can find its tasks",
       "url": "https://inspect-evals-lint.generality.org/rules/IEFS004/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS004.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS004.md",
+      "references": []
     },
     {
       "code": "IEFS005",
@@ -60,7 +64,8 @@
       "allowlist": false,
       "summary": "eval.yaml exists, is a mapping, and defines the required fields",
       "url": "https://inspect-evals-lint.generality.org/rules/IEFS005/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS005.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS005.md",
+      "references": []
     },
     {
       "code": "IEFS006",
@@ -72,7 +77,8 @@
       "allowlist": false,
       "summary": "README.md exists and has no TODO markers",
       "url": "https://inspect-evals-lint.generality.org/rules/IEFS006/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS006.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS006.md",
+      "references": []
     },
     {
       "code": "IECQ001",
@@ -85,7 +91,8 @@
       "allowlist": false,
       "summary": "No imports from private inspect_ai modules",
       "url": "https://inspect-evals-lint.generality.org/rules/IECQ001/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IECQ001.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IECQ001.md",
+      "references": []
     },
     {
       "code": "IECQ002",
@@ -98,7 +105,8 @@
       "allowlist": false,
       "summary": "Score() values use the CORRECT/INCORRECT constants, not string literals",
       "url": "https://inspect-evals-lint.generality.org/rules/IECQ002/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IECQ002.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IECQ002.md",
+      "references": []
     },
     {
       "code": "IECQ003",
@@ -111,7 +119,8 @@
       "allowlist": false,
       "summary": "Score.unscored() passes a reason= and the legacy unscored_reason metadata key is gone",
       "url": "https://inspect-evals-lint.generality.org/rules/IECQ003/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IECQ003.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IECQ003.md",
+      "references": []
     },
     {
       "code": "IECQ004",
@@ -124,7 +133,8 @@
       "allowlist": false,
       "summary": "Third-party imports are declared in pyproject.toml",
       "url": "https://inspect-evals-lint.generality.org/rules/IECQ004/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IECQ004.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IECQ004.md",
+      "references": []
     },
     {
       "code": "IECQ005",
@@ -137,7 +147,8 @@
       "allowlist": false,
       "summary": "Every suppression marker is one the linter reads",
       "url": "https://inspect-evals-lint.generality.org/rules/IECQ005/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IECQ005.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IECQ005.md",
+      "references": []
     },
     {
       "code": "IETS001",
@@ -149,7 +160,8 @@
       "allowlist": false,
       "summary": "A test directory exists for the evaluation",
       "url": "https://inspect-evals-lint.generality.org/rules/IETS001/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IETS001.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IETS001.md",
+      "references": []
     },
     {
       "code": "IETS002",
@@ -162,7 +174,8 @@
       "allowlist": false,
       "summary": "The test directory and its sub-directories contain __init__.py",
       "url": "https://inspect-evals-lint.generality.org/rules/IETS002/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IETS002.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IETS002.md",
+      "references": []
     },
     {
       "code": "IETS003",
@@ -174,7 +187,8 @@
       "allowlist": false,
       "summary": "Some test runs eval() against mockllm/model",
       "url": "https://inspect-evals-lint.generality.org/rules/IETS003/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IETS003.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IETS003.md",
+      "references": []
     },
     {
       "code": "IETS004",
@@ -186,7 +200,8 @@
       "allowlist": false,
       "summary": "record_to_sample is exercised by a test when the evaluation uses it",
       "url": "https://inspect-evals-lint.generality.org/rules/IETS004/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IETS004.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IETS004.md",
+      "references": []
     },
     {
       "code": "IETS005",
@@ -199,7 +214,8 @@
       "allowlist": false,
       "summary": "Every @solver function name appears somewhere in the tests",
       "url": "https://inspect-evals-lint.generality.org/rules/IETS005/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IETS005.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IETS005.md",
+      "references": []
     },
     {
       "code": "IETS006",
@@ -212,7 +228,8 @@
       "allowlist": false,
       "summary": "Every @scorer function name appears somewhere in the tests",
       "url": "https://inspect-evals-lint.generality.org/rules/IETS006/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IETS006.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IETS006.md",
+      "references": []
     },
     {
       "code": "IETS007",
@@ -225,7 +242,8 @@
       "allowlist": false,
       "summary": "Every @tool function name appears somewhere in the tests",
       "url": "https://inspect-evals-lint.generality.org/rules/IETS007/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IETS007.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IETS007.md",
+      "references": []
     },
     {
       "code": "IEBP001",
@@ -238,7 +256,8 @@
       "allowlist": false,
       "summary": "get_model() is only called inside @solver or @scorer functions",
       "url": "https://inspect-evals-lint.generality.org/rules/IEBP001/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP001.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP001.md",
+      "references": []
     },
     {
       "code": "IEBP002",
@@ -251,7 +270,8 @@
       "allowlist": true,
       "summary": "get_model(role=...) resolves deliberately: an explicit model, default= or required=True",
       "url": "https://inspect-evals-lint.generality.org/rules/IEBP002/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP002.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP002.md",
+      "references": []
     },
     {
       "code": "IEBP003",
@@ -264,7 +284,8 @@
       "allowlist": false,
       "summary": "Every Sample() passes id=",
       "url": "https://inspect-evals-lint.generality.org/rules/IEBP003/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP003.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP003.md",
+      "references": []
     },
     {
       "code": "IEBP004",
@@ -277,7 +298,8 @@
       "allowlist": false,
       "summary": "@task parameters naming a solver, scorer, metric, grader or model have defaults",
       "url": "https://inspect-evals-lint.generality.org/rules/IEBP004/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP004.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP004.md",
+      "references": []
     },
     {
       "code": "IEBP005",
@@ -290,7 +312,8 @@
       "allowlist": true,
       "summary": "Registry images in compose files use an immutable tag or digest",
       "url": "https://inspect-evals-lint.generality.org/rules/IEBP005/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP005.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP005.md",
+      "references": []
     },
     {
       "code": "IEBP006",
@@ -302,7 +325,8 @@
       "allowlist": false,
       "summary": "An evaluation requiring a GPU ships a maintenance sandbox check task",
       "url": "https://inspect-evals-lint.generality.org/rules/IEBP006/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP006.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP006.md",
+      "references": []
     },
     {
       "code": "IEBP007",
@@ -314,7 +338,8 @@
       "allowlist": false,
       "summary": "Dockerfile builds consume locked inputs: committed locks, digest-pinned images, fixed sources",
       "url": "https://inspect-evals-lint.generality.org/rules/IEBP007/",
-      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP007.md"
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP007.md",
+      "references": []
     }
   ]
 }

@@ -71,6 +71,11 @@ def rule_page(rule: Rule) -> str:
     doc = _markdown(rule.doc)
     # The first paragraph of the docstring restates the summary; the page has it as a lead already.
     body = doc.split("\n\n", 1)[1] if "\n\n" in doc else ""
+    see_also = (
+        ["## See also", "", *(f"- [{ref.title}]({ref.url})" for ref in rule.references), ""]
+        if rule.references
+        else []
+    )
     lines = [
         f"# {rule.code}: {rule.name}",
         "",
@@ -82,6 +87,7 @@ def rule_page(rule: Rule) -> str:
         "",
         body.strip(),
         "",
+        *see_also,
         f"Suppress on a line with `# inspect-evals-lint: ignore[{rule.code}]` or `ignore[{rule.name}]`; "
         f"select or ignore it in configuration by either, or by the prefix `{rule.code[:4]}`.",
         "",
@@ -240,7 +246,7 @@ def _page_body(markdown: str) -> str:
 
 
 def rules_json() -> str:
-    """``rules.json``: every rule with its code, name, category, scopes, summary and page URLs."""
+    """``rules.json``: every rule with its code, name, category, scopes, summary, page URLs and references."""
     import json
 
     return (
@@ -257,6 +263,9 @@ def rules_json() -> str:
                         "summary": r.summary,
                         "url": f"{SITE_URL}rules/{r.code}/",
                         "markdown": f"{SITE_URL}rules/{r.code}.md",
+                        "references": [
+                            {"title": ref.title, "url": ref.url} for ref in r.references
+                        ],
                     }
                     for r in rules()
                 ],
