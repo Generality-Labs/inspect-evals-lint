@@ -6,8 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- `--output-format github` messages start with the location and the rule (`src/x.py:42:12 IEBP003 sample_ids: ...`), as ruff's do. The job log shows only the message, with `file=` and `line=` moved to the annotations panel, and that panel records at most ten errors and ten warnings per step, so a run of a large repository was a wall of findings with no file names ([inspect_evals run](https://github.com/UKGovernmentBEIS/inspect_evals/actions/runs/35821498217/job/107054119788)). When a run exceeds the cap, a line after the summary says so.
+
 ### Added
 
+- In a GitHub Actions job (`GITHUB_STEP_SUMMARY` set), `--output-format github` also appends the Markdown summary to the job summary under an `## inspect-evals-lint` heading, so every finding is readable with its location and hint. One run gives annotations, a readable log and a summary; no second invocation. Closes #26.
 - Rules point readers at the documentation for the convention they check. Each `@rule` may declare `references`, links into the [Inspect documentation](https://inspect.aisi.org.uk/) (and, for sandbox rules, the Kubernetes, Modal and Daytona sandbox docs), rendered as a *See also* section on the rule's page, in `--explain`, in `rules.json` and in `--list-rules --output-format json`. Nineteen of the twenty-five rules have them; the six whose convention is the linter's or inspect_evals's own (`eval_yaml`, `readme`, `private_api_imports`, `suppression_syntax`, `tests_exist`, `tests_init`) do not. URLs must be under a known documentation site, and the docs workflow fetches each one to check the page and section anchor exist (`INSPECT_EVALS_LINT_CHECK_LINKS=1 pytest tests/test_references.py`). `Reference` and `Rule.references` are part of the Python API.
 
 ## [0.5.0] - 2026-09-23

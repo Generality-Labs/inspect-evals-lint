@@ -66,12 +66,14 @@ One document per run. `RunReport.to_dict()` produces the same mapping from the P
 One [workflow command](https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions) per failing or warning diagnostic, so a lint step annotates the pull request at the right line, followed by a one-line summary:
 
 ```
-::error file=src/inspect_evals/gpqa/gpqa.py,line=42,col=12,title=IEBP003 sample_ids::Sample() call without id=; pass a stable id= so the sample survives shuffles and reruns
-::warning file=pyproject.toml,title=IEBP005 sandbox_image_pinning::Allowlist entry 'x/y' for sandbox_image_pinning on 'cybench' is no longer needed; remove it from [tool.inspect-evals-lint.allowlists.sandbox_image_pinning]
+::error file=src/inspect_evals/gpqa/gpqa.py,line=42,col=12,title=IEBP003 sample_ids::src/inspect_evals/gpqa/gpqa.py:42:12 IEBP003 sample_ids: Sample() call without id=; pass a stable id= so the sample survives shuffles and reruns
+::warning file=pyproject.toml,title=IEBP005 sandbox_image_pinning::pyproject.toml IEBP005 sandbox_image_pinning: Allowlist entry 'x/y' for sandbox_image_pinning on 'cybench' is no longer needed; remove it from [tool.inspect-evals-lint.allowlists.sandbox_image_pinning]
 inspect-evals-lint: 128/130 packages passed; 2 failed, 1 warnings, 0 suppressed
 ```
 
-Skips, passes and suppressed findings produce no annotation. Property values and messages are percent-escaped the way the workflow-command syntax requires.
+The message repeats the location and the rule because that is all the job log shows: GitHub renders a command as `##[error]<message>` and moves `file=` and `line=` to the annotations panel, which records at most ten errors and ten warnings per step. When a run exceeds that, a line after the summary says so. Skips, passes and suppressed findings produce no annotation. Property values and messages are percent-escaped the way the workflow-command syntax requires.
+
+In a GitHub Actions job, where `GITHUB_STEP_SUMMARY` names the job summary file, the same run also appends the [Markdown](#markdown-output-format-markdown) summary to it under an `## inspect-evals-lint` heading, so every finding is readable with its location and hint without opening the log. Set the variable to a file path to get the same outside Actions; unset it to skip.
 
 ## Markdown (`--output-format markdown`)
 

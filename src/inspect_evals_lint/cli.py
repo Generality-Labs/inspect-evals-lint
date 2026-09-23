@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -242,6 +243,7 @@ def _emit(run: RunReport, output_format: str, config: LintConfig, repo_root: Pat
         sys.stdout.write(render_json(run))
     elif output_format == "github":
         sys.stdout.write(render_github(run))
+        write_step_summary(run)
     elif output_format == "markdown":
         sys.stdout.write(render_markdown(run))
     else:
@@ -252,6 +254,24 @@ def _emit(run: RunReport, output_format: str, config: LintConfig, repo_root: Pat
             print_check_summary(run)
             print_final_summary(run)
     sys.exit(0 if run.passed() else 1)
+
+
+def write_step_summary(run: RunReport, path: str | None = None) -> Path | None:
+    """Append the Markdown summary to the GitHub job summary, when there is one.
+
+    ``GITHUB_STEP_SUMMARY`` names the file in a GitHub Actions job. Appending
+    keeps what other steps wrote. The annotations panel shows only the first
+    ten findings per level and the log shows them without formatting, so this
+    is where the whole run is readable. Returns the path written, else None.
+    """
+    target = path or os.environ.get("GITHUB_STEP_SUMMARY")
+    if not target:
+        return None
+    summary = Path(target)
+    with summary.open("a", encoding="utf-8") as fh:
+        fh.write("## inspect-evals-lint\n\n" + render_markdown(run))
+    stderr_console.print(f"Wrote the Markdown summary to the job summary ({escape(str(summary))})")
+    return summary
 
 
 def _with_cli_selection(config: LintConfig, select: str | None, ignore: str | None) -> LintConfig:
