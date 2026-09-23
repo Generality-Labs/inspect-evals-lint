@@ -23,13 +23,17 @@ inspect-evals-lint --all                    # every evaluation and helper packag
 inspect-evals-lint --all --select IEBP      # only the best-practice rules
 inspect-evals-lint gpqa --ignore readme,IETS
 inspect-evals-lint --all --output-format json > lint.json
+inspect-evals-lint --all --output-format markdown   # a summary for a pull request comment
+inspect-evals-lint --preset register --task src/castle/castle.py   # the package holding a task file
 inspect-evals-lint --list-rules             # every rule with its code, category, scope and summary
 inspect-evals-lint --explain IEBP002        # one rule's documentation
 ```
 
 Run it inside the project's environment (`uv run inspect-evals-lint`): `external_dependencies` maps import names to distributions through the packages installed there. `--select` replaces the configured selection for one run and `--ignore` adds to it; both take rule names, codes or code prefixes, comma-separated. With more than one package the text output ends with an overall summary, a per-rule compliance table and the failures grouped by rule.
 
-`--output-format json` writes one document to stdout and sends progress to stderr, so the output can be piped straight into other tooling ([docs/output.md](docs/output.md) has the schema). `--output-format github` writes one GitHub Actions annotation per finding instead, so a lint step marks up the pull request. It carries `schema_version`, `passed`, run-wide `summary` counts and a `packages` list. Each package has its `kind` (`eval` or `helper`), `outcomes` (one per rule that passed or did not apply) and `diagnostics` (one per finding, with `rule`, `code`, `category` (`file_structure`, `code_quality`, `tests` or `best_practices`), `severity`, `status`, `message`, `file` relative to the repository root, `line`, `column` and a `hint`). Every finding points at a file, and at a line where the finding is in a file's contents, so `# inspect-evals-lint: ignore[<rule>]` on that line suppresses it whatever the rule. The set of categories is stable: a new rule always joins one of the four, because badge and dashboard tooling keys on them.
+`--output-format json` writes one document to stdout and sends progress to stderr, so the output can be piped straight into other tooling ([docs/output.md](docs/output.md) has the schema). `--output-format github` writes one GitHub Actions annotation per finding instead, so a lint step marks up the pull request. `--output-format markdown` writes, per package, a headline of rules met with a per-category split and a collapsible list of the rules not met, with warnings or suppressed, for a pull request comment or job summary.
+
+`--task <path>` (repeatable) lints the package holding a task file instead of a named package: the evaluation is the directory holding the file, its parent is the source root, and enclosing packages form the import prefix, so a repository can be linted from a register entry's `task_path` without knowing its layout. A task file with no `__init__.py` beside it is a usage error naming the problem. Everything but the layout comes from the configuration or `--preset`. It carries `schema_version`, `passed`, run-wide `summary` counts and a `packages` list. Each package has its `kind` (`eval` or `helper`), `outcomes` (one per rule that passed or did not apply) and `diagnostics` (one per finding, with `rule`, `code`, `category` (`file_structure`, `code_quality`, `tests` or `best_practices`), `severity`, `status`, `message`, `file` relative to the repository root, `line`, `column` and a `hint`). Every finding points at a file, and at a line where the finding is in a file's contents, so `# inspect-evals-lint: ignore[<rule>]` on that line suppresses it whatever the rule. The set of categories is stable: a new rule always joins one of the four, because badge and dashboard tooling keys on them.
 
 The repository root is the nearest `pyproject.toml` carrying a `[tool.inspect-evals-lint]` table (falling back to the nearest `pyproject.toml`, then the current directory). Pass `--root` to override.
 
@@ -136,7 +140,7 @@ for package in run.packages:
         print(f"  {d.rule.code} {d.location}: {d.message}")
 ```
 
-`lint_package(root, name, config)` lints one package and returns a `PackageReport`. `rules()` lists every registered `Rule`; `get_rule("IEBP002")` or `get_rule("model_role_resolution")` looks one up. `run.to_dict()` is the JSON document described in [docs/output.md](docs/output.md).
+`lint_package(root, name, config)` lints one package and returns a `PackageReport`. `lint_task_files(root, ["src/castle/castle.py"], PRESETS["register"])` lints the packages holding task files (one per distinct layout, see `task_layout`) and raises `UnsupportedLayoutError` for a bare module. `report.score()` and `run.score()` give a `Score`: every rule counted once at the worst status it reported (`fail`, `warn`, `suppressed`, `pass`, `skip` in that order), with `passing` (pass + warn), `applicable` (everything but skip) and a per-category split, the numbers the register badges show. `render_markdown(run, source_link=...)` produces the Markdown summary, with locations linked wherever `source_link(path, line)` returns a URL. `rules()` lists every registered `Rule`; `get_rule("IEBP002")` or `get_rule("model_role_resolution")` looks one up. `run.to_dict()` is the JSON document described in [docs/output.md](docs/output.md).
 
 ## Development
 

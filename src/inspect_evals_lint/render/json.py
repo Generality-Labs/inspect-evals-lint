@@ -47,6 +47,7 @@ def package_to_dict(report: PackageReport, root: Path | None = None) -> dict[str
         "passed": report.passed(),
         "skipped": report.skipped,
         "summary": report.summary(),
+        "score": report.score().to_dict(),
         "outcomes": [_outcome_to_dict(o) for o in report.outcomes],
         "diagnostics": [_diagnostic_to_dict(d, root) for d in report.diagnostics],
     }
@@ -65,6 +66,7 @@ def run_to_dict(run: RunReport) -> dict[str, Any]:
         "root": str(run.root),
         "passed": run.passed(),
         "summary": run.summary(),
+        "score": run.score().to_dict(),
         "packages": [package_to_dict(p, run.root) for p in run.packages],
     }
 
