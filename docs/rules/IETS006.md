@@ -14,4 +14,8 @@ Finds functions decorated with `@scorer` in the package and checks each name app
 
 A custom scorer is the evaluation's own logic, the part no upstream test covers. One test that at least constructs it catches import errors and signature changes.
 
+## See also
+
+- [Custom Scorers](https://inspect.aisi.org.uk/custom-scorers.html)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IETS006]` or `ignore[custom_scorer_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.

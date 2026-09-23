@@ -30,4 +30,8 @@ my_eval = ["datasets>=4.0", "scikit-learn"]
 - `isolated-packages-dir`
 - `import-prefix`
 
+## See also
+
+- [Tasks: Packaging](https://inspect.aisi.org.uk/tasks.html#packaging)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IECQ004]` or `ignore[external_dependencies]`; select or ignore it in configuration by either, or by the prefix `IECQ`.

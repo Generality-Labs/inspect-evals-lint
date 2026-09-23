@@ -30,4 +30,11 @@ def my_eval(solver: Solver | None = None, grader_model: str | None = None):
     ...
 ```
 
+## See also
+
+- [Tasks: Parameters](https://inspect.aisi.org.uk/tasks.html#parameters)
+- [Tasks: Solver Parameter](https://inspect.aisi.org.uk/tasks.html#solver-parameter)
+- [Tasks: Scorer Override](https://inspect.aisi.org.uk/tasks.html#scorer-override)
+- [Extensions: Components: Tasks](https://inspect.aisi.org.uk/extensions-components.html#tasks)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP004]` or `ignore[task_overridable_defaults]`; select or ignore it in configuration by either, or by the prefix `IEBP`.

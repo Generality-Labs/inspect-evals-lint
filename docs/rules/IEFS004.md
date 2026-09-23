@@ -26,4 +26,9 @@ my_eval = "my_eval"
 - `registry`
 - `registry-module`
 
+## See also
+
+- [Extensions: Components: Registration](https://inspect.aisi.org.uk/extensions-components.html#registration)
+- [Extensions: Components: Tasks](https://inspect.aisi.org.uk/extensions-components.html#tasks)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IEFS004]` or `ignore[registry]`; select or ignore it in configuration by either, or by the prefix `IEFS`.

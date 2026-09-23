@@ -35,4 +35,8 @@ services:
 
 - `allowlists.sandbox_image_pinning`: `{ package = ["image/ref"] }` entries reported as warnings while they are pinned.
 
+## See also
+
+- [Sandboxing: Task Configuration](https://inspect.aisi.org.uk/sandboxing.html#task-configuration)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP005]` or `ignore[sandbox_image_pinning]`; select or ignore it in configuration by either, or by the prefix `IEBP`.

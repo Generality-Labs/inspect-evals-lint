@@ -7,7 +7,7 @@ from collections.abc import Iterable
 
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
-from inspect_evals_lint.registry import rule
+from inspect_evals_lint.registry import inspect_docs, rule
 from inspect_evals_lint.rules._ast import (
     column_of,
     end_line_of,
@@ -76,6 +76,10 @@ def private_api_imports(ctx: LintContext) -> Iterable[Finding]:
     category="code_quality",
     scopes=("eval", "helper"),
     summary="Score() values use the CORRECT/INCORRECT constants, not string literals",
+    references=(
+        inspect_docs("custom-scorers", "Custom Scorers: Score", "score"),
+        inspect_docs("custom-scorers", "Custom Scorers: Score Value", "score-value"),
+    ),
 )
 def score_constants(ctx: LintContext) -> Iterable[Finding]:
     """``Score()`` values use the ``CORRECT`` / ``INCORRECT`` constants, not string literals.
@@ -162,6 +166,12 @@ def _has_reason(call: ast.Call) -> bool:
     category="code_quality",
     scopes=("eval", "helper"),
     summary="Score.unscored() passes a reason= and the legacy unscored_reason metadata key is gone",
+    references=(
+        inspect_docs("custom-scorers", "Custom Scorers: Unscored Samples", "unscored-samples"),
+        inspect_docs(
+            "scoring-policy", "Scoring Policy: Recording the reason", "recording-the-reason"
+        ),
+    ),
 )
 def unscored_reason(ctx: LintContext) -> Iterable[Finding]:
     """``Score.unscored()`` passes a ``reason=`` and the legacy ``unscored_reason`` metadata key is gone.

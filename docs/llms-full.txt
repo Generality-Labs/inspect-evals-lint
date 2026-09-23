@@ -124,7 +124,7 @@ The comment is namespaced with the tool's name rather than reusing ruff's `# noq
 
 ## Checks
 
-[docs/CHECKS.md](CHECKS.md) lists every rule by category and links to a page per rule under [docs/rules/](CHECKS.md), generated from each rule's docstring by `python -m inspect_evals_lint.docs`; `inspect-evals-lint --explain <code>` prints the same text. Each rule is a decorated function in `src/inspect_evals_lint/rules/`: adding one means adding the function, its docstring and its tests, and regenerating the docs (pre-commit checks they are current).
+[docs/CHECKS.md](CHECKS.md) lists every rule by category and links to a page per rule under [docs/rules/](CHECKS.md), generated from each rule's docstring by `python -m inspect_evals_lint.docs`; `inspect-evals-lint --explain <code>` prints the same text. Each rule is a decorated function in `src/inspect_evals_lint/rules/`: adding one means adding the function, its docstring, its `references` (the [Inspect documentation](https://inspect.aisi.org.uk/) sections that explain the convention, shown under *See also* on the rule's page and listed in `rules.json`; a rule with no upstream home for its convention has none) and its tests, and regenerating the docs (pre-commit checks they are current; the docs workflow also checks every reference resolves).
 
 ## Python API
 
@@ -348,6 +348,11 @@ src/inspect_evals/gdm_capabilities/README.md     # skipped: not a package
 src/inspect_evals/gpqa/__init__.py               # linted
 ```
 
+## See also
+
+- [Tasks: Packaging](https://inspect.aisi.org.uk/tasks.html#packaging)
+- [Extensions: Components: Registration](https://inspect.aisi.org.uk/extensions-components.html#registration)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IEFS001]` or `ignore[package_location]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
 
 
@@ -373,6 +378,11 @@ Keeping tasks in a predictably named module lets tooling and readers find them w
 src/my_eval/my_eval.py     # defines @task my_eval()
 src/my_eval/tasks.py       # accepted alternative
 ```
+
+## See also
+
+- [Tasks: Task Basics](https://inspect.aisi.org.uk/tasks.html#task-basics)
+- [Extensions: Components: Registration](https://inspect.aisi.org.uk/extensions-components.html#registration)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEFS002]` or `ignore[main_file]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
 
@@ -401,6 +411,10 @@ from .my_eval import my_eval, my_eval_hard
 
 __all__ = ["my_eval", "my_eval_hard"]
 ```
+
+## See also
+
+- [Extensions: Components: Registration](https://inspect.aisi.org.uk/extensions-components.html#registration)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEFS003]` or `ignore[init_exports]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
 
@@ -432,6 +446,11 @@ my_eval = "my_eval"
 
 - `registry`
 - `registry-module`
+
+## See also
+
+- [Extensions: Components: Registration](https://inspect.aisi.org.uk/extensions-components.html#registration)
+- [Extensions: Components: Tasks](https://inspect.aisi.org.uk/extensions-components.html#tasks)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEFS004]` or `ignore[registry]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
 
@@ -555,6 +574,11 @@ from inspect_ai.scorer import CORRECT
 return Score(value=CORRECT)
 ```
 
+## See also
+
+- [Custom Scorers: Score](https://inspect.aisi.org.uk/custom-scorers.html#score)
+- [Custom Scorers: Score Value](https://inspect.aisi.org.uk/custom-scorers.html#score-value)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IECQ002]` or `ignore[score_constants]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
 
 
@@ -585,6 +609,11 @@ Use instead:
 ```python
 return Score.unscored(reason="grader_failed", explanation="grader returned nothing")
 ```
+
+## See also
+
+- [Custom Scorers: Unscored Samples](https://inspect.aisi.org.uk/custom-scorers.html#unscored-samples)
+- [Scoring Policy: Recording the reason](https://inspect.aisi.org.uk/scoring-policy.html#recording-the-reason)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IECQ003]` or `ignore[unscored_reason]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
 
@@ -620,6 +649,10 @@ my_eval = ["datasets>=4.0", "scikit-learn"]
 
 - `isolated-packages-dir`
 - `import-prefix`
+
+## See also
+
+- [Tasks: Packaging](https://inspect.aisi.org.uk/tasks.html#packaging)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IECQ004]` or `ignore[external_dependencies]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
 
@@ -724,6 +757,10 @@ def test_e2e():
     assert logs[0].status == "success"
 ```
 
+## See also
+
+- [Reference: eval()](https://inspect.aisi.org.uk/reference/inspect_ai.html#eval)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IETS003]` or `ignore[e2e_test]`; select or ignore it in configuration by either, or by the prefix `IETS`.
 
 
@@ -742,6 +779,10 @@ When any file in the package mentions `record_to_sample`, some test file must me
 ## Why is this bad?
 
 `record_to_sample` is where a dataset's fields become an evaluation's inputs and targets. A field renamed upstream fails silently there unless a test pins a real record.
+
+## See also
+
+- [Datasets: Field Mapping](https://inspect.aisi.org.uk/datasets.html#field-mapping)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IETS004]` or `ignore[record_to_sample_test]`; select or ignore it in configuration by either, or by the prefix `IETS`.
 
@@ -762,6 +803,10 @@ Finds functions decorated with `@solver` in the package and checks each name app
 
 A custom solver is the evaluation's own logic, the part no upstream test covers. One test that at least constructs it catches import errors and signature changes.
 
+## See also
+
+- [Solvers: Custom Solvers](https://inspect.aisi.org.uk/solvers.html#custom-solvers)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IETS005]` or `ignore[custom_solver_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.
 
 
@@ -781,6 +826,10 @@ Finds functions decorated with `@scorer` in the package and checks each name app
 
 A custom scorer is the evaluation's own logic, the part no upstream test covers. One test that at least constructs it catches import errors and signature changes.
 
+## See also
+
+- [Custom Scorers](https://inspect.aisi.org.uk/custom-scorers.html)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IETS006]` or `ignore[custom_scorer_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.
 
 
@@ -799,6 +848,10 @@ Finds functions decorated with `@tool` in the package and checks each name appea
 ## Why is this bad?
 
 A custom tool is the evaluation's own logic, the part no upstream test covers. One test that at least constructs it catches import errors and signature changes.
+
+## See also
+
+- [Tools: Custom Tools](https://inspect.aisi.org.uk/tools.html#custom-tools)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IETS007]` or `ignore[custom_tool_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.
 
@@ -840,6 +893,12 @@ def graded(model: str | Model | None = None):
         ...
 ```
 
+## See also
+
+- [Models: Role Resolution](https://inspect.aisi.org.uk/models.html#role-resolution)
+- [Solvers: Models in Solvers](https://inspect.aisi.org.uk/solvers.html#models-in-solvers)
+- [Custom Scorers: Models in Scorers](https://inspect.aisi.org.uk/custom-scorers.html#models-in-scorers)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP001]` or `ignore[get_model_location]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
 
@@ -877,6 +936,12 @@ grader = get_model(role="grader", required=True)
 
 - `allowlists.model_role_resolution`: `{ package = ["role"] }` entries reported as warnings while an existing surface is burned down.
 
+## See also
+
+- [Models: Model Roles](https://inspect.aisi.org.uk/models.html#model-roles)
+- [Models: Role Defaults](https://inspect.aisi.org.uk/models.html#role-defaults)
+- [Tasks: Model Roles](https://inspect.aisi.org.uk/tasks.html#model-roles)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP002]` or `ignore[model_role_resolution]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
 
@@ -907,6 +972,11 @@ Use instead:
 ```python
 Sample(input=record["question"], target=record["answer"], id=record["id"])
 ```
+
+## See also
+
+- [Datasets: Dataset Samples](https://inspect.aisi.org.uk/datasets.html#dataset-samples)
+- [Log Files: IDs and Shuffling](https://inspect.aisi.org.uk/eval-logs.html#ids-and-shuffling)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP003]` or `ignore[sample_ids]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
@@ -942,6 +1012,13 @@ Use instead:
 def my_eval(solver: Solver | None = None, grader_model: str | None = None):
     ...
 ```
+
+## See also
+
+- [Tasks: Parameters](https://inspect.aisi.org.uk/tasks.html#parameters)
+- [Tasks: Solver Parameter](https://inspect.aisi.org.uk/tasks.html#solver-parameter)
+- [Tasks: Scorer Override](https://inspect.aisi.org.uk/tasks.html#scorer-override)
+- [Extensions: Components: Tasks](https://inspect.aisi.org.uk/extensions-components.html#tasks)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP004]` or `ignore[task_overridable_defaults]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
@@ -983,6 +1060,10 @@ services:
 
 - `allowlists.sandbox_image_pinning`: `{ package = ["image/ref"] }` entries reported as warnings while they are pinned.
 
+## See also
+
+- [Sandboxing: Task Configuration](https://inspect.aisi.org.uk/sandboxing.html#task-configuration)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP005]` or `ignore[sandbox_image_pinning]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
 
@@ -1013,6 +1094,13 @@ metadata:
   requires:
     gpu: true
 ```
+
+## See also
+
+- [Sandboxing: Container Resources](https://inspect.aisi.org.uk/sandboxing.html#container-resources)
+- [Modal sandbox: Docker Compose (GPU reservations)](https://meridianlabs-ai.github.io/inspect_sandboxes/modal.html#docker-compose)
+- [Daytona sandbox: Docker Compose (GPU reservations)](https://meridianlabs-ai.github.io/inspect_sandboxes/daytona.html#docker-compose)
+- [Kubernetes sandbox: Targeting kubeconfig contexts (GPU nodes)](https://k8s-sandbox.aisi.org.uk/tips/configuration/#targeting-specific-or-multiple-kubeconfig-contexts)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP006]` or `ignore[gpu_sandbox_check]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
@@ -1061,5 +1149,10 @@ RUN uv sync --locked --no-dev --no-install-project
 ## Options
 
 - `dockerfile_locking.host-lock-coupling`: `"warn"` reports a build that copies the repository root's `pyproject.toml` or `uv.lock`, because unrelated host dependency updates would then change the sandbox image; `"allow"` accepts it, for a standalone repository whose root project is the sandbox. `warn` in the `monorepo` preset, `allow` elsewhere.
+
+## See also
+
+- [Sandboxing: Task Configuration](https://inspect.aisi.org.uk/sandboxing.html#task-configuration)
+- [Sandboxing: Prebuilt Images](https://inspect.aisi.org.uk/sandboxing.html#prebuilt-images)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP007]` or `ignore[dockerfile_locking]`; select or ignore it in configuration by either, or by the prefix `IEBP`.

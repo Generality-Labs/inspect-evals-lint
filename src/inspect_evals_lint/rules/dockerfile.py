@@ -22,7 +22,7 @@ import yaml
 from inspect_evals_lint.config import ConfigError
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
-from inspect_evals_lint.registry import rule
+from inspect_evals_lint.registry import inspect_docs, rule
 from inspect_evals_lint.rules._ast import iter_dockerfiles
 
 RULE_NAME = "dockerfile_locking"
@@ -622,6 +622,10 @@ def _analyse(
     name=RULE_NAME,
     category="best_practices",
     summary="Dockerfile builds consume locked inputs: committed locks, digest-pinned images, fixed sources",
+    references=(
+        inspect_docs("sandboxing", "Sandboxing: Task Configuration", "task-configuration"),
+        inspect_docs("sandboxing", "Sandboxing: Prebuilt Images", "prebuilt-images"),
+    ),
 )
 def dockerfile_locking(ctx: LintContext) -> Iterable[Finding]:
     """Dockerfile builds consume locked inputs: committed locks, digest-pinned images, fixed sources.

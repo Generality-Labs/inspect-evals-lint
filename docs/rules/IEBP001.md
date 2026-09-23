@@ -35,4 +35,10 @@ def graded(model: str | Model | None = None):
         ...
 ```
 
+## See also
+
+- [Models: Role Resolution](https://inspect.aisi.org.uk/models.html#role-resolution)
+- [Solvers: Models in Solvers](https://inspect.aisi.org.uk/solvers.html#models-in-solvers)
+- [Custom Scorers: Models in Scorers](https://inspect.aisi.org.uk/custom-scorers.html#models-in-scorers)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP001]` or `ignore[get_model_location]`; select or ignore it in configuration by either, or by the prefix `IEBP`.

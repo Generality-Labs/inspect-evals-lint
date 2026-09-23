@@ -9,7 +9,7 @@ import yaml
 
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
-from inspect_evals_lint.registry import rule
+from inspect_evals_lint.registry import Reference, inspect_docs, rule
 
 PIN_HINT = (
     "pin it: use a dated tag you publish yourself for images you rebuild "
@@ -33,6 +33,9 @@ def _is_pinned(image: str) -> bool:
     scopes=("eval", "helper"),
     allowlist=True,
     summary="Registry images in compose files use an immutable tag or digest",
+    references=(
+        inspect_docs("sandboxing", "Sandboxing: Task Configuration", "task-configuration"),
+    ),
 )
 def sandbox_image_pinning(ctx: LintContext) -> Iterable[Finding]:
     """Registry images in compose files use an immutable tag or digest.
@@ -142,6 +145,21 @@ def _requires_gpu(data: dict[str, Any]) -> bool:
     name="gpu_sandbox_check",
     category="best_practices",
     summary="An evaluation requiring a GPU ships a maintenance sandbox check task",
+    references=(
+        inspect_docs("sandboxing", "Sandboxing: Container Resources", "container-resources"),
+        Reference(
+            "Modal sandbox: Docker Compose (GPU reservations)",
+            "https://meridianlabs-ai.github.io/inspect_sandboxes/modal.html#docker-compose",
+        ),
+        Reference(
+            "Daytona sandbox: Docker Compose (GPU reservations)",
+            "https://meridianlabs-ai.github.io/inspect_sandboxes/daytona.html#docker-compose",
+        ),
+        Reference(
+            "Kubernetes sandbox: Targeting kubeconfig contexts (GPU nodes)",
+            "https://k8s-sandbox.aisi.org.uk/tips/configuration/#targeting-specific-or-multiple-kubeconfig-contexts",
+        ),
+    ),
 )
 def gpu_sandbox_check(ctx: LintContext) -> Iterable[Finding]:
     """An evaluation requiring a GPU ships a maintenance sandbox check task.

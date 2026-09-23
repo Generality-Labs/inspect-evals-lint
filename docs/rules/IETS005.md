@@ -14,4 +14,8 @@ Finds functions decorated with `@solver` in the package and checks each name app
 
 A custom solver is the evaluation's own logic, the part no upstream test covers. One test that at least constructs it catches import errors and signature changes.
 
+## See also
+
+- [Solvers: Custom Solvers](https://inspect.aisi.org.uk/solvers.html#custom-solvers)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IETS005]` or `ignore[custom_solver_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.

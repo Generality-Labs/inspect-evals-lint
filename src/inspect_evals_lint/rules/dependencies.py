@@ -15,7 +15,7 @@ from typing import Any, cast
 from inspect_evals_lint.config import LintConfig
 from inspect_evals_lint.context import LintContext, is_package
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
-from inspect_evals_lint.registry import rule
+from inspect_evals_lint.registry import inspect_docs, rule
 from inspect_evals_lint.rules._ast import iter_python_files
 
 
@@ -381,6 +381,7 @@ def _helper_dependencies(
     category="code_quality",
     scopes=("eval", "helper"),
     summary="Third-party imports are declared in pyproject.toml",
+    references=(inspect_docs("tasks", "Tasks: Packaging", "packaging"),),
 )
 def external_dependencies(ctx: LintContext) -> Iterable[Finding]:
     """Third-party imports are declared in ``pyproject.toml``.

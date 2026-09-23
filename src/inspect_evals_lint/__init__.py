@@ -26,7 +26,15 @@ from inspect_evals_lint.diagnostics import (
     RunReport,
     Score,
 )
-from inspect_evals_lint.registry import CATEGORIES, Rule, get_rule, rule, rule_names, rules
+from inspect_evals_lint.registry import (
+    CATEGORIES,
+    Reference,
+    Rule,
+    get_rule,
+    rule,
+    rule_names,
+    rules,
+)
 from inspect_evals_lint.runner import lint_package, lint_repository, lint_task_files
 
 __version__ = "0.5.0"
@@ -42,6 +50,7 @@ __all__ = [
     "Outcome",
     "PackageKind",
     "PackageReport",
+    "Reference",
     "Rule",
     "RuleStatus",
     "RunReport",

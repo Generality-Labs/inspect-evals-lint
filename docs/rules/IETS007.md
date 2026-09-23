@@ -14,4 +14,8 @@ Finds functions decorated with `@tool` in the package and checks each name appea
 
 A custom tool is the evaluation's own logic, the part no upstream test covers. One test that at least constructs it catches import errors and signature changes.
 
+## See also
+
+- [Tools: Custom Tools](https://inspect.aisi.org.uk/tools.html#custom-tools)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IETS007]` or `ignore[custom_tool_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.
