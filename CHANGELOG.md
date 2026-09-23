@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-23
+
+Three things that consumers of the linter (the inspect_evals register lint service, its documentation build and its submission check) had each implemented for themselves now live here, so they agree by construction.
+
+### Added
+
+- Linting by task file. `lint_task_files(root, task_paths, config)` and `--task <path>` (repeatable) lint the package holding each task file: the evaluation is the directory holding the file, its parent is the source root and enclosing packages form the import prefix (`task_layout`, `TaskLayout`). Two task files in one package lint it once. A task file that is missing, escapes the repository or has no `__init__.py` beside it raises `UnsupportedLayoutError` (a usage error on the CLI) with the message the register lint service publishes for it. The layout replaces only `source-root` and `import-prefix`; everything else comes from the configuration or `--preset`, `PRESETS["register"]` by default in the API.
+- Per-rule scores. `PackageReport.rule_statuses()` gives each rule that ran once, at the worst status it reported, in the order `fail`, `warn`, `suppressed`, `pass`, `skip` (`RULE_STATUS_ORDER`); `PackageReport.score()` and `RunReport.score()` return a `Score` with the five counts, `applicable` (everything but skip), `passing` (pass + warn), the ratio, and a per-category split. The JSON document carries `score` at the run and package level (additive; `schema_version` stays 1). These are the numbers the register badges and the documentation site show, computed once.
+- A Markdown renderer. `--output-format markdown` and `render_markdown(run, source_link=..., docs_base=...)` / `package_markdown(...)` write, per package, a headline of rules met with the per-category split and a collapsible list of the rules not met, with warnings or suppressed, each finding with its location (linked when `source_link` returns a URL) and hint. Text from the linted repository is escaped so it cannot open fences or break tables.
+
 ## [0.4.3] - 2026-09-22
 
 ### Added
