@@ -197,7 +197,8 @@ def test_github_annotations_cover_errors_and_warnings_only():
     text = render_github(make_run())
     lines = text.splitlines()
     assert lines[0] == (
-        "::error file=src/inspect_evals/bad_eval/README.md,title=IEFS006 readme::Missing README.md"
+        "::error file=src/inspect_evals/bad_eval/README.md,title=IEFS006 readme::"
+        "src/inspect_evals/bad_eval/README.md IEFS006 readme: Missing README.md"
     )
     assert any(
         line.startswith("::warning file=src/inspect_evals/mixed_eval/compose.yaml,")
@@ -222,10 +223,35 @@ def test_github_annotation_escapes_and_locates():
         rule=README,
     )
     assert annotation(d, run) == (
-        "::error file=src/x.py,line=3,col=7,title=IEFS006 readme::50%25 done: a, b%0Anext; fix: it"
+        "::error file=src/x.py,line=3,col=7,title=IEFS006 readme::"
+        "src/x.py:3:7 IEFS006 readme: 50%25 done: a, b%0Anext; fix: it"
     )
     d.suppressed = True
     assert annotation(d, run) is None
+
+
+def test_github_output_names_the_annotation_cap_only_when_a_run_exceeds_it():
+    """The job log shows messages without file= and line=, and the panel keeps ten per level."""
+    from inspect_evals_lint.render import render_github
+    from inspect_evals_lint.render.github import ANNOTATION_CAP
+
+    assert "GitHub shows at most" not in render_github(make_run())
+    noisy = PackageReport("noisy_eval", "eval")
+    for i in range(ANNOTATION_CAP + 1):
+        noisy.add(
+            Diagnostic(
+                "Sample() call without id=",
+                file=Path(f"/repo/src/noisy_eval/f{i}.py"),
+                line=i + 1,
+                severity="warning",
+                rule=PINNING,
+            )
+        )
+    text = render_github(RunReport(root=Path("/repo"), packages=[noisy]))
+    assert f"GitHub shows at most {ANNOTATION_CAP} error and {ANNOTATION_CAP} warning" in text
+    assert "listed above with its location" in text
+    assert text.splitlines()[0].startswith("::warning file=src/noisy_eval/f0.py,line=1,")
+    assert "::src/noisy_eval/f0.py:1 IEBP005 sandbox_image_pinning: Sample()" in text
 
 
 def test_run_to_dict_is_available_on_the_report():

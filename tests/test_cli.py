@@ -300,3 +300,38 @@ def test_markdown_output(
     assert out.startswith("### `alpha`\n")
     assert "- **Not met** [`readme`]" in out
     assert "checks met" in out
+
+
+def test_github_format_appends_the_markdown_summary_to_the_job_summary(
+    monorepo: tuple[Path, LintConfig],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GITHUB_STEP_SUMMARY is where a run is readable in full; the log shows messages only."""
+    root, config = monorepo
+    (config.package_dir(root, "alpha") / "README.md").unlink()
+    summary = tmp_path / "step_summary.md"
+    summary.write_text("# earlier step\n", encoding="utf-8")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    assert run("alpha", "--root", str(root), "--output-format", "github") == 1
+    out = capsys.readouterr().out
+    assert "::error file=src/inspect_evals/alpha/README.md,title=IEFS006 readme::" in out
+    assert "src/inspect_evals/alpha/README.md IEFS006 readme: " in out
+    written = summary.read_text(encoding="utf-8")
+    assert written.startswith(
+        "# earlier step\n## inspect-evals-lint\n\n### `alpha`"
+    )  # appended, not replaced
+    assert "- **Not met** [`readme`]" in written
+    assert "`src/inspect_evals/alpha/README.md`" in written
+
+
+def test_github_format_without_a_job_summary_writes_nothing_extra(
+    monorepo: tuple[Path, LintConfig], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _ = monorepo
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    assert run("alpha", "--root", str(root), "--output-format", "github") == 0
+    assert list(tmp_path.iterdir()) == [
+        p for p in tmp_path.iterdir() if p.name != "step_summary.md"
+    ]

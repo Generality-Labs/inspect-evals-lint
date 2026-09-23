@@ -31,7 +31,7 @@ inspect-evals-lint --explain IEBP002        # one rule's documentation
 
 Run it inside the project's environment (`uv run inspect-evals-lint`): `external_dependencies` maps import names to distributions through the packages installed there. `--select` replaces the configured selection for one run and `--ignore` adds to it; both take rule names, codes or code prefixes, comma-separated. With more than one package the text output ends with an overall summary, a per-rule compliance table and the failures grouped by rule.
 
-`--output-format json` writes one document to stdout and sends progress to stderr, so the output can be piped straight into other tooling ([docs/output.md](output.md) has the schema). `--output-format github` writes one GitHub Actions annotation per finding instead, so a lint step marks up the pull request. `--output-format markdown` writes, per package, a headline of rules met with a per-category split and a collapsible list of the rules not met, with warnings or suppressed, for a pull request comment or job summary.
+`--output-format json` writes one document to stdout and sends progress to stderr, so the output can be piped straight into other tooling ([docs/output.md](output.md) has the schema). `--output-format github` writes one GitHub Actions annotation per finding instead, each message starting with the file, line and rule, so a lint step marks up the pull request and the job log still names every location; in an Actions job it also appends the Markdown summary to the job summary (`GITHUB_STEP_SUMMARY`). `--output-format markdown` writes, per package, a headline of rules met with a per-category split and a collapsible list of the rules not met, with warnings or suppressed, for a pull request comment or job summary.
 
 `--task <path>` (repeatable) lints the package holding a task file instead of a named package: the evaluation is the directory holding the file, its parent is the source root, and enclosing packages form the import prefix, so a repository can be linted from a register entry's `task_path` without knowing its layout. A task file with no `__init__.py` beside it is a usage error naming the problem. Everything but the layout comes from the configuration or `--preset`. It carries `schema_version`, `passed`, run-wide `summary` counts and a `packages` list. Each package has its `kind` (`eval` or `helper`), `outcomes` (one per rule that passed or did not apply) and `diagnostics` (one per finding, with `rule`, `code`, `category` (`file_structure`, `code_quality`, `tests` or `best_practices`), `severity`, `status`, `message`, `file` relative to the repository root, `line`, `column` and a `hint`). Every finding points at a file, and at a line where the finding is in a file's contents, so `# inspect-evals-lint: ignore[<rule>]` on that line suppresses it whatever the rule. The set of categories is stable: a new rule always joins one of the four, because badge and dashboard tooling keys on them.
 
@@ -297,12 +297,14 @@ One document per run. `RunReport.to_dict()` produces the same mapping from the P
 One [workflow command](https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions) per failing or warning diagnostic, so a lint step annotates the pull request at the right line, followed by a one-line summary:
 
 ```
-::error file=src/inspect_evals/gpqa/gpqa.py,line=42,col=12,title=IEBP003 sample_ids::Sample() call without id=; pass a stable id= so the sample survives shuffles and reruns
-::warning file=pyproject.toml,title=IEBP005 sandbox_image_pinning::Allowlist entry 'x/y' for sandbox_image_pinning on 'cybench' is no longer needed; remove it from [tool.inspect-evals-lint.allowlists.sandbox_image_pinning]
+::error file=src/inspect_evals/gpqa/gpqa.py,line=42,col=12,title=IEBP003 sample_ids::src/inspect_evals/gpqa/gpqa.py:42:12 IEBP003 sample_ids: Sample() call without id=; pass a stable id= so the sample survives shuffles and reruns
+::warning file=pyproject.toml,title=IEBP005 sandbox_image_pinning::pyproject.toml IEBP005 sandbox_image_pinning: Allowlist entry 'x/y' for sandbox_image_pinning on 'cybench' is no longer needed; remove it from [tool.inspect-evals-lint.allowlists.sandbox_image_pinning]
 inspect-evals-lint: 128/130 packages passed; 2 failed, 1 warnings, 0 suppressed
 ```
 
-Skips, passes and suppressed findings produce no annotation. Property values and messages are percent-escaped the way the workflow-command syntax requires.
+The message repeats the location and the rule because that is all the job log shows: GitHub renders a command as `##[error]<message>` and moves `file=` and `line=` to the annotations panel, which records at most ten errors and ten warnings per step. When a run exceeds that, a line after the summary says so. Skips, passes and suppressed findings produce no annotation. Property values and messages are percent-escaped the way the workflow-command syntax requires.
+
+In a GitHub Actions job, where `GITHUB_STEP_SUMMARY` names the job summary file, the same run also appends the [Markdown](#markdown-output-format-markdown) summary to it under an `## inspect-evals-lint` heading, so every finding is readable with its location and hint without opening the log. Set the variable to a file path to get the same outside Actions; unset it to skip.
 
 ## Markdown (`--output-format markdown`)
 

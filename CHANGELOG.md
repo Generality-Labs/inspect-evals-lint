@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- `--output-format github` messages start with the location and the rule (`src/x.py:42:12 IEBP003 sample_ids: ...`), as ruff's do. The job log shows only the message, with `file=` and `line=` moved to the annotations panel, and that panel records at most ten errors and ten warnings per step, so a run of a large repository was a wall of findings with no file names ([inspect_evals run](https://github.com/UKGovernmentBEIS/inspect_evals/actions/runs/35821498217/job/107054119788)). When a run exceeds the cap, a line after the summary says so.
+
+### Added
+
+- In a GitHub Actions job (`GITHUB_STEP_SUMMARY` set), `--output-format github` also appends the Markdown summary to the job summary under an `## inspect-evals-lint` heading, so every finding is readable with its location and hint. One run gives annotations, a readable log and a summary; no second invocation. Closes #26.
+
 ## [0.5.0] - 2026-09-23
 
 Three things that consumers of the linter (the inspect_evals register lint service, its documentation build and its submission check) had each implemented for themselves now live here, so they agree by construction.
