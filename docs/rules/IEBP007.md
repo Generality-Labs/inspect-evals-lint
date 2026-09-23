@@ -43,4 +43,9 @@ RUN uv sync --locked --no-dev --no-install-project
 
 - `dockerfile_locking.host-lock-coupling`: `"warn"` reports a build that copies the repository root's `pyproject.toml` or `uv.lock`, because unrelated host dependency updates would then change the sandbox image; `"allow"` accepts it, for a standalone repository whose root project is the sandbox. `warn` in the `monorepo` preset, `allow` elsewhere.
 
+## See also
+
+- [Sandboxing: Task Configuration](https://inspect.aisi.org.uk/sandboxing.html#task-configuration)
+- [Sandboxing: Prebuilt Images](https://inspect.aisi.org.uk/sandboxing.html#prebuilt-images)
+
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP007]` or `ignore[dockerfile_locking]`; select or ignore it in configuration by either, or by the prefix `IEBP`.

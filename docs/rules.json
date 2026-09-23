@@ -13,7 +13,16 @@
       "summary": "The package exists at <source-root>/<name>/ with an __init__.py",
       "url": "https://inspect-evals-lint.generality.org/rules/IEFS001/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS001.md",
-      "references": []
+      "references": [
+        {
+          "title": "Tasks: Packaging",
+          "url": "https://inspect.aisi.org.uk/tasks.html#packaging"
+        },
+        {
+          "title": "Extensions: Components: Registration",
+          "url": "https://inspect.aisi.org.uk/extensions-components.html#registration"
+        }
+      ]
     },
     {
       "code": "IEFS002",
@@ -26,7 +35,16 @@
       "summary": "<name>.py or tasks.py exists and defines at least one @task function",
       "url": "https://inspect-evals-lint.generality.org/rules/IEFS002/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS002.md",
-      "references": []
+      "references": [
+        {
+          "title": "Tasks: Task Basics",
+          "url": "https://inspect.aisi.org.uk/tasks.html#task-basics"
+        },
+        {
+          "title": "Extensions: Components: Registration",
+          "url": "https://inspect.aisi.org.uk/extensions-components.html#registration"
+        }
+      ]
     },
     {
       "code": "IEFS003",
@@ -39,7 +57,12 @@
       "summary": "__init__.py exports every @task function from the main file",
       "url": "https://inspect-evals-lint.generality.org/rules/IEFS003/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS003.md",
-      "references": []
+      "references": [
+        {
+          "title": "Extensions: Components: Registration",
+          "url": "https://inspect.aisi.org.uk/extensions-components.html#registration"
+        }
+      ]
     },
     {
       "code": "IEFS004",
@@ -52,7 +75,16 @@
       "summary": "The evaluation is registered so inspect eval can find its tasks",
       "url": "https://inspect-evals-lint.generality.org/rules/IEFS004/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS004.md",
-      "references": []
+      "references": [
+        {
+          "title": "Extensions: Components: Registration",
+          "url": "https://inspect.aisi.org.uk/extensions-components.html#registration"
+        },
+        {
+          "title": "Extensions: Components: Tasks",
+          "url": "https://inspect.aisi.org.uk/extensions-components.html#tasks"
+        }
+      ]
     },
     {
       "code": "IEFS005",
@@ -106,7 +138,16 @@
       "summary": "Score() values use the CORRECT/INCORRECT constants, not string literals",
       "url": "https://inspect-evals-lint.generality.org/rules/IECQ002/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IECQ002.md",
-      "references": []
+      "references": [
+        {
+          "title": "Custom Scorers: Score",
+          "url": "https://inspect.aisi.org.uk/custom-scorers.html#score"
+        },
+        {
+          "title": "Custom Scorers: Score Value",
+          "url": "https://inspect.aisi.org.uk/custom-scorers.html#score-value"
+        }
+      ]
     },
     {
       "code": "IECQ003",
@@ -120,7 +161,16 @@
       "summary": "Score.unscored() passes a reason= and the legacy unscored_reason metadata key is gone",
       "url": "https://inspect-evals-lint.generality.org/rules/IECQ003/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IECQ003.md",
-      "references": []
+      "references": [
+        {
+          "title": "Custom Scorers: Unscored Samples",
+          "url": "https://inspect.aisi.org.uk/custom-scorers.html#unscored-samples"
+        },
+        {
+          "title": "Scoring Policy: Recording the reason",
+          "url": "https://inspect.aisi.org.uk/scoring-policy.html#recording-the-reason"
+        }
+      ]
     },
     {
       "code": "IECQ004",
@@ -134,7 +184,12 @@
       "summary": "Third-party imports are declared in pyproject.toml",
       "url": "https://inspect-evals-lint.generality.org/rules/IECQ004/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IECQ004.md",
-      "references": []
+      "references": [
+        {
+          "title": "Tasks: Packaging",
+          "url": "https://inspect.aisi.org.uk/tasks.html#packaging"
+        }
+      ]
     },
     {
       "code": "IECQ005",
@@ -188,7 +243,12 @@
       "summary": "Some test runs eval() against mockllm/model",
       "url": "https://inspect-evals-lint.generality.org/rules/IETS003/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IETS003.md",
-      "references": []
+      "references": [
+        {
+          "title": "Reference: eval()",
+          "url": "https://inspect.aisi.org.uk/reference/inspect_ai.html#eval"
+        }
+      ]
     },
     {
       "code": "IETS004",
@@ -201,7 +261,12 @@
       "summary": "record_to_sample is exercised by a test when the evaluation uses it",
       "url": "https://inspect-evals-lint.generality.org/rules/IETS004/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IETS004.md",
-      "references": []
+      "references": [
+        {
+          "title": "Datasets: Field Mapping",
+          "url": "https://inspect.aisi.org.uk/datasets.html#field-mapping"
+        }
+      ]
     },
     {
       "code": "IETS005",
@@ -215,7 +280,12 @@
       "summary": "Every @solver function name appears somewhere in the tests",
       "url": "https://inspect-evals-lint.generality.org/rules/IETS005/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IETS005.md",
-      "references": []
+      "references": [
+        {
+          "title": "Solvers: Custom Solvers",
+          "url": "https://inspect.aisi.org.uk/solvers.html#custom-solvers"
+        }
+      ]
     },
     {
       "code": "IETS006",
@@ -229,7 +299,12 @@
       "summary": "Every @scorer function name appears somewhere in the tests",
       "url": "https://inspect-evals-lint.generality.org/rules/IETS006/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IETS006.md",
-      "references": []
+      "references": [
+        {
+          "title": "Custom Scorers",
+          "url": "https://inspect.aisi.org.uk/custom-scorers.html"
+        }
+      ]
     },
     {
       "code": "IETS007",
@@ -243,7 +318,12 @@
       "summary": "Every @tool function name appears somewhere in the tests",
       "url": "https://inspect-evals-lint.generality.org/rules/IETS007/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IETS007.md",
-      "references": []
+      "references": [
+        {
+          "title": "Tools: Custom Tools",
+          "url": "https://inspect.aisi.org.uk/tools.html#custom-tools"
+        }
+      ]
     },
     {
       "code": "IEBP001",
@@ -257,7 +337,20 @@
       "summary": "get_model() is only called inside @solver or @scorer functions",
       "url": "https://inspect-evals-lint.generality.org/rules/IEBP001/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP001.md",
-      "references": []
+      "references": [
+        {
+          "title": "Models: Role Resolution",
+          "url": "https://inspect.aisi.org.uk/models.html#role-resolution"
+        },
+        {
+          "title": "Solvers: Models in Solvers",
+          "url": "https://inspect.aisi.org.uk/solvers.html#models-in-solvers"
+        },
+        {
+          "title": "Custom Scorers: Models in Scorers",
+          "url": "https://inspect.aisi.org.uk/custom-scorers.html#models-in-scorers"
+        }
+      ]
     },
     {
       "code": "IEBP002",
@@ -271,7 +364,20 @@
       "summary": "get_model(role=...) resolves deliberately: an explicit model, default= or required=True",
       "url": "https://inspect-evals-lint.generality.org/rules/IEBP002/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP002.md",
-      "references": []
+      "references": [
+        {
+          "title": "Models: Model Roles",
+          "url": "https://inspect.aisi.org.uk/models.html#model-roles"
+        },
+        {
+          "title": "Models: Role Defaults",
+          "url": "https://inspect.aisi.org.uk/models.html#role-defaults"
+        },
+        {
+          "title": "Tasks: Model Roles",
+          "url": "https://inspect.aisi.org.uk/tasks.html#model-roles"
+        }
+      ]
     },
     {
       "code": "IEBP003",
@@ -285,7 +391,16 @@
       "summary": "Every Sample() passes id=",
       "url": "https://inspect-evals-lint.generality.org/rules/IEBP003/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP003.md",
-      "references": []
+      "references": [
+        {
+          "title": "Datasets: Dataset Samples",
+          "url": "https://inspect.aisi.org.uk/datasets.html#dataset-samples"
+        },
+        {
+          "title": "Log Files: IDs and Shuffling",
+          "url": "https://inspect.aisi.org.uk/eval-logs.html#ids-and-shuffling"
+        }
+      ]
     },
     {
       "code": "IEBP004",
@@ -299,7 +414,24 @@
       "summary": "@task parameters naming a solver, scorer, metric, grader or model have defaults",
       "url": "https://inspect-evals-lint.generality.org/rules/IEBP004/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP004.md",
-      "references": []
+      "references": [
+        {
+          "title": "Tasks: Parameters",
+          "url": "https://inspect.aisi.org.uk/tasks.html#parameters"
+        },
+        {
+          "title": "Tasks: Solver Parameter",
+          "url": "https://inspect.aisi.org.uk/tasks.html#solver-parameter"
+        },
+        {
+          "title": "Tasks: Scorer Override",
+          "url": "https://inspect.aisi.org.uk/tasks.html#scorer-override"
+        },
+        {
+          "title": "Extensions: Components: Tasks",
+          "url": "https://inspect.aisi.org.uk/extensions-components.html#tasks"
+        }
+      ]
     },
     {
       "code": "IEBP005",
@@ -313,7 +445,12 @@
       "summary": "Registry images in compose files use an immutable tag or digest",
       "url": "https://inspect-evals-lint.generality.org/rules/IEBP005/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP005.md",
-      "references": []
+      "references": [
+        {
+          "title": "Sandboxing: Task Configuration",
+          "url": "https://inspect.aisi.org.uk/sandboxing.html#task-configuration"
+        }
+      ]
     },
     {
       "code": "IEBP006",
@@ -326,7 +463,24 @@
       "summary": "An evaluation requiring a GPU ships a maintenance sandbox check task",
       "url": "https://inspect-evals-lint.generality.org/rules/IEBP006/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP006.md",
-      "references": []
+      "references": [
+        {
+          "title": "Sandboxing: Container Resources",
+          "url": "https://inspect.aisi.org.uk/sandboxing.html#container-resources"
+        },
+        {
+          "title": "Modal sandbox: Docker Compose (GPU reservations)",
+          "url": "https://meridianlabs-ai.github.io/inspect_sandboxes/modal.html#docker-compose"
+        },
+        {
+          "title": "Daytona sandbox: Docker Compose (GPU reservations)",
+          "url": "https://meridianlabs-ai.github.io/inspect_sandboxes/daytona.html#docker-compose"
+        },
+        {
+          "title": "Kubernetes sandbox: Targeting kubeconfig contexts (GPU nodes)",
+          "url": "https://k8s-sandbox.aisi.org.uk/tips/configuration/#targeting-specific-or-multiple-kubeconfig-contexts"
+        }
+      ]
     },
     {
       "code": "IEBP007",
@@ -339,7 +493,16 @@
       "summary": "Dockerfile builds consume locked inputs: committed locks, digest-pinned images, fixed sources",
       "url": "https://inspect-evals-lint.generality.org/rules/IEBP007/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP007.md",
-      "references": []
+      "references": [
+        {
+          "title": "Sandboxing: Task Configuration",
+          "url": "https://inspect.aisi.org.uk/sandboxing.html#task-configuration"
+        },
+        {
+          "title": "Sandboxing: Prebuilt Images",
+          "url": "https://inspect.aisi.org.uk/sandboxing.html#prebuilt-images"
+        }
+      ]
     }
   ]
 }

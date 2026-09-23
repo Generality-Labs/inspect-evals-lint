@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import urllib.request
 
 import pytest
 
+from inspect_evals_lint import docs
 from inspect_evals_lint.registry import (
     INSPECT_DOCS,
     REFERENCE_SITES,
     Reference,
     RegistrationError,
+    get_rule,
     inspect_docs,
     rule,
     rules,
@@ -70,6 +73,46 @@ def test_every_reference_is_under_a_known_site_and_titled() -> None:
         for ref in r.references:
             assert ref.url.startswith(REFERENCE_SITES), (r.name, ref.url)
             assert ref.title.strip(), (r.name, ref.url)
+
+
+def test_the_conventions_inspect_documents_are_referenced() -> None:
+    """The rules whose convention has a home in the Inspect docs point at it; the linter-internal ones do not."""
+    referenced = {r.code for r in rules() if r.references}
+    assert {
+        "IEBP001",
+        "IEBP002",
+        "IEBP003",
+        "IEBP004",
+        "IECQ002",
+        "IECQ003",
+        "IETS004",
+    } <= referenced
+    assert {"IECQ005", "IEFS005", "IEFS006", "IETS002"}.isdisjoint(referenced)
+    role = get_rule("model_role_resolution")
+    assert role
+    assert f"{INSPECT_DOCS}models.html#role-defaults" in {ref.url for ref in role.references}
+
+
+def test_rule_page_lists_references_under_see_also_before_the_suppression_line() -> None:
+    page = docs.rule_page(get_rule("sample_ids"))  # type: ignore[arg-type]
+    assert "## See also" in page
+    assert f"- [Datasets: Dataset Samples]({INSPECT_DOCS}datasets.html#dataset-samples)" in page
+    assert page.index("## See also") < page.index("Suppress on a line with")
+    unreferenced = docs.rule_page(get_rule("suppression_syntax"))  # type: ignore[arg-type]
+    assert "## See also" not in unreferenced
+
+
+def test_rules_json_and_list_rules_carry_references() -> None:
+    from inspect_evals_lint.cli import _rule_dict
+
+    data = json.loads(docs.rules_json())
+    entry = next(r for r in data["rules"] if r["code"] == "IEBP002")
+    assert {
+        "title": "Models: Role Defaults",
+        "url": f"{INSPECT_DOCS}models.html#role-defaults",
+    } in entry["references"]
+    assert _rule_dict(get_rule("IEBP002"))["references"] == entry["references"]  # type: ignore[arg-type]
+    assert next(r for r in data["rules"] if r["code"] == "IECQ005")["references"] == []
 
 
 @pytest.mark.skipif(
