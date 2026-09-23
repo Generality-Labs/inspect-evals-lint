@@ -7,22 +7,34 @@ from inspect_evals_lint.config import (
     find_repo_root,
     load_config,
 )
-from inspect_evals_lint.context import LintContext, evaluation_names, helper_names
+from inspect_evals_lint.context import (
+    LintContext,
+    TaskLayout,
+    UnsupportedLayoutError,
+    evaluation_names,
+    helper_names,
+    task_layout,
+    task_layouts,
+)
 from inspect_evals_lint.diagnostics import (
+    RULE_STATUS_ORDER,
     Diagnostic,
     Outcome,
     PackageKind,
     PackageReport,
+    RuleStatus,
     RunReport,
+    Score,
 )
 from inspect_evals_lint.registry import CATEGORIES, Rule, get_rule, rule, rule_names, rules
-from inspect_evals_lint.runner import lint_package, lint_repository
+from inspect_evals_lint.runner import lint_package, lint_repository, lint_task_files
 
 __version__ = "0.4.3"
 
 __all__ = [
     "CATEGORIES",
     "PRESETS",
+    "RULE_STATUS_ORDER",
     "ConfigError",
     "Diagnostic",
     "LintConfig",
@@ -31,7 +43,11 @@ __all__ = [
     "PackageKind",
     "PackageReport",
     "Rule",
+    "RuleStatus",
     "RunReport",
+    "Score",
+    "TaskLayout",
+    "UnsupportedLayoutError",
     "__version__",
     "evaluation_names",
     "find_repo_root",
@@ -39,8 +55,11 @@ __all__ = [
     "helper_names",
     "lint_package",
     "lint_repository",
+    "lint_task_files",
     "load_config",
     "rule",
     "rule_names",
     "rules",
+    "task_layout",
+    "task_layouts",
 ]

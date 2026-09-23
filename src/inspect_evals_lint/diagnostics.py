@@ -26,6 +26,16 @@ Status = Literal["pass", "fail", "warn", "skip", "suppressed"]
 
 STATUSES: tuple[Status, ...] = ("pass", "fail", "warn", "skip", "suppressed")
 
+RULE_STATUS_ORDER: tuple[Status, ...] = ("fail", "warn", "suppressed", "pass", "skip")
+"""Worst first. A rule that reported several things is scored once, at the worst of them.
+
+Suppressed ranks above pass because a suppressed finding counts against the
+total: the code still has the problem, the repository has chosen to live with it.
+"""
+
+ACTIONABLE_STATUSES: frozenset[Status] = frozenset({"fail", "warn", "suppressed"})
+"""Statuses worth showing a reader; ``pass`` and ``skip`` are only counted."""
+
 _SEVERITY_STATUS: dict[str, Status] = {"error": "fail", "warning": "warn"}
 
 
@@ -85,6 +95,71 @@ def _rule_name(item: Finding) -> str:
     return item.rule.name if item.rule is not None else "<unregistered>"
 
 
+@dataclass
+class RuleStatus:
+    """One rule's verdict on one package: its worst status, with everything it reported."""
+
+    rule: Rule
+    status: Status
+    outcomes: list[Outcome]
+    diagnostics: list[Diagnostic]
+
+
+@dataclass
+class Score:
+    """Rules met out of rules applicable, in the terms the register badges use.
+
+    Every rule that ran counts once at its worst status. ``passing`` is ``pass``
+    plus ``warn``; ``applicable`` also includes ``fail`` and ``suppressed``;
+    ``skip`` is not applicable. ``score`` is ``passing / applicable``, or None when
+    nothing applied.
+    """
+
+    pass_: int = 0
+    fail: int = 0
+    warn: int = 0
+    skip: int = 0
+    suppressed: int = 0
+    by_category: dict[str, Score] = field(default_factory=dict)
+
+    def add(self, status: Status) -> None:
+        if status == "pass":
+            self.pass_ += 1
+        else:
+            setattr(self, status, getattr(self, status) + 1)
+
+    @property
+    def applicable(self) -> int:
+        return self.pass_ + self.fail + self.warn + self.suppressed
+
+    @property
+    def passing(self) -> int:
+        return self.pass_ + self.warn
+
+    @property
+    def score(self) -> float | None:
+        return round(self.passing / self.applicable, 4) if self.applicable else None
+
+    def to_dict(self, by_category: bool = True) -> dict[str, Any]:
+        """The JSON form: the five counts, ``applicable``, ``passing``, ``score`` and, at the top level, ``by_category``."""
+        counts: dict[str, Any] = {
+            "pass": self.pass_,
+            "fail": self.fail,
+            "warn": self.warn,
+            "skip": self.skip,
+            "suppressed": self.suppressed,
+            "applicable": self.applicable,
+            "passing": self.passing,
+            "score": self.score,
+        }
+        if by_category:
+            counts["by_category"] = {
+                name: score.to_dict(by_category=False)
+                for name, score in sorted(self.by_category.items())
+            }
+        return counts
+
+
 def _sort_key(item: Finding) -> tuple[int, str]:
     if item.rule is None:
         return (1, "")
@@ -142,6 +217,32 @@ class PackageReport:
     def rules_run(self) -> list[str]:
         return list(dict.fromkeys(_rule_name(i) for i in self.items()))
 
+    def rule_statuses(self) -> list[RuleStatus]:
+        """One entry per rule that ran, in execution order, at the worst status it reported."""
+        by_rule: dict[str, RuleStatus] = {}
+        for item in self.items():
+            if item.rule is None:
+                continue
+            entry = by_rule.get(item.rule.name)
+            if entry is None:
+                entry = RuleStatus(item.rule, item.status, [], [])
+                by_rule[item.rule.name] = entry
+            if isinstance(item, Outcome):
+                entry.outcomes.append(item)
+            else:
+                entry.diagnostics.append(item)
+            if RULE_STATUS_ORDER.index(item.status) < RULE_STATUS_ORDER.index(entry.status):
+                entry.status = item.status
+        return list(by_rule.values())
+
+    def score(self) -> Score:
+        """Rules met out of rules applicable for this package, overall and by category."""
+        score = Score()
+        for rule_status in self.rule_statuses():
+            score.add(rule_status.status)
+            score.by_category.setdefault(rule_status.rule.category, Score()).add(rule_status.status)
+        return score
+
 
 @dataclass
 class RunReport:
@@ -162,6 +263,17 @@ class RunReport:
 
     def of_kind(self, kind: PackageKind) -> list[PackageReport]:
         return [p for p in self.packages if p.kind == kind]
+
+    def score(self) -> Score:
+        """Rules met out of rules applicable across every package, overall and by category."""
+        total = Score()
+        for package in self.packages:
+            for rule_status in package.rule_statuses():
+                total.add(rule_status.status)
+                total.by_category.setdefault(rule_status.rule.category, Score()).add(
+                    rule_status.status
+                )
+        return total
 
     def to_dict(self) -> dict[str, Any]:
         """The JSON document for this run; see docs/output.md."""

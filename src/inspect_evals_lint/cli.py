@@ -24,7 +24,8 @@ from inspect_evals_lint.config import (
     load_config,
     read_tool_table,
 )
-from inspect_evals_lint.context import evaluation_names, helper_names
+from inspect_evals_lint.context import UnsupportedLayoutError, evaluation_names, helper_names
+from inspect_evals_lint.diagnostics import RunReport
 from inspect_evals_lint.registry import Rule, get_rule, rules
 from inspect_evals_lint.render import (
     print_check_summary,
@@ -33,11 +34,12 @@ from inspect_evals_lint.render import (
     print_report,
     render_github,
     render_json,
+    render_markdown,
 )
 from inspect_evals_lint.render.console import console, stderr_console
-from inspect_evals_lint.runner import lint_repository
+from inspect_evals_lint.runner import lint_repository, lint_task_files
 
-OUTPUT_FORMATS = ("text", "json", "github")
+OUTPUT_FORMATS = ("text", "json", "github", "markdown")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -55,6 +57,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--all",
         action="store_true",
         help="Lint every evaluation and helper package in the repository",
+    )
+    parser.add_argument(
+        "--task",
+        action="append",
+        metavar="PATH",
+        help=(
+            "Lint the package holding this task file (repository-relative; repeatable). "
+            "The layout comes from the file's location, the rest from the config or --preset"
+        ),
     )
     parser.add_argument(
         "--select",
@@ -76,7 +87,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="text",
         help=(
             "text (default) prints reports and summaries; json writes one document to stdout; "
-            "github writes one workflow annotation per finding"
+            "github writes one workflow annotation per finding; markdown writes a summary "
+            "suitable for a pull request comment"
         ),
     )
     parser.add_argument(
@@ -168,8 +180,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         _explain(rule, args.output_format)
         sys.exit(0)
 
-    if not args.packages and not args.all:
-        parser.error("Name at least one package or use --all")
+    if not args.packages and not args.all and not args.task:
+        parser.error("Name at least one package, a --task file, or use --all")
+    if args.task and (args.packages or args.all):
+        parser.error("--task cannot be combined with package names or --all")
 
     # Under a machine-readable format stdout carries only the document; everything informational goes to stderr.
     info = stderr_console if args.output_format != "text" else console
@@ -186,6 +200,15 @@ def main(argv: Sequence[str] | None = None) -> None:
         config = _with_cli_selection(config, args.select, args.ignore)
     except ConfigError as e:
         _fail(str(e))
+        return
+
+    if args.task:
+        try:
+            run = lint_task_files(repo_root, args.task, config)
+        except (UnsupportedLayoutError, ConfigError) as e:
+            _fail(str(e))
+            return
+        _emit(run, args.output_format, config, repo_root)
         return
 
     if args.all:
@@ -209,20 +232,24 @@ def main(argv: Sequence[str] | None = None) -> None:
     except ConfigError as e:
         _fail(str(e))
         return
+    _emit(run, args.output_format, config, repo_root)
 
-    if args.output_format == "json":
+
+def _emit(run: RunReport, output_format: str, config: LintConfig, repo_root: Path) -> None:
+    """Write the run in the chosen format and exit with the run's status."""
+    if output_format == "json":
         sys.stdout.write(render_json(run))
-        sys.exit(0 if run.passed() else 1)
-    if args.output_format == "github":
+    elif output_format == "github":
         sys.stdout.write(render_github(run))
-        sys.exit(0 if run.passed() else 1)
-
-    for report in run.packages:
-        print_report(report, config, root=repo_root)
-    if len(run.packages) > 1:
-        print_overall_summary(run)
-        print_check_summary(run)
-        print_final_summary(run)
+    elif output_format == "markdown":
+        sys.stdout.write(render_markdown(run))
+    else:
+        for report in run.packages:
+            print_report(report, config, root=repo_root)
+        if len(run.packages) > 1:
+            print_overall_summary(run)
+            print_check_summary(run)
+            print_final_summary(run)
     sys.exit(0 if run.passed() else 1)
 
 

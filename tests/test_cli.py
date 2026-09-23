@@ -252,3 +252,51 @@ def test_non_utf8_locale_still_reads_source_files(monorepo: tuple[Path, LintConf
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["passed"] is True
+
+
+def test_task_flag_lints_the_package_holding_the_file(
+    register_repo: tuple[Path, LintConfig], capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, _ = register_repo
+    assert (
+        run(
+            "--task",
+            "src/alpha/alpha.py",
+            "--root",
+            str(root),
+            "--preset",
+            "register",
+            "--output-format",
+            "json",
+        )
+        == 0
+    )
+    data = json.loads(capsys.readouterr().out)
+    assert [p["name"] for p in data["packages"]] == ["alpha"]
+    assert data["score"]["applicable"] > 0
+
+
+def test_task_flag_rejects_a_bare_module_as_usage_error(
+    register_repo: tuple[Path, LintConfig], capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, _ = register_repo
+    write(root / "task.py", "")
+    assert run("--task", "task.py", "--root", str(root)) == 2
+    assert "not inside a package" in capsys.readouterr().err
+
+
+def test_task_flag_cannot_be_combined_with_packages(register_repo: tuple[Path, LintConfig]) -> None:
+    root, _ = register_repo
+    assert run("--task", "src/alpha/alpha.py", "alpha", "--root", str(root)) == 2
+
+
+def test_markdown_output(
+    monorepo: tuple[Path, LintConfig], capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, config = monorepo
+    (config.package_dir(root, "alpha") / "README.md").unlink()
+    assert run("alpha", "--root", str(root), "--output-format", "markdown") == 1
+    out = capsys.readouterr().out
+    assert out.startswith("### `alpha`\n")
+    assert "- **Not met** [`readme`]" in out
+    assert "checks met" in out

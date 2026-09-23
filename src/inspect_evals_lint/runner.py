@@ -11,6 +11,7 @@ from inspect_evals_lint.context import (
     helper_names,
     is_package,
     package_kind,
+    task_layouts,
 )
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome, PackageReport, RunReport
 from inspect_evals_lint.registry import Rule, get_rule, rule_names, rules
@@ -135,6 +136,32 @@ def lint_repository(
     )
 
 
+def lint_task_files(
+    repo_root: Path,
+    task_paths: list[str],
+    config: LintConfig | None = None,
+    check: str | None = None,
+) -> RunReport:
+    """Lint the package holding each task file, one package per distinct layout.
+
+    This is how a register entry is linted: the entry names task files, not
+    packages, and the repository's own configuration is not consulted. ``config``
+    supplies everything but the layout, which each task file determines
+    (``PRESETS["register"]`` when omitted).
+
+    Raises:
+        UnsupportedLayoutError: a task file is missing, escapes the repository, or is a bare module.
+    """
+    from inspect_evals_lint.config import PRESETS
+
+    base = config or PRESETS["register"]
+    packages = [
+        lint_package(repo_root, layout.eval_name, layout.config(base), check=check)
+        for layout in task_layouts(repo_root, task_paths)
+    ]
+    return RunReport(root=repo_root, packages=packages)
+
+
 __all__ = [
     "LOCATION_RULE",
     "Diagnostic",
@@ -142,5 +169,6 @@ __all__ = [
     "helper_names",
     "lint_package",
     "lint_repository",
+    "lint_task_files",
     "package_kind",
 ]

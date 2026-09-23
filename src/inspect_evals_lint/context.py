@@ -2,11 +2,79 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from inspect_evals_lint.config import LintConfig, load_config
 from inspect_evals_lint.diagnostics import PackageKind
+
+
+class UnsupportedLayoutError(ValueError):
+    """A task file the linter cannot treat as an evaluation package.
+
+    Raised for a task file that does not exist, sits outside the repository, or
+    has no ``__init__.py`` beside it (a bare module). The message says which, in
+    the words the register lint service publishes.
+    """
+
+
+@dataclass(frozen=True)
+class TaskLayout:
+    """Where the package holding a task file sits, in configuration terms.
+
+    The evaluation is the directory holding the task file; its parent is the
+    ``source_root``; any enclosing packages between the source root and the
+    repository root form the ``import_prefix``. ``india_evals/safeguards/task.py``
+    lints ``safeguards`` under ``india_evals`` with prefix ``india_evals``.
+    """
+
+    eval_name: str
+    source_root: str
+    import_prefix: str
+
+    def config(self, base: LintConfig) -> LintConfig:
+        """``base`` with this layout's source root and import prefix."""
+        return replace(base, source_root=self.source_root, import_prefix=self.import_prefix)
+
+
+def task_layout(repo_root: Path, task_path: str) -> TaskLayout:
+    """The layout of the package that holds ``task_path`` (repository-relative).
+
+    Raises:
+        UnsupportedLayoutError: the file is missing, escapes the repository, or is a bare module.
+    """
+    root = repo_root.resolve()
+    task_file = (root / task_path).resolve()
+    if not task_file.is_relative_to(root):
+        raise UnsupportedLayoutError(f"task_path escapes the repository: {task_path}")
+    if not task_file.is_file():
+        raise UnsupportedLayoutError(f"task_path not found: {task_path}")
+    eval_dir = task_file.parent
+    if eval_dir == root or not is_package(eval_dir):
+        raise UnsupportedLayoutError(
+            f"{task_path} is not inside a package (no __init__.py next to it); "
+            "inspect-evals-lint checks one package per evaluation"
+        )
+    source_root = eval_dir.parent
+    prefix_parts: list[str] = []
+    package = source_root
+    while package != root and is_package(package):
+        prefix_parts.insert(0, package.name)
+        package = package.parent
+    return TaskLayout(
+        eval_name=eval_dir.name,
+        source_root=source_root.relative_to(root).as_posix(),
+        import_prefix=".".join(prefix_parts),
+    )
+
+
+def task_layouts(repo_root: Path, task_paths: Iterable[str]) -> list[TaskLayout]:
+    """Distinct layouts for ``task_paths``; two task files in one package give one layout."""
+    seen: dict[TaskLayout, None] = {}
+    for task_path in task_paths:
+        seen.setdefault(task_layout(repo_root, task_path))
+    return list(seen)
 
 
 def is_package(path: Path) -> bool:
