@@ -6,12 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-25
+
 Two best-practice rules for dataset workarounds, following the inspect_evals audit of `filter_duplicate_ids` ([UKGovernmentBEIS/inspect_evals#2528](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2528)) that found a keep-first duplicate filter had silently truncated three datasets.
 
 ### Added
 
 - `duplicate_filter_acknowledged` (IEBP008): every `filter_duplicate_ids()` call passes `max_duplicates=` and a `reason=`, and a literal reason contains the URL of the upstream report. A count nobody measured and a reason nobody upstream can see are what let a bad id key drop half of WorldSense unnoticed.
 - `known_broken_reported` (IEBP009): every `drop_known_broken()` call passes `broken=`, and each entry of the dict, inline or a module-level constant in the same file, maps a sample id to a report URL. Entry findings point at the entry's line.
+
+### Changed
+
+- The documentation site follows the reader's system light or dark setting, and the header toggle still overrides it (#32, #33).
 
 ## [0.6.0] - 2026-09-23
 
