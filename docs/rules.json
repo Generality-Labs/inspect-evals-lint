@@ -240,7 +240,7 @@
         "eval"
       ],
       "allowlist": false,
-      "summary": "Some test runs eval() against mockllm/model",
+      "summary": "Some test runs eval() against a mockllm/ model",
       "url": "https://inspect-evals-lint.generality.org/rules/IETS003/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IETS003.md",
       "references": [

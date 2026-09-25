@@ -32,7 +32,7 @@ Every HTML page on this site is also available as raw Markdown at the same path 
 
 - [IETS001 tests_exist](https://inspect-evals-lint.generality.org/rules/IETS001.md): A test directory exists for the evaluation
 - [IETS002 tests_init](https://inspect-evals-lint.generality.org/rules/IETS002.md): The test directory and its sub-directories contain __init__.py
-- [IETS003 e2e_test](https://inspect-evals-lint.generality.org/rules/IETS003.md): Some test runs eval() against mockllm/model
+- [IETS003 e2e_test](https://inspect-evals-lint.generality.org/rules/IETS003.md): Some test runs eval() against a mockllm/ model
 - [IETS004 record_to_sample_test](https://inspect-evals-lint.generality.org/rules/IETS004.md): record_to_sample is exercised by a test when the evaluation uses it
 - [IETS005 custom_solver_tests](https://inspect-evals-lint.generality.org/rules/IETS005.md): Every @solver or @agent function name appears somewhere in the tests
 - [IETS006 custom_scorer_tests](https://inspect-evals-lint.generality.org/rules/IETS006.md): Every @scorer function name appears somewhere in the tests

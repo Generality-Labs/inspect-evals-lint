@@ -31,7 +31,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 | --------------------------- | ----------------------- | ------------ | -------------------------------------------------------------------- |
 | [IETS001](rules/IETS001.md) | `tests_exist`           | eval         | A test directory exists for the evaluation                           |
 | [IETS002](rules/IETS002.md) | `tests_init`            | eval, helper | The test directory and its sub-directories contain __init__.py       |
-| [IETS003](rules/IETS003.md) | `e2e_test`              | eval         | Some test runs eval() against mockllm/model                          |
+| [IETS003](rules/IETS003.md) | `e2e_test`              | eval         | Some test runs eval() against a mockllm/ model                       |
 | [IETS004](rules/IETS004.md) | `record_to_sample_test` | eval         | record_to_sample is exercised by a test when the evaluation uses it  |
 | [IETS005](rules/IETS005.md) | `custom_solver_tests`   | eval, helper | Every @solver or @agent function name appears somewhere in the tests |
 | [IETS006](rules/IETS006.md) | `custom_scorer_tests`   | eval, helper | Every @scorer function name appears somewhere in the tests           |

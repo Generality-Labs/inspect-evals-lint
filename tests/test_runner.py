@@ -794,3 +794,46 @@ def test_agent_is_a_model_resolving_component(template_repo: tuple[Path, LintCon
         config.tests_dir(root) / "alpha" / "test_agent.py", "from alpha.agents import react_agent\n"
     )
     assert statuses(root, config)["custom_solver_tests"] == ["pass"]
+
+
+def test_e2e_test_accepts_any_mockllm_model_name(template_repo: tuple[Path, LintConfig]) -> None:
+    """Tests that script custom_outputs per case name their mocks (mockllm/epochs), not mockllm/model."""
+    root, config = template_repo
+    test_file = config.tests_dir(root) / "alpha" / "test_alpha.py"
+    test_file.write_text(test_file.read_text().replace("mockllm/model", "mockllm/epochs"))
+    assert statuses(root, config)["e2e_test"] == ["pass"]
+
+    test_file.write_text(test_file.read_text().replace("mockllm/epochs", "openai/gpt-4o"))
+    assert statuses(root, config)["e2e_test"] == ["fail"]
+
+
+SUBMIT_TOOL = """
+from inspect_ai.tool import tool
+
+
+@tool(name="submit")
+def submit_tool():
+    async def execute(answer: str) -> str:
+        return answer
+
+    return execute
+"""
+
+
+def test_component_registered_under_another_name_is_matched_by_that_name(
+    template_repo: tuple[Path, LintConfig],
+) -> None:
+    root, config = template_repo
+    write(config.package_dir(root, "alpha") / "tools.py", SUBMIT_TOOL)
+    report = lint_package(root, "alpha", config)
+    untested = first(report, "custom_tool_tests")
+    assert untested.status == "fail"
+    assert untested.message == (
+        "@tool submit_tool() (registered as 'submit') is not mentioned by any test"
+    )
+
+    write(
+        config.tests_dir(root) / "alpha" / "test_tools.py",
+        'def test_submit():\n    assert exit_reason == "submit"\n',
+    )
+    assert statuses(root, config)["custom_tool_tests"] == ["pass"]
