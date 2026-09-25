@@ -349,7 +349,7 @@ class TestSiblingPackagesAreFirstParty:
         write(tmp_path / "src/examples/__init__.py", "")
         results = list(external_dependencies(LintContext.build(tmp_path, "alpha", config)))
         assert [r.status for r in results] == ["pass"], [r.message for r in results]
-        assert PRESETS["template"].import_prefix == ""  # nothing else makes these first-party
+        assert PRESETS["multi-eval"].import_prefix == ""  # nothing else makes these first-party
 
     def test_a_real_third_party_import_still_fails(self, tmp_path):
         from tests.conftest import make_template_repo, write

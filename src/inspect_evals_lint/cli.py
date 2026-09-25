@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 import sys
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from rich.table import Table
 
 from inspect_evals_lint import __version__
 from inspect_evals_lint.config import (
+    PRESET_ALIASES,
     PRESETS,
     ConfigError,
     LintConfig,
@@ -24,6 +26,7 @@ from inspect_evals_lint.config import (
     infer_preset,
     known_selectors,
     load_config,
+    preset_deprecation,
     read_tool_table,
 )
 from inspect_evals_lint.context import UnsupportedLayoutError, evaluation_names, helper_names
@@ -100,7 +103,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--preset",
-        choices=sorted(PRESETS),
+        choices=[*sorted(PRESETS), *sorted(PRESET_ALIASES)],
+        metavar="{" + ",".join(sorted(PRESETS)) + "}",
         help="Layout preset, overriding the pyproject 'preset' key",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -205,7 +209,14 @@ def main(argv: Sequence[str] | None = None) -> None:
                 f"[dim]{missing}; using the {preset!r} preset ({escape(reason)}).[/]",
                 soft_wrap=True,
             )
-        config = load_config(repo_root, preset=args.preset)
+        named = args.preset if args.preset is not None else (table or {}).get("preset")
+        if isinstance(named, str) and named in PRESET_ALIASES:
+            info.print(f"[yellow]{escape(preset_deprecation(named))}[/]", soft_wrap=True)
+        with warnings.catch_warnings():
+            warnings.simplefilter(
+                "ignore", DeprecationWarning
+            )  # printed above, in the run's own words
+            config = load_config(repo_root, preset=args.preset)
         config = _with_cli_selection(config, args.select, args.ignore)
     except ConfigError as e:
         _fail(str(e))

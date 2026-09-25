@@ -86,7 +86,7 @@ class TestCheckUnscoredReason:
         apply_suppressions(
             results,
             load_suppressions(context_for(tmp_path / "alpha")),
-            PRESETS["template"],
+            PRESETS["multi-eval"],
             tmp_path,
         )
         assert [r.status for r in results] == ["suppressed"]
@@ -141,6 +141,6 @@ class TestSuppressionSyntax:
 
         pkg = tmp_path / "alpha"
         write(pkg / "challenges" / "solve.py", "print 'py2'  # noautolint: readme\n")
-        config = replace(PRESETS["template"], exclude=("alpha/challenges/**",))
+        config = replace(PRESETS["multi-eval"], exclude=("alpha/challenges/**",))
         results = list(suppression_syntax(context_for(pkg, config)))
         assert [r.status for r in results] == ["pass"]

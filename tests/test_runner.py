@@ -54,11 +54,11 @@ def test_every_check_has_a_category() -> None:
     assert category_of("invalid_check") is None
 
 
-@pytest.mark.parametrize("layout", ["monorepo", "template", "register"])
+@pytest.mark.parametrize("layout", ["monorepo", "multi-eval", "register"])
 def test_well_formed_eval_passes_every_check(tmp_path: Path, layout: str) -> None:
     builders = {
         "monorepo": make_monorepo,
-        "template": make_template_repo,
+        "multi-eval": make_template_repo,
         "register": make_register_repo,
     }
     config = builders[layout](tmp_path)
@@ -514,7 +514,7 @@ def test_register_layout_same_repo_fails_under_template_preset(
     register_repo: tuple[Path, LintConfig],
 ) -> None:
     root, _ = register_repo
-    result = statuses(root, replace(PRESETS["template"]))
+    result = statuses(root, replace(PRESETS["multi-eval"]))
     assert result["tests_exist"] == ["fail"]
     assert result["readme"] == ["fail"]
     assert result["eval_yaml"] == ["fail"]

@@ -147,14 +147,15 @@ def lint_task_files(
     This is how a register entry is linted: the entry names task files, not
     packages, and the repository's own configuration is not consulted. ``config``
     supplies everything but the layout, which each task file determines
-    (``PRESETS["register"]`` when omitted).
+    (``REGISTER_CONFIG`` when omitted: the single-evaluation layout with
+    ``eval.yaml`` optional, since the register entry holds the metadata).
 
     Raises:
         UnsupportedLayoutError: a task file is missing, escapes the repository, or is a bare module.
     """
-    from inspect_evals_lint.config import PRESETS
+    from inspect_evals_lint.config import REGISTER_CONFIG
 
-    base = config or PRESETS["register"]
+    base = config or REGISTER_CONFIG
     packages = [
         lint_package(repo_root, layout.eval_name, layout.config(base), check=check)
         for layout in task_layouts(repo_root, task_paths)

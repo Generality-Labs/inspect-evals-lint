@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from inspect_evals_lint import (
-    PRESETS,
+    REGISTER_CONFIG,
     TaskLayout,
     UnsupportedLayoutError,
     lint_task_files,
@@ -72,13 +72,13 @@ def test_unsupported_layouts_name_the_reason(
 
 
 def test_layout_config_keeps_everything_but_the_layout() -> None:
-    config = TaskLayout("inner", "src/pkg", "pkg").config(PRESETS["register"])
+    config = TaskLayout("inner", "src/pkg", "pkg").config(REGISTER_CONFIG)
     assert (config.source_root, config.import_prefix) == ("src/pkg", "pkg")
-    assert config.tests_layout == "flat"  # the register preset's own setting survives
+    assert config.tests_layout == "flat"  # the register config's own setting survives
     assert config.eval_yaml_required is False
 
 
-def test_lint_task_files_uses_the_register_preset_by_default(tmp_path: Path) -> None:
+def test_lint_task_files_uses_the_register_config_by_default(tmp_path: Path) -> None:
     make_register_repo(tmp_path, "alpha")
     run = lint_task_files(tmp_path, ["src/alpha/alpha.py"])
     assert [p.name for p in run.packages] == ["alpha"]

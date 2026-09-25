@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from inspect_evals_lint.config import (
     PRESETS,
+    REGISTER_CONFIG,
     ConfigError,
     LintConfig,
     config_from_table,
@@ -21,10 +23,43 @@ from inspect_evals_lint.registry import get_rule
 from tests.conftest import write
 
 
-def test_default_is_template_preset() -> None:
-    assert config_from_table({}) == PRESETS["template"]
-    assert PRESETS["template"].registry == "entry-points"
-    assert PRESETS["template"].source_root == "src"
+def test_default_is_multi_eval_preset() -> None:
+    assert config_from_table({}) == PRESETS["multi-eval"]
+    assert PRESETS["multi-eval"].registry == "entry-points"
+    assert PRESETS["multi-eval"].source_root == "src"
+
+
+def test_preset_names_describe_layouts() -> None:
+    assert sorted(PRESETS) == ["monorepo", "multi-eval", "single-eval"]
+    assert "template" not in PRESETS  # aliases are not listed
+    assert "register" not in PRESETS
+
+
+def test_deprecated_names_resolve_with_a_warning() -> None:
+    with pytest.warns(DeprecationWarning, match='use preset = "multi-eval"'):
+        assert config_from_table({"preset": "template"}) == PRESETS["multi-eval"]
+    with pytest.warns(DeprecationWarning, match="eval-yaml-required = false"):
+        cfg = config_from_table({"preset": "register"})
+    assert cfg == replace(PRESETS["single-eval"], eval_yaml_required=False)
+    assert cfg == REGISTER_CONFIG
+    with pytest.warns(DeprecationWarning, match="preset 'register' is deprecated"):
+        assert PRESETS["register"] == REGISTER_CONFIG
+    with pytest.warns(DeprecationWarning, match="preset 'template' is deprecated"):
+        assert PRESETS["template"] == PRESETS["multi-eval"]
+    with pytest.raises(KeyError):
+        PRESETS["nope"]
+
+
+def test_table_overrides_win_over_an_alias_override() -> None:
+    with pytest.warns(DeprecationWarning, match="preset 'register' is deprecated"):
+        cfg = config_from_table({"preset": "register", "eval-yaml-required": True})
+    assert cfg.eval_yaml_required is True
+    assert cfg.tests_layout == "flat"
+
+
+def test_unknown_preset_lists_only_current_names() -> None:
+    with pytest.raises(ConfigError, match=re.escape("['monorepo', 'multi-eval', 'single-eval']")):
+        config_from_table({"preset": "nope"})
 
 
 def test_monorepo_preset_values() -> None:
@@ -37,29 +72,30 @@ def test_monorepo_preset_values() -> None:
     assert cfg.registry_module == "src/inspect_evals/_registry.py"
     assert cfg.isolated_packages_dir == "packages"
     assert cfg.module_name("gpqa") == "inspect_evals.gpqa"
-    assert PRESETS["template"].module_name("gpqa") == "gpqa"
+    assert PRESETS["multi-eval"].module_name("gpqa") == "gpqa"
 
 
-def test_template_preset_directory_kinds() -> None:
-    cfg = PRESETS["template"]
+def test_multi_eval_preset_directory_kinds() -> None:
+    cfg = PRESETS["multi-eval"]
     assert cfg.helper_dirs == frozenset({"utils"})
     assert cfg.ignore_dirs == frozenset({"examples"})
 
 
-def test_register_preset_values() -> None:
-    cfg = PRESETS["register"]
+def test_single_eval_preset_values() -> None:
+    cfg = PRESETS["single-eval"]
     assert cfg.tests_layout == "flat"
     assert cfg.readme_location == "repo-root"
-    assert cfg.eval_yaml_required is False
-    # Everything else follows the template layout.
+    assert cfg.eval_yaml_required is True  # a layout does not know where the metadata lives
+    # Everything else follows the multi-eval layout.
     assert cfg.source_root == "src"
     assert cfg.registry == "entry-points"
-    assert PRESETS["template"].tests_layout == "per-eval"
-    assert PRESETS["template"].readme_location == "eval-dir"
-    assert PRESETS["template"].eval_yaml_required is True
+    assert PRESETS["multi-eval"].tests_layout == "per-eval"
+    assert PRESETS["multi-eval"].readme_location == "eval-dir"
+    assert PRESETS["multi-eval"].eval_yaml_required is True
     assert PRESETS["monorepo"].per_eval_dependency_group is True
-    assert PRESETS["template"].per_eval_dependency_group is False
-    assert PRESETS["register"].per_eval_dependency_group is False
+    assert PRESETS["multi-eval"].per_eval_dependency_group is False
+    assert PRESETS["single-eval"].per_eval_dependency_group is False
+    assert REGISTER_CONFIG.eval_yaml_required is False
 
 
 def test_layout_keys_are_overridable() -> None:
@@ -69,7 +105,7 @@ def test_layout_keys_are_overridable() -> None:
     assert cfg.tests_layout == "flat"
     assert cfg.readme_location == "repo-root"
     assert cfg.eval_yaml_required is False
-    cfg = config_from_table({"preset": "register", "eval-yaml-required": True})
+    cfg = config_from_table({"preset": "single-eval", "eval-yaml-required": True})
     assert cfg.eval_yaml_required is True
 
 
@@ -123,7 +159,7 @@ def test_rule_option_table_merges_over_the_preset_defaults(
     from dataclasses import replace
 
     preset = replace(
-        PRESETS["template"],
+        PRESETS["multi-eval"],
         rule_options={"readme": {"todo_marker": "TODO", "max_lines": 10}, "sample_ids": {"x": 1}},
     )
     monkeypatch.setitem(PRESETS, "with-options", preset)
@@ -238,25 +274,25 @@ def test_empty_string_clears_optional_paths() -> None:
 def test_load_config_reads_pyproject(tmp_path: Path) -> None:
     write(tmp_path / "pyproject.toml", "[tool.inspect-evals-lint]\npreset = 'monorepo'\n")
     assert load_config(tmp_path) == PRESETS["monorepo"]
-    assert load_config(tmp_path, preset="template") == PRESETS["template"]
+    assert load_config(tmp_path, preset="multi-eval") == PRESETS["multi-eval"]
 
 
 def test_load_config_without_table_or_pyproject(tmp_path: Path) -> None:
     """With nothing under src/ there is no single evaluation to infer, so the template preset stands."""
-    assert load_config(tmp_path) == PRESETS["template"]
+    assert load_config(tmp_path) == PRESETS["multi-eval"]
     write(tmp_path / "pyproject.toml", "[project]\nname = 'x'\n")
-    assert load_config(tmp_path) == PRESETS["template"]
+    assert load_config(tmp_path) == PRESETS["multi-eval"]
 
 
 def test_single_evaluation_package_infers_the_register_preset(tmp_path: Path) -> None:
     write(tmp_path / "src/alpha/__init__.py", "")
     write(tmp_path / "src/utils/__init__.py", "")  # a helper does not count
     write(tmp_path / "src/examples/__init__.py", "")  # nor an ignored directory
-    assert infer_preset(tmp_path, {}) == ("register", "src/ holds one evaluation package")
-    assert load_config(tmp_path) == PRESETS["register"]
+    assert infer_preset(tmp_path, {}) == ("single-eval", "src/ holds one evaluation package")
+    assert load_config(tmp_path) == PRESETS["single-eval"]
     write(tmp_path / "src/beta/__init__.py", "")
-    assert infer_preset(tmp_path, {}) == ("template", "src/ holds 2 evaluation packages")
-    assert load_config(tmp_path) == PRESETS["template"]
+    assert infer_preset(tmp_path, {}) == ("multi-eval", "src/ holds 2 evaluation packages")
+    assert load_config(tmp_path) == PRESETS["multi-eval"]
 
 
 def test_inference_honours_the_table_layout_keys(tmp_path: Path) -> None:
@@ -269,7 +305,7 @@ def test_inference_honours_the_table_layout_keys(tmp_path: Path) -> None:
     )
     table = read_tool_table(tmp_path)
     assert table is not None
-    assert infer_preset(tmp_path, table) == ("register", "evals/ holds one evaluation package")
+    assert infer_preset(tmp_path, table) == ("single-eval", "evals/ holds one evaluation package")
     cfg = load_config(tmp_path)
     assert cfg.tests_layout == "flat"
     assert cfg.source_root == "evals"
@@ -278,8 +314,8 @@ def test_inference_honours_the_table_layout_keys(tmp_path: Path) -> None:
 
 def test_named_preset_is_never_second_guessed(tmp_path: Path) -> None:
     write(tmp_path / "src/alpha/__init__.py", "")
-    write(tmp_path / "pyproject.toml", "[tool.inspect-evals-lint]\npreset = 'template'\n")
-    assert load_config(tmp_path) == PRESETS["template"]
+    write(tmp_path / "pyproject.toml", "[tool.inspect-evals-lint]\npreset = 'multi-eval'\n")
+    assert load_config(tmp_path) == PRESETS["multi-eval"]
     assert load_config(tmp_path, preset="monorepo") == PRESETS["monorepo"]
 
 
