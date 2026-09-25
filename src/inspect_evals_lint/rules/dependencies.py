@@ -8,9 +8,10 @@ import re
 import sys
 import tomllib
 from collections.abc import Iterable
-from importlib.metadata import packages_distributions
+from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, packages_distributions, requires
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from inspect_evals_lint.config import LintConfig
 from inspect_evals_lint.context import LintContext, is_package
@@ -65,13 +66,131 @@ def _names(deps: object) -> set[str]:
     return {name for dep in items if isinstance(dep, str) and (name := _extract_package_name(dep))}
 
 
-def _get_core_dependencies(repo_root: Path) -> frozenset[str]:
-    """``[project].dependencies`` of the root pyproject."""
+def _declared_core_dependencies(repo_root: Path) -> frozenset[str]:
+    """``[project].dependencies`` of the root pyproject, normalised."""
     pyproject_path = repo_root / "pyproject.toml"
     if not pyproject_path.exists():
         return frozenset()
     data = _load_toml(pyproject_path)
     return frozenset(_names(data.get("project", {}).get("dependencies", [])))
+
+
+def _installed_requirements(dist: str) -> frozenset[str]:
+    """Normalised names of what the installed distribution ``dist`` requires unconditionally.
+
+    Requirements guarded by an ``extra ==`` marker are left out: nobody asked for
+    that extra. Empty when ``dist`` is not installed, so the closure below only
+    grows inside the project's own environment.
+    """
+    try:
+        listed = requires(dist) or []
+    except PackageNotFoundError:
+        return frozenset()
+    names: set[str] = set()
+    for requirement in listed:
+        spec, _, marker = requirement.partition(";")
+        if "extra" in marker:
+            continue
+        name = _extract_package_name(spec)
+        if name:
+            names.add(name)
+    return frozenset(names)
+
+
+def _lock_requirements(repo_root: Path) -> dict[str, frozenset[str]] | None:
+    """Each package's resolved dependencies from ``uv.lock``, or None when there is no lock.
+
+    The lock records the graph the repository actually resolved, at the versions
+    it pins, and needs nothing installed to read, so it serves ``uvx`` runs and
+    the register lint service alike. Extras are left out as they are from the
+    installed metadata; a marker-conditional dependency is kept, since it is a
+    requirement on some platform the repository supports.
+    """
+    lock_path = repo_root / "uv.lock"
+    if not lock_path.exists():
+        return None
+    data = _load_toml(lock_path)
+    packages = data.get("package")
+    if not isinstance(packages, list):
+        return {}
+    graph: dict[str, frozenset[str]] = {}
+    for package in cast(list[object], packages):
+        if not isinstance(package, dict):
+            continue
+        entry = cast(dict[str, Any], package)
+        name = entry.get("name")
+        if not isinstance(name, str):
+            continue
+        dependencies = entry.get("dependencies")
+        needed: set[str] = set()
+        if isinstance(dependencies, list):
+            for dependency in cast(list[object], dependencies):
+                if isinstance(dependency, dict):
+                    dep_name = cast(dict[str, Any], dependency).get("name")
+                    if isinstance(dep_name, str):
+                        needed.add(_normalize_name(dep_name))
+        graph[_normalize_name(name)] = frozenset(needed)
+    return graph
+
+
+TransitiveSource = Literal["uv.lock", "environment"]
+
+
+@dataclass(frozen=True)
+class CoreDependencies:
+    """``[project].dependencies`` with their transitive closure, and where the closure came from."""
+
+    names: frozenset[str]
+    source: TransitiveSource | None
+    """None when nothing could be resolved: no ``uv.lock`` and no core dependency installed here."""
+
+
+def _get_core_dependencies(repo_root: Path) -> CoreDependencies:
+    """``[project].dependencies`` and everything they require in turn.
+
+    A transitive requirement of a core dependency is installed by construction,
+    so importing it needs no declaration of its own: ``inspect_ai`` returns
+    pydantic models from its public API, and every evaluation that types one
+    imports ``pydantic``. The graph comes from ``uv.lock`` when the repository
+    commits one, else from the distributions installed in the current
+    environment; with neither, the closure is just the declared names.
+    """
+    declared = _declared_core_dependencies(repo_root)
+    lock = _lock_requirements(repo_root)
+    resolved_any = False
+    closure: set[str] = set()
+    pending = list(declared)
+    while pending:
+        name = pending.pop()
+        if name in closure:
+            continue
+        closure.add(name)
+        requirements = (
+            lock.get(name, frozenset()) if lock is not None else _installed_requirements(name)
+        )
+        resolved_any = resolved_any or bool(requirements)
+        pending.extend(requirements)
+    source: TransitiveSource | None
+    if lock is not None:
+        source = "uv.lock"
+    elif resolved_any:
+        source = "environment"
+    else:
+        source = None
+    return CoreDependencies(frozenset(closure), source)
+
+
+def _unresolved_note(repo_root: Path) -> str:
+    """Appended to a hint when the transitive closure could not be computed, so the reader knows why an import may be flagged."""
+    if _get_core_dependencies(repo_root).source is not None or not _declared_core_dependencies(
+        repo_root
+    ):
+        return ""
+    return (
+        "; if it is something a core dependency already requires, the linter could not tell: "
+        "there is no uv.lock and the core dependencies are not installed here, so run it "
+        "inside the project's environment (uv run inspect-evals-lint) or commit a uv.lock"
+    )
 
 
 # Import name -> distribution name for packages that may not be installed.
@@ -267,7 +386,7 @@ def _external_imports(
     """The imports that are neither standard library, core dependencies, the repo's own packages nor local."""
     local_modules = _get_local_modules(package_path) | _sibling_packages(repo_root, config)
     stdlib_modules = _get_stdlib_modules()
-    core_deps = _get_core_dependencies(repo_root)
+    core_deps = _get_core_dependencies(repo_root).names
     import_to_package = _get_import_to_package_map()
     own_package = config.import_prefix.split(".")[0] if config.import_prefix else None
 
@@ -351,7 +470,8 @@ def _helper_dependencies(
             external_eager,
             "Module-level import of third-party package {imp!r} (package: {dist}) in a helper "
             "must be in [project].dependencies, because every evaluation that imports the helper loads it",
-            "add it to [project].dependencies, or move the import inside the function that needs it",
+            "add it to [project].dependencies, or move the import inside the function that needs it"
+            + _unresolved_note(ctx.root),
         )
         return
 
@@ -388,13 +508,21 @@ def external_dependencies(ctx: LintContext) -> Iterable[Finding]:
 
     ## What it does
     Collects every import in the package and treats one as external when it is not
-    in the standard library, not in ``[project].dependencies``, not local to the
-    package and not one of the repository's own packages (the ``import-prefix``
-    package, and every package under ``source-root`` such as a ``utils`` helper). For an evaluation, each external
+    in the standard library, not in ``[project].dependencies`` or something those
+    dependencies require in turn, not local to the package and not one of the
+    repository's own packages (the ``import-prefix`` package, and every package
+    under ``source-root`` such as a ``utils`` helper). The transitive requirements
+    are read from ``uv.lock`` when the repository commits one, else from the
+    distributions installed in the current environment; with neither, only the
+    declared names count and the hint on an undeclared import says so. For an evaluation, each external
     import must be declared in some ``[project.optional-dependencies]`` group or
     ``[dependency-groups]`` entry (other than ``dev``), or in the isolated
-    package's ``pyproject.toml`` when ``isolated-packages-dir`` is set, and the
-    evaluation must own a group named after itself unless it is isolated.
+    package's ``pyproject.toml`` when ``isolated-packages-dir`` is set. With
+    ``per-eval-dependency-group = true`` (the ``monorepo`` preset) the evaluation
+    must also own a group named after itself unless it is isolated, so one
+    evaluation's dependencies can be installed without the rest; a standalone
+    repository declares its dependencies in ``[project].dependencies`` and any
+    extra it likes.
 
     For a helper package the rule is different, because every evaluation that
     imports the helper loads whatever it imports at module level: those imports
@@ -412,12 +540,22 @@ def external_dependencies(ctx: LintContext) -> Iterable[Finding]:
     person with ``ModuleNotFoundError``, often only when a particular sample runs.
 
     ## Example
+    A standalone repository:
+    ```toml
+    [project]
+    dependencies = ["inspect_ai", "datasets>=4.0"]
+
+    [project.optional-dependencies]
+    modal = ["inspect_sandboxes"]
+    ```
+    The inspect_evals monorepo, with `per-eval-dependency-group = true`:
     ```toml
     [project.optional-dependencies]
     my_eval = ["datasets>=4.0", "scikit-learn"]
     ```
 
     ## Options
+    - `per-eval-dependency-group`
     - `isolated-packages-dir`
     - `import-prefix`
     """
@@ -450,10 +588,17 @@ def external_dependencies(ctx: LintContext) -> Iterable[Finding]:
     if missing:
         yield from _undeclared_diagnostics(
             missing,
-            "Import {imp!r} (package: {dist}) is not declared in any pyproject.toml optional-dependency group",
-            f"add it to the [project.optional-dependencies] group named {ctx.name!r}",
+            "Import {imp!r} (package: {dist}) is not declared in pyproject.toml",
+            f"add it to the [project.optional-dependencies] group named {ctx.name!r}"
+            if ctx.config.per_eval_dependency_group
+            else "add it to [project].dependencies, or to an optional-dependencies extra "
+            "if only some configurations need it" + _unresolved_note(ctx.root),
         )
-    elif isolated_deps is None and ctx.name not in optional_deps:
+    elif (
+        ctx.config.per_eval_dependency_group
+        and isolated_deps is None
+        and ctx.name not in optional_deps
+    ):
         yield Diagnostic(
             f"Evaluation uses external packages ({sorted(external)[:3]}) but has no dedicated "
             "optional-dependency group",
