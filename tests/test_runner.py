@@ -521,14 +521,21 @@ def test_register_layout_same_repo_fails_under_template_preset(
 
 
 def test_flat_layout_prefers_per_eval_directory(register_repo: tuple[Path, LintConfig]) -> None:
-    """A template-derived repo that kept tests/<eval>/ is linted as before, __init__.py included."""
+    """A single-eval repo that namespaces its tests under tests/<eval>/ is linted there."""
     root, config = register_repo
     write(config.tests_dir(root) / "alpha" / "test_other.py", "def test_x():\n    pass\n")
     report = lint_package(root, "alpha", config)
     by_name = {r.rule.name: r for r in report.items()}
     assert "tests/alpha" in by_name["tests_exist"].message
-    assert by_name["tests_init"].status == "fail"  # tests/alpha has no __init__.py
+    assert by_name["tests_init"].status == "skip"  # one evaluation: nothing to collide with
     assert by_name["e2e_test"].status == "fail"  # the flat file is no longer in scope
+
+
+def test_per_eval_layout_still_requires_init_files(register_repo: tuple[Path, LintConfig]) -> None:
+    root, config = register_repo
+    write(config.tests_dir(root) / "alpha" / "test_other.py", "def test_x():\n    pass\n")
+    config = replace(config, tests_layout="per-eval")
+    assert statuses(root, config)["tests_init"] == ["fail"]
 
 
 def test_flat_layout_needs_test_files(register_repo: tuple[Path, LintConfig]) -> None:
@@ -612,14 +619,92 @@ def test_empty_named_main_file_does_not_hide_tasks_py(
     assert result["init_exports"] == ["pass"]
 
 
-def test_missing_main_file_names_both_candidates(template_repo: tuple[Path, LintConfig]) -> None:
+def test_package_without_any_task_fails_and_names_both_candidates(
+    template_repo: tuple[Path, LintConfig],
+) -> None:
     root, config = template_repo
     (config.package_dir(root, "alpha") / "alpha.py").unlink()
     report = lint_package(root, "alpha", config)
     by_name = {r.rule.name: r for r in report.items()}
     assert by_name["main_file"].status == "fail"
-    assert by_name["main_file"].message == "Missing main file: alpha.py or tasks.py"
+    assert by_name["main_file"].message == (
+        "No module defines a @task function; expected alpha.py or tasks.py"
+    )
     assert by_name["init_exports"].status == "skip"
+
+
+def test_conventional_file_without_tasks_fails_when_no_other_module_has_one(
+    template_repo: tuple[Path, LintConfig],
+) -> None:
+    root, config = template_repo
+    write(config.package_dir(root, "alpha") / "alpha.py", "CONSTANT = 1\n")
+    main = first(lint_package(root, "alpha", config), "main_file")
+    assert main.status == "fail"
+    assert main.message.startswith("alpha.py has no @task decorated functions")
+
+
+def test_tasks_in_an_unconventional_module_warn_and_exports_are_still_checked(
+    template_repo: tuple[Path, LintConfig],
+) -> None:
+    """A standalone repo that names its task module after the benchmark (exploitbench's v8.py)."""
+    root, config = template_repo
+    eval_dir = config.package_dir(root, "alpha")
+    (eval_dir / "alpha.py").rename(eval_dir / "v8.py")
+    write(eval_dir / "__init__.py", "from .v8 import alpha\n\n__all__ = ['alpha']\n")
+    report = lint_package(root, "alpha", config)
+    by_name = {r.rule.name: r for r in report.items()}
+    assert by_name["main_file"].status == "warn"
+    assert by_name["main_file"].message.startswith("@task functions are defined in v8.py")
+    assert by_name["init_exports"].status == "pass"
+
+    write(eval_dir / "__init__.py", "")
+    report = lint_package(root, "alpha", config)
+    exports = first(report, "init_exports")
+    assert exports.status == "fail"
+    assert exports.hint is not None
+    assert "from .v8 import alpha" in exports.hint
+
+
+def test_tasks_in_a_nested_module_get_a_relative_import_hint(
+    template_repo: tuple[Path, LintConfig],
+) -> None:
+    root, config = template_repo
+    eval_dir = config.package_dir(root, "alpha")
+    write(eval_dir / "tasks" / "__init__.py", "")
+    (eval_dir / "alpha.py").rename(eval_dir / "tasks" / "main.py")
+    write(eval_dir / "__init__.py", "")
+    report = lint_package(root, "alpha", config)
+    assert first(report, "main_file").status == "warn"
+    exports = first(report, "init_exports")
+    assert exports.status == "fail"
+    assert exports.hint is not None
+    assert "from .tasks.main import alpha" in exports.hint
+
+
+def test_conventional_module_still_wins_when_other_modules_define_tasks(
+    template_repo: tuple[Path, LintConfig],
+) -> None:
+    root, config = template_repo
+    eval_dir = config.package_dir(root, "alpha")
+    write(eval_dir / "extra.py", "from inspect_ai import task\n\n@task\ndef other():\n    ...\n")
+    report = lint_package(root, "alpha", config)
+    assert first(report, "main_file").status == "pass"
+    exports = first(report, "init_exports")
+    assert exports.status == "fail"  # `other` in extra.py is a task nobody can run by name
+    assert "'other'" in exports.message
+
+
+def test_excluded_files_are_not_read_for_tasks(template_repo: tuple[Path, LintConfig]) -> None:
+    root, config = template_repo
+    eval_dir = config.package_dir(root, "alpha")
+    write(
+        eval_dir / "challenge" / "solve.py",
+        "from inspect_ai import task\n\n@task\ndef x():\n    ...\n",
+    )
+    config = replace(config, exclude=("src/alpha/challenge/**",))
+    result = statuses(root, config)
+    assert result["main_file"] == ["pass"]
+    assert result["init_exports"] == ["pass"]
 
 
 def test_model_role_allowlist_from_config(monorepo: tuple[Path, LintConfig]) -> None:
@@ -683,3 +768,79 @@ def test_dockerfile_locking_reads_its_option_table(monorepo: tuple[Path, LintCon
     broken = replace(config, rule_options={"dockerfile_locking": {"host_lock_coupling": "x"}})
     with pytest.raises(ConfigError, match="host-lock-coupling"):
         lint_package(root, "alpha", broken, check="IEBP007")
+
+
+AGENT_MODULE = """
+from inspect_ai.agent import agent
+from inspect_ai.model import get_model
+
+
+@agent
+def react_agent(model=None):
+    async def execute(state):
+        agent_model = get_model(model)
+        return state
+
+    return execute
+"""
+
+
+def test_agent_is_a_model_resolving_component(template_repo: tuple[Path, LintConfig]) -> None:
+    """get_model() inside an @agent is not flagged, and the agent must be tested like a solver."""
+    root, config = template_repo
+    write(config.package_dir(root, "alpha") / "agents.py", AGENT_MODULE)
+    result = statuses(root, config)
+    assert result["get_model_location"] == ["pass"]
+    assert result["custom_solver_tests"] == ["fail"]
+
+    report = lint_package(root, "alpha", config)
+    untested = first(report, "custom_solver_tests")
+    assert untested.message == "@agent react_agent() is not mentioned by any test"
+
+    write(
+        config.tests_dir(root) / "alpha" / "test_agent.py", "from alpha.agents import react_agent\n"
+    )
+    assert statuses(root, config)["custom_solver_tests"] == ["pass"]
+
+
+def test_e2e_test_accepts_any_mockllm_model_name(template_repo: tuple[Path, LintConfig]) -> None:
+    """Tests that script custom_outputs per case name their mocks (mockllm/epochs), not mockllm/model."""
+    root, config = template_repo
+    test_file = config.tests_dir(root) / "alpha" / "test_alpha.py"
+    test_file.write_text(test_file.read_text().replace("mockllm/model", "mockllm/epochs"))
+    assert statuses(root, config)["e2e_test"] == ["pass"]
+
+    test_file.write_text(test_file.read_text().replace("mockllm/epochs", "openai/gpt-4o"))
+    assert statuses(root, config)["e2e_test"] == ["fail"]
+
+
+SUBMIT_TOOL = """
+from inspect_ai.tool import tool
+
+
+@tool(name="submit")
+def submit_tool():
+    async def execute(answer: str) -> str:
+        return answer
+
+    return execute
+"""
+
+
+def test_component_registered_under_another_name_is_matched_by_that_name(
+    template_repo: tuple[Path, LintConfig],
+) -> None:
+    root, config = template_repo
+    write(config.package_dir(root, "alpha") / "tools.py", SUBMIT_TOOL)
+    report = lint_package(root, "alpha", config)
+    untested = first(report, "custom_tool_tests")
+    assert untested.status == "fail"
+    assert untested.message == (
+        "@tool submit_tool() (registered as 'submit') is not mentioned by any test"
+    )
+
+    write(
+        config.tests_dir(root) / "alpha" / "test_tools.py",
+        'def test_submit():\n    assert exit_reason == "submit"\n',
+    )
+    assert statuses(root, config)["custom_tool_tests"] == ["pass"]

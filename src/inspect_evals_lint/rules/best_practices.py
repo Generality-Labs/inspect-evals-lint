@@ -17,36 +17,39 @@ from inspect_evals_lint.rules._ast import (
     parse_python_files,
 )
 
+MODEL_RESOLVING_DECORATORS = ("solver", "scorer", "agent")
+"""The components inside which ``get_model()`` resolves late enough for the caller to override it."""
+
 
 class GetModelVisitor(ast.NodeVisitor):
-    """Record every ``get_model()`` call with whether it sits inside a ``@solver``/``@scorer``."""
+    """Record every ``get_model()`` call with whether it sits inside a ``@solver``, ``@scorer`` or ``@agent``."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[int, str, bool]] = []  # (line, context, is_valid)
         self.nodes: list[ast.Call] = []
-        self._in_solver_or_scorer = False
+        self._in_component = False
         self._current_context = "module"
 
     def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         old_context = self._current_context
-        old_in_solver_or_scorer = self._in_solver_or_scorer
+        old_in_component = self._in_component
 
         self._current_context = node.name
         for decorator in node.decorator_list:
-            if get_decorator_name(decorator) in ("solver", "scorer"):
-                self._in_solver_or_scorer = True
+            if get_decorator_name(decorator) in MODEL_RESOLVING_DECORATORS:
+                self._in_component = True
                 break
 
         self.generic_visit(node)
 
         self._current_context = old_context
-        self._in_solver_or_scorer = old_in_solver_or_scorer
+        self._in_component = old_in_component
 
     visit_AsyncFunctionDef = visit_FunctionDef  # noqa: N815
 
     def visit_Call(self, node: ast.Call) -> None:
         if get_call_name(node) == "get_model":
-            self.calls.append((node.lineno, self._current_context, self._in_solver_or_scorer))
+            self.calls.append((node.lineno, self._current_context, self._in_component))
             self.nodes.append(node)
         self.generic_visit(node)
 
@@ -56,24 +59,26 @@ class GetModelVisitor(ast.NodeVisitor):
     name="get_model_location",
     category="best_practices",
     scopes=("eval", "helper"),
-    summary="get_model() is only called inside @solver or @scorer functions",
+    summary="get_model() is only called inside @solver, @scorer or @agent functions",
     references=(
         inspect_docs("models", "Models: Role Resolution", "role-resolution"),
         inspect_docs("solvers", "Solvers: Models in Solvers", "models-in-solvers"),
         inspect_docs("custom-scorers", "Custom Scorers: Models in Scorers", "models-in-scorers"),
+        inspect_docs("agent-custom", "Custom Agents: Parameters", "parameters"),
     ),
 )
 def get_model_location(ctx: LintContext) -> Iterable[Finding]:
-    """``get_model()`` is only called inside ``@solver`` or ``@scorer`` functions.
+    """``get_model()`` is only called inside ``@solver``, ``@scorer`` or ``@agent`` functions.
 
     ## What it does
     Warns on each ``get_model()`` call that is not inside a function decorated with
-    ``@solver`` or ``@scorer``.
+    ``@solver``, ``@scorer`` or ``@agent``. An agent is the solver of a sandboxed
+    evaluation, and its ``execute`` runs per sample just as a solver's does.
 
     ## Why is this bad?
     Resolving a concrete model at import time or inside ``@task`` fixes it before
-    the caller can choose one. Resolving it inside the solver or scorer keeps the
-    task declarative and lets ``--model-role`` and task parameters override it.
+    the caller can choose one. Resolving it inside the solver, scorer or agent keeps
+    the task declarative and lets ``--model-role`` and task parameters override it.
 
     ## Example
     ```python
@@ -105,17 +110,18 @@ def get_model_location(ctx: LintContext) -> Iterable[Finding]:
                 continue
             found = True
             yield Diagnostic(
-                f"get_model() called outside @solver/@scorer (in {context})",
+                f"get_model() called outside @solver/@scorer/@agent (in {context})",
                 file=parsed.path,
                 line=line,
                 column=column_of(node),
                 end_line=end_line_of(node),
                 severity="warning",
-                hint="resolve models inside @solver/@scorer so tasks stay declarative",
+                hint="resolve models inside @solver/@scorer/@agent so tasks stay declarative",
             )
     if not found:
         yield Outcome(
-            "pass", "get_model() calls are properly inside @solver/@scorer decorated functions"
+            "pass",
+            "get_model() calls are properly inside @solver/@scorer/@agent decorated functions",
         )
 
 

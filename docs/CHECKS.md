@@ -6,14 +6,14 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 
 ## File structure
 
-| Code                        | Rule               | Applies to   | Summary                                                              |
-| --------------------------- | ------------------ | ------------ | -------------------------------------------------------------------- |
-| [IEFS001](rules/IEFS001.md) | `package_location` | eval, helper | The package exists at <source-root>/<name>/ with an __init__.py      |
-| [IEFS002](rules/IEFS002.md) | `main_file`        | eval         | <name>.py or tasks.py exists and defines at least one @task function |
-| [IEFS003](rules/IEFS003.md) | `init_exports`     | eval         | __init__.py exports every @task function from the main file          |
-| [IEFS004](rules/IEFS004.md) | `registry`         | eval         | The evaluation is registered so inspect eval can find its tasks      |
-| [IEFS005](rules/IEFS005.md) | `eval_yaml`        | eval         | eval.yaml exists, is a mapping, and defines the required fields      |
-| [IEFS006](rules/IEFS006.md) | `readme`           | eval         | README.md exists and has no TODO markers                             |
+| Code                        | Rule               | Applies to   | Summary                                                                |
+| --------------------------- | ------------------ | ------------ | ---------------------------------------------------------------------- |
+| [IEFS001](rules/IEFS001.md) | `package_location` | eval, helper | The package exists at <source-root>/<name>/ with an __init__.py        |
+| [IEFS002](rules/IEFS002.md) | `main_file`        | eval         | Some module defines a @task function, preferably <name>.py or tasks.py |
+| [IEFS003](rules/IEFS003.md) | `init_exports`     | eval         | __init__.py exports every @task function in the package                |
+| [IEFS004](rules/IEFS004.md) | `registry`         | eval         | The evaluation is registered so inspect eval can find its tasks        |
+| [IEFS005](rules/IEFS005.md) | `eval_yaml`        | eval         | eval.yaml exists, is a mapping, and defines the required fields        |
+| [IEFS006](rules/IEFS006.md) | `readme`           | eval         | README.md exists and has no TODO markers                               |
 
 ## Code quality
 
@@ -27,21 +27,21 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 
 ## Tests
 
-| Code                        | Rule                    | Applies to   | Summary                                                             |
-| --------------------------- | ----------------------- | ------------ | ------------------------------------------------------------------- |
-| [IETS001](rules/IETS001.md) | `tests_exist`           | eval         | A test directory exists for the evaluation                          |
-| [IETS002](rules/IETS002.md) | `tests_init`            | eval, helper | The test directory and its sub-directories contain __init__.py      |
-| [IETS003](rules/IETS003.md) | `e2e_test`              | eval         | Some test runs eval() against mockllm/model                         |
-| [IETS004](rules/IETS004.md) | `record_to_sample_test` | eval         | record_to_sample is exercised by a test when the evaluation uses it |
-| [IETS005](rules/IETS005.md) | `custom_solver_tests`   | eval, helper | Every @solver function name appears somewhere in the tests          |
-| [IETS006](rules/IETS006.md) | `custom_scorer_tests`   | eval, helper | Every @scorer function name appears somewhere in the tests          |
-| [IETS007](rules/IETS007.md) | `custom_tool_tests`     | eval, helper | Every @tool function name appears somewhere in the tests            |
+| Code                        | Rule                    | Applies to   | Summary                                                              |
+| --------------------------- | ----------------------- | ------------ | -------------------------------------------------------------------- |
+| [IETS001](rules/IETS001.md) | `tests_exist`           | eval         | A test directory exists for the evaluation                           |
+| [IETS002](rules/IETS002.md) | `tests_init`            | eval, helper | The test directory and its sub-directories contain __init__.py       |
+| [IETS003](rules/IETS003.md) | `e2e_test`              | eval         | Some test runs eval() against a mockllm/ model                       |
+| [IETS004](rules/IETS004.md) | `record_to_sample_test` | eval         | record_to_sample is exercised by a test when the evaluation uses it  |
+| [IETS005](rules/IETS005.md) | `custom_solver_tests`   | eval, helper | Every @solver or @agent function name appears somewhere in the tests |
+| [IETS006](rules/IETS006.md) | `custom_scorer_tests`   | eval, helper | Every @scorer function name appears somewhere in the tests           |
+| [IETS007](rules/IETS007.md) | `custom_tool_tests`     | eval, helper | Every @tool function name appears somewhere in the tests             |
 
 ## Best practices
 
 | Code                        | Rule                            | Applies to   | Summary                                                                                             |
 | --------------------------- | ------------------------------- | ------------ | --------------------------------------------------------------------------------------------------- |
-| [IEBP001](rules/IEBP001.md) | `get_model_location`            | eval, helper | get_model() is only called inside @solver or @scorer functions                                      |
+| [IEBP001](rules/IEBP001.md) | `get_model_location`            | eval, helper | get_model() is only called inside @solver, @scorer or @agent functions                              |
 | [IEBP002](rules/IEBP002.md) | `model_role_resolution`         | eval, helper | get_model(role=...) resolves deliberately: an explicit model, default= or required=True             |
 | [IEBP003](rules/IEBP003.md) | `sample_ids`                    | eval, helper | Every Sample() passes id=                                                                           |
 | [IEBP004](rules/IEBP004.md) | `task_overridable_defaults`     | eval, helper | @task parameters naming a solver, scorer, metric, grader or model have defaults                     |

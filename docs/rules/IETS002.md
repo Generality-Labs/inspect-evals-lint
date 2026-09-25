@@ -8,10 +8,14 @@ The test directory and its sub-directories contain __init__.py.
 
 ## What it does
 
-Checks `<tests-root>/<name>/` and every directory beneath it for an `__init__.py`, ignoring cache directories. One diagnostic per directory. Skipped when the tests live directly under the tests root, where there is nothing to collide with, and for a helper package with no `tests/<name>/` directory.
+Checks `<tests-root>/<name>/` and every directory beneath it for an `__init__.py`, ignoring cache directories. One diagnostic per directory. Skipped with `tests-layout = "flat"`, the single-evaluation layout, whether the tests sit directly under the tests root or in a `tests/<name>/` directory of their own: with one evaluation there is no second test tree to collide with. Also skipped for a helper package with no `tests/<name>/` directory.
 
 ## Why is this bad?
 
 Per-evaluation test trees with duplicate module basenames (`test_scorer.py` in two evaluations) collide during pytest collection unless each tree is a package.
+
+## Options
+
+- `tests-layout`
 
 Suppress on a line with `# inspect-evals-lint: ignore[IETS002]` or `ignore[tests_init]`; select or ignore it in configuration by either, or by the prefix `IETS`.
