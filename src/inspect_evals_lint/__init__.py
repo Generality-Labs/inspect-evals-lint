@@ -2,7 +2,9 @@
 
 from inspect_evals_lint.config import (
     DEFAULT_PRESET,
+    PRESET_ALIASES,
     PRESETS,
+    REGISTER_CONFIG,
     SINGLE_EVAL_PRESET,
     ConfigError,
     LintConfig,
@@ -46,6 +48,8 @@ __all__ = [
     "CATEGORIES",
     "DEFAULT_PRESET",
     "PRESETS",
+    "PRESET_ALIASES",
+    "REGISTER_CONFIG",
     "RULE_STATUS_ORDER",
     "SINGLE_EVAL_PRESET",
     "ConfigError",

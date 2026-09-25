@@ -185,7 +185,7 @@ def _toml_value(value: object) -> str:
 
 def config_table() -> str:
     """The README configuration table: one row per :class:`LintConfig` field, one column per preset."""
-    presets = ("template", "monorepo", "register")
+    presets = ("multi-eval", "monorepo", "single-eval")
     lines = [
         "| Key | " + " | ".join(f"`{p}` preset" for p in presets) + " | Meaning |",
         "| --- | " + " | ".join("---" for _ in presets) + " | --- |",

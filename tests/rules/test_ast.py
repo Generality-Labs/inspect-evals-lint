@@ -128,7 +128,7 @@ class TestFileIteration:
         write(pkg / "images" / "Dockerfile", "FROM scratch\n")
         write(pkg / "images" / "build.py", "")
         write(pkg / "e.py", "")
-        ctx = context_for(pkg, replace(PRESETS["template"], exclude=("e/images/**",)))
+        ctx = context_for(pkg, replace(PRESETS["multi-eval"], exclude=("e/images/**",)))
         assert iter_dockerfiles(ctx) == [pkg / "Dockerfile"]
         assert iter_python_files(ctx) == [pkg / "e.py"]
         assert len(iter_dockerfiles(context_for(pkg))) == 2

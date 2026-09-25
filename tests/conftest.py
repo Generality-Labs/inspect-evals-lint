@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from inspect_evals_lint.config import PRESETS, LintConfig
+from inspect_evals_lint.config import PRESETS, REGISTER_CONFIG, LintConfig
 from inspect_evals_lint.context import LintContext
 
 EVAL_MAIN = """
@@ -66,7 +66,7 @@ def context_for(package_dir: Path, config: LintConfig | None = None) -> LintCont
         name=package_dir.name,
         path=package_dir,
         kind="eval",
-        config=config or PRESETS["template"],
+        config=config or PRESETS["multi-eval"],
         test_path=None,
         test_search_path=None,
     )
@@ -124,7 +124,7 @@ def make_monorepo(root: Path, eval_names: tuple[str, ...] = ("alpha",)) -> LintC
 
 def make_template_repo(root: Path, eval_names: tuple[str, ...] = ("alpha",)) -> LintConfig:
     """A repo shaped like inspect-evals-template: src/<eval>, entry points, no [tool] table."""
-    config = PRESETS["template"]
+    config = PRESETS["multi-eval"]
     entry_points = "\n".join(f'{name} = "{name}"' for name in eval_names)
     write(
         root / "pyproject.toml",
@@ -141,9 +141,11 @@ def make_register_repo(root: Path, name: str = "alpha") -> LintConfig:
     """A single-eval upstream repo as listed in the inspect_evals register.
 
     Tests sit directly under ``tests/``, the README is at the repo root and there
-    is no ``eval.yaml`` (the register entry carries the metadata).
+    is no ``eval.yaml`` (the register entry carries the metadata), so the config
+    is what the register lint service passes: ``single-eval`` with ``eval.yaml``
+    optional.
     """
-    config = PRESETS["register"]
+    config = REGISTER_CONFIG
     write(
         root / "pyproject.toml",
         '[project]\nname = "my-eval"\ndependencies = ["inspect-ai"]\n\n'

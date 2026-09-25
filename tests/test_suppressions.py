@@ -114,7 +114,7 @@ def test_apply_marks_covered_diagnostics(tmp_path: Path) -> None:
         Diagnostic("m", file=pkg / "a.py", line=1, severity="warning", rule=registry),
         Diagnostic("m", file=pkg / "data" / "b.py", line=1, rule=registry),
     ]
-    config = PRESETS["template"]
+    config = PRESETS["multi-eval"]
     config = type(config)(
         **{**config.__dict__, "per_file_ignores": (("src/e/data/**", ("IEFS004",)),)}
     )
@@ -159,7 +159,7 @@ def test_comments_in_excluded_files_are_not_read(tmp_path: Path) -> None:
     write(pkg / "challenges" / ".noautolint", "readme\n")
     write(pkg / "ok.py", "x = 1  # inspect-evals-lint: ignore[readme]\n")
     assert len(load_suppressions(context_for(pkg)).problems) == 3
-    config = replace(PRESETS["template"], exclude=("e/challenges/**",))  # root is pkg.parent
+    config = replace(PRESETS["multi-eval"], exclude=("e/challenges/**",))  # root is pkg.parent
     s = load_suppressions(context_for(pkg, config))
     assert list(s.line_level) == [pkg / "ok.py"]
     assert s.problems == []

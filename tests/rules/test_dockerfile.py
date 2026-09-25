@@ -52,7 +52,7 @@ def _config(coupling: str | None = "warn", **options: object) -> LintConfig:
     table: dict[str, object] = dict(options)
     if coupling is not None:
         table["host_lock_coupling"] = coupling
-    return replace(PRESETS["template"], rule_options={RULE_NAME: table})
+    return replace(PRESETS["multi-eval"], rule_options={RULE_NAME: table})
 
 
 def _context(root: Path, eval_path: Path, config: LintConfig) -> LintContext:
@@ -481,8 +481,8 @@ class TestHostLockCoupling:
 
     def test_default_is_allow_and_the_monorepo_preset_warns(self) -> None:
         assert host_lock_coupling({}) == "allow"
-        assert host_lock_coupling(PRESETS["template"].rule_options.get(RULE_NAME, {})) == "allow"
-        assert host_lock_coupling(PRESETS["register"].rule_options.get(RULE_NAME, {})) == "allow"
+        assert host_lock_coupling(PRESETS["multi-eval"].rule_options.get(RULE_NAME, {})) == "allow"
+        assert host_lock_coupling(PRESETS["single-eval"].rule_options.get(RULE_NAME, {})) == "allow"
         assert host_lock_coupling(PRESETS["monorepo"].rule_options[RULE_NAME]) == "warn"
 
     @pytest.mark.parametrize(

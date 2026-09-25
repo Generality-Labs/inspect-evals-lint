@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import fnmatch
 import tomllib
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path, PurePosixPath
@@ -235,39 +236,82 @@ class LintConfig:
         return self.rule_options.get(rule.name, {})
 
 
-PRESETS: dict[str, LintConfig] = {
-    # A standalone eval repo shaped like Generality-Labs/inspect-evals-template:
-    # evals directly under src/, registered via entry points.
-    "template": LintConfig(),
-    # The UKGovernmentBEIS/inspect_evals monorepo: evals under a shared package,
-    # registered by a hand-maintained module, some with isolated dependency sets.
-    # Its root project is the host, so a sandbox build that copies the root
-    # lock is coupled to unrelated dependency updates.
-    "monorepo": LintConfig(
-        source_root="src/inspect_evals",
-        import_prefix="inspect_evals",
-        registry="module",
-        registry_module="src/inspect_evals/_registry.py",
-        ignore_dirs=frozenset(),
-        isolated_packages_dir="packages",
-        per_eval_dependency_group=True,
-        rule_options={"dockerfile_locking": {"host_lock_coupling": "warn"}},
-    ),
-    # A single-evaluation repository, as listed in the inspect_evals register:
-    # one evaluation, tests directly under tests/ or in one tests/<name>/, README
-    # at the repo root, and eval.yaml optional because the register entry holds
-    # the metadata. Chosen automatically when nothing names a preset and the
-    # source root holds exactly one evaluation package.
-    "register": LintConfig(
-        tests_layout="flat",
-        readme_location="repo-root",
-        eval_yaml_required=False,
-    ),
-}
-DEFAULT_PRESET = "template"
+class _Presets(dict[str, LintConfig]):
+    """The presets by name; a deprecated name resolves to its replacement with a warning.
+
+    Iteration and ``in`` see only the current names, so listings and the
+    documentation table do not show the aliases; ``PRESETS["register"]`` keeps
+    working for one release so consumers can move at their own pace.
+    """
+
+    def __missing__(self, name: str) -> LintConfig:
+        if name not in PRESET_ALIASES:
+            raise KeyError(name)
+        warnings.warn(preset_deprecation(name), DeprecationWarning, stacklevel=2)
+        canonical, overrides = PRESET_ALIASES[name]
+        return replace(self[canonical], **overrides)
+
+
+PRESETS: dict[str, LintConfig] = _Presets(
+    {
+        # Several evaluation packages side by side under src/, each registered by an
+        # entry point: the layout Generality-Labs/inspect-evals-template produces.
+        "multi-eval": LintConfig(),
+        # The UKGovernmentBEIS/inspect_evals monorepo: evals under a shared package,
+        # registered by a hand-maintained module, some with isolated dependency sets.
+        # Its root project is the host, so a sandbox build that copies the root
+        # lock is coupled to unrelated dependency updates.
+        "monorepo": LintConfig(
+            source_root="src/inspect_evals",
+            import_prefix="inspect_evals",
+            registry="module",
+            registry_module="src/inspect_evals/_registry.py",
+            ignore_dirs=frozenset(),
+            isolated_packages_dir="packages",
+            per_eval_dependency_group=True,
+            rule_options={"dockerfile_locking": {"host_lock_coupling": "warn"}},
+        ),
+        # One evaluation package that is the whole repository: tests directly under
+        # tests/ or in one tests/<name>/, README at the repo root. Chosen
+        # automatically when nothing names a preset and the source root holds
+        # exactly one evaluation package.
+        "single-eval": LintConfig(
+            tests_layout="flat",
+            readme_location="repo-root",
+        ),
+    }
+)
+DEFAULT_PRESET = "multi-eval"
 """The preset when nothing names one and the source root does not hold exactly one evaluation package."""
-SINGLE_EVAL_PRESET = "register"
+SINGLE_EVAL_PRESET = "single-eval"
 """The preset when nothing names one and the source root holds exactly one evaluation package."""
+
+PRESET_ALIASES: dict[str, tuple[str, dict[str, object]]] = {
+    # The old names described where a repository was headed rather than how it
+    # is laid out. Each maps to the layout preset it was, plus whatever setting
+    # was really about the destination.
+    "template": ("multi-eval", {}),
+    "register": ("single-eval", {"eval_yaml_required": False}),
+}
+"""Deprecated preset names: ``{old: (current, overrides)}``. Accepted with a warning for one release."""
+
+REGISTER_CONFIG: LintConfig = replace(PRESETS["single-eval"], eval_yaml_required=False)
+"""What the inspect_evals register lint service uses: the single-evaluation layout with ``eval.yaml`` optional, because the register entry holds the metadata."""
+
+
+def preset_deprecation(name: str) -> str:
+    """The message for a deprecated preset name, naming the table that replaces it."""
+    canonical, overrides = PRESET_ALIASES[name]
+    replacement = f'preset = "{canonical}"'
+    if overrides.get("eval_yaml_required") is False:
+        replacement += (
+            " and, if the inspect_evals register entry holds your metadata, "
+            "eval-yaml-required = false"
+        )
+    return (
+        f"preset {name!r} is deprecated and will be removed in a later release; use {replacement}"
+    )
+
 
 _FIELD_NAMES = {f.name for f in fields(LintConfig)}
 
@@ -388,10 +432,14 @@ def config_from_table(table: Mapping[str, Any]) -> LintConfig:
 
     normalised = {key.replace("-", "_"): value for key, value in table.items()}
     preset_name = normalised.pop("preset", DEFAULT_PRESET)
+    alias_overrides: dict[str, object] = {}
+    if preset_name in PRESET_ALIASES:
+        warnings.warn(preset_deprecation(preset_name), DeprecationWarning, stacklevel=2)
+        preset_name, alias_overrides = PRESET_ALIASES[preset_name]
     if preset_name not in PRESETS:
         raise ConfigError(f"Unknown preset {preset_name!r}; choose from {sorted(PRESETS)}")
 
-    overrides: dict[str, object] = {}
+    overrides: dict[str, object] = dict(alias_overrides)
     rule_options: dict[str, Mapping[str, object]] = {}
     for key, value in normalised.items():
         if key in _REMOVED_KEYS:
