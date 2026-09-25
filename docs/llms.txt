@@ -14,8 +14,8 @@ Every HTML page on this site is also available as raw Markdown at the same path 
 ## File structure
 
 - [IEFS001 package_location](https://inspect-evals-lint.generality.org/rules/IEFS001.md): The package exists at <source-root>/<name>/ with an __init__.py
-- [IEFS002 main_file](https://inspect-evals-lint.generality.org/rules/IEFS002.md): <name>.py or tasks.py exists and defines at least one @task function
-- [IEFS003 init_exports](https://inspect-evals-lint.generality.org/rules/IEFS003.md): __init__.py exports every @task function from the main file
+- [IEFS002 main_file](https://inspect-evals-lint.generality.org/rules/IEFS002.md): Some module defines a @task function, preferably <name>.py or tasks.py
+- [IEFS003 init_exports](https://inspect-evals-lint.generality.org/rules/IEFS003.md): __init__.py exports every @task function in the package
 - [IEFS004 registry](https://inspect-evals-lint.generality.org/rules/IEFS004.md): The evaluation is registered so inspect eval can find its tasks
 - [IEFS005 eval_yaml](https://inspect-evals-lint.generality.org/rules/IEFS005.md): eval.yaml exists, is a mapping, and defines the required fields
 - [IEFS006 readme](https://inspect-evals-lint.generality.org/rules/IEFS006.md): README.md exists and has no TODO markers
