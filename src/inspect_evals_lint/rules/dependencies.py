@@ -8,7 +8,7 @@ import re
 import sys
 import tomllib
 from collections.abc import Iterable
-from importlib.metadata import packages_distributions
+from importlib.metadata import PackageNotFoundError, packages_distributions, requires
 from pathlib import Path
 from typing import Any, cast
 
@@ -65,13 +65,54 @@ def _names(deps: object) -> set[str]:
     return {name for dep in items if isinstance(dep, str) and (name := _extract_package_name(dep))}
 
 
-def _get_core_dependencies(repo_root: Path) -> frozenset[str]:
-    """``[project].dependencies`` of the root pyproject."""
+def _declared_core_dependencies(repo_root: Path) -> frozenset[str]:
+    """``[project].dependencies`` of the root pyproject, normalised."""
     pyproject_path = repo_root / "pyproject.toml"
     if not pyproject_path.exists():
         return frozenset()
     data = _load_toml(pyproject_path)
     return frozenset(_names(data.get("project", {}).get("dependencies", [])))
+
+
+def _installed_requirements(dist: str) -> frozenset[str]:
+    """Normalised names of what the installed distribution ``dist`` requires unconditionally.
+
+    Requirements guarded by an ``extra ==`` marker are left out: nobody asked for
+    that extra. Empty when ``dist`` is not installed, so the closure below only
+    grows inside the project's own environment.
+    """
+    try:
+        listed = requires(dist) or []
+    except PackageNotFoundError:
+        return frozenset()
+    names: set[str] = set()
+    for requirement in listed:
+        spec, _, marker = requirement.partition(";")
+        if "extra" in marker:
+            continue
+        name = _extract_package_name(spec)
+        if name:
+            names.add(name)
+    return frozenset(names)
+
+
+def _get_core_dependencies(repo_root: Path) -> frozenset[str]:
+    """``[project].dependencies`` and, for those installed, everything they require in turn.
+
+    A transitive requirement of a core dependency is installed by construction,
+    so importing it needs no declaration of its own: ``inspect_ai`` returns
+    pydantic models from its public API, and every evaluation that types one
+    imports ``pydantic``.
+    """
+    closure: set[str] = set()
+    pending = list(_declared_core_dependencies(repo_root))
+    while pending:
+        name = pending.pop()
+        if name in closure:
+            continue
+        closure.add(name)
+        pending.extend(_installed_requirements(name))
+    return frozenset(closure)
 
 
 # Import name -> distribution name for packages that may not be installed.
@@ -388,13 +429,19 @@ def external_dependencies(ctx: LintContext) -> Iterable[Finding]:
 
     ## What it does
     Collects every import in the package and treats one as external when it is not
-    in the standard library, not in ``[project].dependencies``, not local to the
-    package and not one of the repository's own packages (the ``import-prefix``
-    package, and every package under ``source-root`` such as a ``utils`` helper). For an evaluation, each external
+    in the standard library, not in ``[project].dependencies`` or (when the
+    linter runs in the project's environment) something those dependencies
+    require in turn, not local to the package and not one of the repository's
+    own packages (the ``import-prefix`` package, and every package under
+    ``source-root`` such as a ``utils`` helper). For an evaluation, each external
     import must be declared in some ``[project.optional-dependencies]`` group or
     ``[dependency-groups]`` entry (other than ``dev``), or in the isolated
-    package's ``pyproject.toml`` when ``isolated-packages-dir`` is set, and the
-    evaluation must own a group named after itself unless it is isolated.
+    package's ``pyproject.toml`` when ``isolated-packages-dir`` is set. With
+    ``per-eval-dependency-group = true`` (the ``monorepo`` preset) the evaluation
+    must also own a group named after itself unless it is isolated, so one
+    evaluation's dependencies can be installed without the rest; a standalone
+    repository declares its dependencies in ``[project].dependencies`` and any
+    extra it likes.
 
     For a helper package the rule is different, because every evaluation that
     imports the helper loads whatever it imports at module level: those imports
@@ -412,12 +459,22 @@ def external_dependencies(ctx: LintContext) -> Iterable[Finding]:
     person with ``ModuleNotFoundError``, often only when a particular sample runs.
 
     ## Example
+    A standalone repository:
+    ```toml
+    [project]
+    dependencies = ["inspect_ai", "datasets>=4.0"]
+
+    [project.optional-dependencies]
+    modal = ["inspect_sandboxes"]
+    ```
+    The inspect_evals monorepo, with `per-eval-dependency-group = true`:
     ```toml
     [project.optional-dependencies]
     my_eval = ["datasets>=4.0", "scikit-learn"]
     ```
 
     ## Options
+    - `per-eval-dependency-group`
     - `isolated-packages-dir`
     - `import-prefix`
     """
@@ -450,10 +507,17 @@ def external_dependencies(ctx: LintContext) -> Iterable[Finding]:
     if missing:
         yield from _undeclared_diagnostics(
             missing,
-            "Import {imp!r} (package: {dist}) is not declared in any pyproject.toml optional-dependency group",
-            f"add it to the [project.optional-dependencies] group named {ctx.name!r}",
+            "Import {imp!r} (package: {dist}) is not declared in pyproject.toml",
+            f"add it to the [project.optional-dependencies] group named {ctx.name!r}"
+            if ctx.config.per_eval_dependency_group
+            else "add it to [project].dependencies, or to an optional-dependencies extra "
+            "if only some configurations need it",
         )
-    elif isolated_deps is None and ctx.name not in optional_deps:
+    elif (
+        ctx.config.per_eval_dependency_group
+        and isolated_deps is None
+        and ctx.name not in optional_deps
+    ):
         yield Diagnostic(
             f"Evaluation uses external packages ({sorted(external)[:3]}) but has no dedicated "
             "optional-dependency group",

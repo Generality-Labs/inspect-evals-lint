@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- `external_dependencies` (IECQ004) no longer assumes the inspect_evals dependency layout. What a `[project].dependencies` entry requires in turn now counts as a core dependency when the linter runs in the project's environment (`importlib.metadata.requires`, extras excluded), so importing `pydantic`, which `inspect_ai`'s public API returns, needs no declaration of its own. The requirement that an evaluation own an optional-dependency group named after itself is now the `per-eval-dependency-group` key, `true` in the `monorepo` preset and `false` elsewhere: a standalone repository declares its dependencies in `[project].dependencies` and any extra, and the template says so, but the rule failed it for exactly that. The hint for an undeclared import names the right home for the preset ([#36](https://github.com/Generality-Labs/inspect-evals-lint/issues/36)).
+
 ## [0.7.0] - 2026-09-25
 
 Two best-practice rules for dataset workarounds, following the inspect_evals audit of `filter_duplicate_ids` ([UKGovernmentBEIS/inspect_evals#2528](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2528)) that found a keep-first duplicate filter had silently truncated three datasets.

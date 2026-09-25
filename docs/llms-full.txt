@@ -64,6 +64,7 @@ preset = "template"   # or "monorepo" / "register"
 | `ignore-dirs`               | `["examples"]`                                               | `[]`                                                         | `["examples"]`                                               | Sub-directories of `source_root` that are never linted.                                                                                                                                                                                                                                                               |
 | `eval-yaml-required-fields` | `["title", "description", "group", "contributors", "tasks"]` | `["title", "description", "group", "contributors", "tasks"]` | `["title", "description", "group", "contributors", "tasks"]` | Top-level keys every `eval.yaml` must define.                                                                                                                                                                                                                                                                         |
 | `isolated-packages-dir`     | unset                                                        | `packages`                                                   | unset                                                        | Directory of per-eval `<dir>/<name>/pyproject.toml` files that declare an eval's dependencies instead of a root extra.                                                                                                                                                                                                |
+| `per-eval-dependency-group` | `false`                                                      | `true`                                                       | `false`                                                      | Whether every evaluation with third-party imports must own an `[project.optional-dependencies]` group named after itself, so one evaluation's dependencies install without the rest (the inspect_evals convention). False accepts `[project].dependencies` and any extra, as a standalone repository declares them.   |
 | `select`                    | `["IE"]`                                                     | `["IE"]`                                                     | `["IE"]`                                                     | Rules to run: names, codes or code prefixes. The default prefix selects every rule.                                                                                                                                                                                                                                   |
 | `ignore`                    | `[]`                                                         | `[]`                                                         | `[]`                                                         | Rules never to run, in the same forms as `select`. Wins over `select`.                                                                                                                                                                                                                                                |
 | `exclude`                   | `[]`                                                         | `[]`                                                         | `[]`                                                         | Glob patterns, relative to the repository root, of files the AST-based rules never read. For code that is shipped into a sandbox rather than run on the host, such as challenge sources that are not even valid Python 3.                                                                                             |
@@ -632,7 +633,7 @@ Third-party imports are declared in pyproject.toml.
 
 ## What it does
 
-Collects every import in the package and treats one as external when it is not in the standard library, not in `[project].dependencies`, not local to the package and not one of the repository's own packages (the `import-prefix` package, and every package under `source-root` such as a `utils` helper). For an evaluation, each external import must be declared in some `[project.optional-dependencies]` group or `[dependency-groups]` entry (other than `dev`), or in the isolated package's `pyproject.toml` when `isolated-packages-dir` is set, and the evaluation must own a group named after itself unless it is isolated.
+Collects every import in the package and treats one as external when it is not in the standard library, not in `[project].dependencies` or (when the linter runs in the project's environment) something those dependencies require in turn, not local to the package and not one of the repository's own packages (the `import-prefix` package, and every package under `source-root` such as a `utils` helper). For an evaluation, each external import must be declared in some `[project.optional-dependencies]` group or `[dependency-groups]` entry (other than `dev`), or in the isolated package's `pyproject.toml` when `isolated-packages-dir` is set. With `per-eval-dependency-group = true` (the `monorepo` preset) the evaluation must also own a group named after itself unless it is isolated, so one evaluation's dependencies can be installed without the rest; a standalone repository declares its dependencies in `[project].dependencies` and any extra it likes.
 
 For a helper package the rule is different, because every evaluation that imports the helper loads whatever it imports at module level: those imports must be in `[project].dependencies`, while imports inside a function, a `try` block or an `if TYPE_CHECKING:` block are deferred and only need to be declared in some group or in any isolated package. Helpers need no group of their own. One diagnostic per import, at its first site.
 
@@ -644,6 +645,18 @@ An import nobody declared works on the author's machine and fails for the next p
 
 ## Example
 
+A standalone repository:
+
+```toml
+[project]
+dependencies = ["inspect_ai", "datasets>=4.0"]
+
+[project.optional-dependencies]
+modal = ["inspect_sandboxes"]
+```
+
+The inspect_evals monorepo, with `per-eval-dependency-group = true`:
+
 ```toml
 [project.optional-dependencies]
 my_eval = ["datasets>=4.0", "scikit-learn"]
@@ -651,6 +664,7 @@ my_eval = ["datasets>=4.0", "scikit-learn"]
 
 ## Options
 
+- `per-eval-dependency-group`
 - `isolated-packages-dir`
 - `import-prefix`
 
