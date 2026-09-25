@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
 from inspect_evals_lint.context import LintContext
@@ -80,20 +81,26 @@ def _no_test_dir(ctx: LintContext) -> Diagnostic:
     return Diagnostic("No test directory exists", file=_expected_test_dir(ctx))
 
 
+MOCK_MODEL_PREFIX = "mockllm/"
+"""Every model name under this provider is the mock model, whatever follows the slash."""
+
+
 @rule(
     code="IETS003",
     name="e2e_test",
     category="tests",
-    summary="Some test runs eval() against mockllm/model",
+    summary="Some test runs eval() against a mockllm/ model",
     references=(inspect_docs("reference/inspect_ai", "Reference: eval()", "eval"),),
 )
 def e2e_test(ctx: LintContext) -> Iterable[Finding]:
-    """Some test runs ``eval()`` against ``mockllm/model``.
+    """Some test runs ``eval()`` against a ``mockllm/`` model.
 
     ## What it does
     Looks through the test directory for a file that calls ``eval()`` or
-    ``eval_async()`` (or an alias imported from ``inspect_ai``) and mentions
-    ``mockllm/model``.
+    ``eval_async()`` (or an alias imported from ``inspect_ai``) and mentions a
+    model under the ``mockllm/`` provider. ``mockllm/model`` is the usual name,
+    but any name after the prefix is the same mock, and a test that scripts
+    ``custom_outputs`` per case commonly names each one (``mockllm/epochs``).
 
     ## Why is this bad?
     An end-to-end run against the mock model catches wiring mistakes, a dataset
@@ -120,8 +127,8 @@ def e2e_test(ctx: LintContext) -> Iterable[Finding]:
         except (SyntaxError, UnicodeDecodeError, OSError) as e:
             unparsable.append(Diagnostic(f"Could not parse file: {e}", file=py_file, line=1))
             continue
-        if _has_eval_call(tree) and "mockllm/model" in content:
-            yield Outcome("pass", "E2E test with eval() and mockllm/model found")
+        if _has_eval_call(tree) and MOCK_MODEL_PREFIX in content:
+            yield Outcome("pass", f"E2E test with eval() and a {MOCK_MODEL_PREFIX} model found")
             return
 
     if unparsable:
@@ -186,11 +193,56 @@ def record_to_sample_test(ctx: LintContext) -> Iterable[Finding]:
         )
 
 
+@dataclass(frozen=True)
+class DecoratedFunction:
+    """A function carrying one of the component decorators a rule looks for."""
+
+    file: Path
+    name: str
+    decorator: str
+    line: int
+    column: int | None
+    registered_name: str | None = None
+    """The literal ``name=`` the decorator registers the component under, when it differs from the function's."""
+
+    @property
+    def mentions(self) -> tuple[str, ...]:
+        """The names a test may refer to the component by."""
+        if self.registered_name is None or self.registered_name == self.name:
+            return (self.name,)
+        return (self.name, self.registered_name)
+
+
+def _component_decorator(
+    node: ast.FunctionDef, decorator_names: tuple[str, ...]
+) -> tuple[str, str | None] | None:
+    """``(decorator, registered name)`` of the first component decorator on ``node``, else None."""
+    for decorator in node.decorator_list:
+        name = get_decorator_name(decorator)
+        if name in decorator_names:
+            return name, _registered_name(decorator)
+    return None
+
+
+def _registered_name(decorator: ast.expr) -> str | None:
+    """The string literal passed as ``name=`` to a decorator call, if any."""
+    if not isinstance(decorator, ast.Call):
+        return None
+    for keyword in decorator.keywords:
+        if (
+            keyword.arg == "name"
+            and isinstance(keyword.value, ast.Constant)
+            and isinstance(keyword.value.value, str)
+        ):
+            return keyword.value.value
+    return None
+
+
 def _find_decorated_functions(
-    ctx: LintContext, decorator_name: str
-) -> tuple[list[tuple[Path, str, int, int | None]], list[Diagnostic]]:
-    """``(file, name, line, column)`` of functions decorated with ``decorator_name``, plus parse diagnostics."""
-    functions: list[tuple[Path, str, int, int | None]] = []
+    ctx: LintContext, decorator_names: tuple[str, ...]
+) -> tuple[list[DecoratedFunction], list[Diagnostic]]:
+    """Functions decorated with any of ``decorator_names``, plus parse diagnostics."""
+    functions: list[DecoratedFunction] = []
     failed: list[Diagnostic] = []
     for py_file in iter_python_files(ctx):
         outcome = safe_parse_file(py_file)
@@ -199,42 +251,63 @@ def _find_decorated_functions(
                 Diagnostic(f"Could not parse file: {outcome.error}", file=py_file, line=1)
             )
             continue
-        functions.extend(
-            (py_file, node.name, node.lineno, column_of(node))
-            for node in ast.walk(outcome.tree)
-            if isinstance(node, ast.FunctionDef)
-            and any(get_decorator_name(d) == decorator_name for d in node.decorator_list)
-        )
+        for node in ast.walk(outcome.tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            found = _component_decorator(node, decorator_names)
+            if found is not None:
+                decorator, registered_name = found
+                functions.append(
+                    DecoratedFunction(
+                        py_file,
+                        node.name,
+                        decorator,
+                        node.lineno,
+                        column_of(node),
+                        registered_name,
+                    )
+                )
     return functions, failed
 
 
-def _custom_component_tests(ctx: LintContext, decorator_type: str) -> Iterable[Finding]:
-    plural = f"{decorator_type}s"
+def _custom_component_tests(
+    ctx: LintContext, decorator_names: tuple[str, ...], label: str
+) -> Iterable[Finding]:
+    """One diagnostic per function decorated with any of ``decorator_names`` that no test mentions.
+
+    A mention of the function's name or of the literal ``name=`` its decorator
+    registers it under counts. ``label`` is the plural noun for the messages
+    (``solvers``, ``tools``).
+    """
     if ctx.test_search_path is None:
         yield _no_test_dir(ctx)
         return
 
-    functions, failed = _find_decorated_functions(ctx, decorator_type)
+    functions, failed = _find_decorated_functions(ctx, decorator_names)
     yield from failed
 
     if not functions:
-        yield Outcome("skip", f"No custom {plural} found")
+        yield Outcome("skip", f"No custom {label} found")
         return
 
+    test_files = sorted(ctx.test_search_path.rglob("*.py"))
     untested = 0
-    for file, name, line, column in functions:
-        if _first_mention(sorted(ctx.test_search_path.rglob("*.py")), name) is not None:
+    for function in functions:
+        if any(_first_mention(test_files, needle) is not None for needle in function.mentions):
             continue
         untested += 1
+        registered = (
+            f" (registered as {function.registered_name!r})" if len(function.mentions) > 1 else ""
+        )
         yield Diagnostic(
-            f"@{decorator_type} {name}() is not mentioned by any test",
-            file=file,
-            line=line,
-            column=column,
-            hint=f"add a test that exercises {name}()",
+            f"@{function.decorator} {function.name}(){registered} is not mentioned by any test",
+            file=function.file,
+            line=function.line,
+            column=function.column,
+            hint=f"add a test that exercises {function.name}()",
         )
     if not untested:
-        yield Outcome("pass", f"All {len(functions)} custom {plural} appear tested")
+        yield Outcome("pass", f"All {len(functions)} custom {label} appear tested")
 
 
 @rule(
@@ -242,25 +315,30 @@ def _custom_component_tests(ctx: LintContext, decorator_type: str) -> Iterable[F
     name="custom_solver_tests",
     category="tests",
     scopes=("eval", "helper"),
-    summary="Every @solver function name appears somewhere in the tests",
-    references=(inspect_docs("solvers", "Solvers: Custom Solvers", "custom-solvers"),),
+    summary="Every @solver or @agent function name appears somewhere in the tests",
+    references=(
+        inspect_docs("solvers", "Solvers: Custom Solvers", "custom-solvers"),
+        inspect_docs("agent-custom", "Custom Agents"),
+    ),
 )
 def custom_solver_tests(ctx: LintContext) -> Iterable[Finding]:
-    """Every ``@solver`` function name appears somewhere in the tests.
+    """Every ``@solver`` or ``@agent`` function name appears somewhere in the tests.
 
     ## What it does
-    Finds functions decorated with ``@solver`` in the package and checks each name
-    appears in a test file. For an evaluation the search covers ``tests/<name>/``;
-    for a helper package, the whole tests root, because shared components are
-    usually tested next to the evaluation that motivated them. One diagnostic per
-    untested function. This is a presence check, not a quality check.
+    Finds functions decorated with ``@solver`` or ``@agent`` in the package and
+    checks each name appears in a test file. An agent is the solver of a sandboxed
+    evaluation, so it is held to the same standard. For an evaluation the search
+    covers ``tests/<name>/``; for a helper package, the whole tests root, because
+    shared components are usually tested next to the evaluation that motivated
+    them. One diagnostic per untested function. This is a presence check, not a
+    quality check.
 
     ## Why is this bad?
-    A custom solver is the evaluation's own logic, the part no upstream test
-    covers. One test that at least constructs it catches import errors and
+    A custom solver or agent is the evaluation's own logic, the part no upstream
+    test covers. One test that at least constructs it catches import errors and
     signature changes.
     """
-    yield from _custom_component_tests(ctx, "solver")
+    yield from _custom_component_tests(ctx, ("solver", "agent"), "solvers and agents")
 
 
 @rule(
@@ -286,7 +364,7 @@ def custom_scorer_tests(ctx: LintContext) -> Iterable[Finding]:
     covers. One test that at least constructs it catches import errors and
     signature changes.
     """
-    yield from _custom_component_tests(ctx, "scorer")
+    yield from _custom_component_tests(ctx, ("scorer",), "scorers")
 
 
 @rule(
@@ -302,7 +380,10 @@ def custom_tool_tests(ctx: LintContext) -> Iterable[Finding]:
 
     ## What it does
     Finds functions decorated with ``@tool`` in the package and checks each name
-    appears in a test file. For an evaluation the search covers ``tests/<name>/``;
+    appears in a test file. A tool registered under another name with
+    ``@tool(name="submit")`` is also satisfied by a mention of that name, since
+    that is what the tests and the transcript call it. For an evaluation the
+    search covers ``tests/<name>/``;
     for a helper package, the whole tests root, because shared components are
     usually tested next to the evaluation that motivated them. One diagnostic per
     untested function. This is a presence check, not a quality check.
@@ -312,7 +393,7 @@ def custom_tool_tests(ctx: LintContext) -> Iterable[Finding]:
     covers. One test that at least constructs it catches import errors and
     signature changes.
     """
-    yield from _custom_component_tests(ctx, "tool")
+    yield from _custom_component_tests(ctx, ("tool",), "tools")
 
 
 EXCLUDED_TEST_DIRS = {"__pycache__", ".mypy_cache", ".pytest_cache"}

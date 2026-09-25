@@ -166,14 +166,14 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 
 ## File structure
 
-| Code                        | Rule               | Applies to   | Summary                                                              |
-| --------------------------- | ------------------ | ------------ | -------------------------------------------------------------------- |
-| [IEFS001](rules/IEFS001.md) | `package_location` | eval, helper | The package exists at <source-root>/<name>/ with an __init__.py      |
-| [IEFS002](rules/IEFS002.md) | `main_file`        | eval         | <name>.py or tasks.py exists and defines at least one @task function |
-| [IEFS003](rules/IEFS003.md) | `init_exports`     | eval         | __init__.py exports every @task function from the main file          |
-| [IEFS004](rules/IEFS004.md) | `registry`         | eval         | The evaluation is registered so inspect eval can find its tasks      |
-| [IEFS005](rules/IEFS005.md) | `eval_yaml`        | eval         | eval.yaml exists, is a mapping, and defines the required fields      |
-| [IEFS006](rules/IEFS006.md) | `readme`           | eval         | README.md exists and has no TODO markers                             |
+| Code                        | Rule               | Applies to   | Summary                                                                |
+| --------------------------- | ------------------ | ------------ | ---------------------------------------------------------------------- |
+| [IEFS001](rules/IEFS001.md) | `package_location` | eval, helper | The package exists at <source-root>/<name>/ with an __init__.py        |
+| [IEFS002](rules/IEFS002.md) | `main_file`        | eval         | Some module defines a @task function, preferably <name>.py or tasks.py |
+| [IEFS003](rules/IEFS003.md) | `init_exports`     | eval         | __init__.py exports every @task function in the package                |
+| [IEFS004](rules/IEFS004.md) | `registry`         | eval         | The evaluation is registered so inspect eval can find its tasks        |
+| [IEFS005](rules/IEFS005.md) | `eval_yaml`        | eval         | eval.yaml exists, is a mapping, and defines the required fields        |
+| [IEFS006](rules/IEFS006.md) | `readme`           | eval         | README.md exists and has no TODO markers                               |
 
 ## Code quality
 
@@ -187,21 +187,21 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 
 ## Tests
 
-| Code                        | Rule                    | Applies to   | Summary                                                             |
-| --------------------------- | ----------------------- | ------------ | ------------------------------------------------------------------- |
-| [IETS001](rules/IETS001.md) | `tests_exist`           | eval         | A test directory exists for the evaluation                          |
-| [IETS002](rules/IETS002.md) | `tests_init`            | eval, helper | The test directory and its sub-directories contain __init__.py      |
-| [IETS003](rules/IETS003.md) | `e2e_test`              | eval         | Some test runs eval() against mockllm/model                         |
-| [IETS004](rules/IETS004.md) | `record_to_sample_test` | eval         | record_to_sample is exercised by a test when the evaluation uses it |
-| [IETS005](rules/IETS005.md) | `custom_solver_tests`   | eval, helper | Every @solver function name appears somewhere in the tests          |
-| [IETS006](rules/IETS006.md) | `custom_scorer_tests`   | eval, helper | Every @scorer function name appears somewhere in the tests          |
-| [IETS007](rules/IETS007.md) | `custom_tool_tests`     | eval, helper | Every @tool function name appears somewhere in the tests            |
+| Code                        | Rule                    | Applies to   | Summary                                                              |
+| --------------------------- | ----------------------- | ------------ | -------------------------------------------------------------------- |
+| [IETS001](rules/IETS001.md) | `tests_exist`           | eval         | A test directory exists for the evaluation                           |
+| [IETS002](rules/IETS002.md) | `tests_init`            | eval, helper | The test directory and its sub-directories contain __init__.py       |
+| [IETS003](rules/IETS003.md) | `e2e_test`              | eval         | Some test runs eval() against a mockllm/ model                       |
+| [IETS004](rules/IETS004.md) | `record_to_sample_test` | eval         | record_to_sample is exercised by a test when the evaluation uses it  |
+| [IETS005](rules/IETS005.md) | `custom_solver_tests`   | eval, helper | Every @solver or @agent function name appears somewhere in the tests |
+| [IETS006](rules/IETS006.md) | `custom_scorer_tests`   | eval, helper | Every @scorer function name appears somewhere in the tests           |
+| [IETS007](rules/IETS007.md) | `custom_tool_tests`     | eval, helper | Every @tool function name appears somewhere in the tests             |
 
 ## Best practices
 
 | Code                        | Rule                            | Applies to   | Summary                                                                                             |
 | --------------------------- | ------------------------------- | ------------ | --------------------------------------------------------------------------------------------------- |
-| [IEBP001](rules/IEBP001.md) | `get_model_location`            | eval, helper | get_model() is only called inside @solver or @scorer functions                                      |
+| [IEBP001](rules/IEBP001.md) | `get_model_location`            | eval, helper | get_model() is only called inside @solver, @scorer or @agent functions                              |
 | [IEBP002](rules/IEBP002.md) | `model_role_resolution`         | eval, helper | get_model(role=...) resolves deliberately: an explicit model, default= or required=True             |
 | [IEBP003](rules/IEBP003.md) | `sample_ids`                    | eval, helper | Every Sample() passes id=                                                                           |
 | [IEBP004](rules/IEBP004.md) | `task_overridable_defaults`     | eval, helper | @task parameters naming a solver, scorer, metric, grader or model have defaults                     |
@@ -364,23 +364,24 @@ Suppress on a line with `# inspect-evals-lint: ignore[IEFS001]` or `ignore[packa
 
 # IEFS002: main_file
 
-<name>.py or tasks.py exists and defines at least one @task function.
+Some module defines a @task function, preferably <name>.py or tasks.py.
 
 **Category:** file_structure · **Applies to:** eval
 
 ## What it does
 
-Looks for `<name>.py` first and `tasks.py` second, preferring whichever defines a `@task`, so a stray empty `<name>.py` does not hide the tasks in `tasks.py`. Fails when neither exists, when the file does not parse, or when it defines no task.
+Reads every Python file in the package for `@task` functions. Passes when `<name>.py` or `tasks.py` defines one, preferring whichever does so a stray empty `<name>.py` does not hide the tasks in `tasks.py`. Warns, once per module, when the tasks live only in other modules. Fails when no module defines a task, or when the conventional file exists but does not parse.
 
 ## Why is this bad?
 
-Keeping tasks in a predictably named module lets tooling and readers find them without opening every file in the package.
+A package with no task is not an evaluation, whatever else it contains. Keeping the tasks in a predictably named module is a lesser matter, so it is a warning: it lets readers find them without opening every file, but a package that names its task module after the benchmark still runs.
 
 ## Example
 
 ```text
 src/my_eval/my_eval.py     # defines @task my_eval()
 src/my_eval/tasks.py       # accepted alternative
+src/my_eval/v8.py          # defines the tasks: warned, not failed
 ```
 
 ## See also
@@ -395,13 +396,13 @@ Suppress on a line with `# inspect-evals-lint: ignore[IEFS002]` or `ignore[main_
 
 # IEFS003: init_exports
 
-__init__.py exports every @task function from the main file.
+__init__.py exports every @task function in the package.
 
 **Category:** file_structure · **Applies to:** eval
 
 ## What it does
 
-Reads the task functions from the main file and checks each name appears in `__init__.py`, either in `__all__` or imported with `from ... import`. One diagnostic per missing task.
+Reads the task functions from every module that defines one and checks each name appears in `__init__.py`, either in `__all__` or imported with `from ... import`. One diagnostic per missing task, with the import to add.
 
 ## Why is this bad?
 
@@ -743,13 +744,13 @@ Suppress on a line with `# inspect-evals-lint: ignore[IETS002]` or `ignore[tests
 
 # IETS003: e2e_test
 
-Some test runs eval() against mockllm/model.
+Some test runs eval() against a mockllm/ model.
 
 **Category:** tests · **Applies to:** eval
 
 ## What it does
 
-Looks through the test directory for a file that calls `eval()` or `eval_async()` (or an alias imported from `inspect_ai`) and mentions `mockllm/model`.
+Looks through the test directory for a file that calls `eval()` or `eval_async()` (or an alias imported from `inspect_ai`) and mentions a model under the `mockllm/` provider. `mockllm/model` is the usual name, but any name after the prefix is the same mock, and a test that scripts `custom_outputs` per case commonly names each one (`mockllm/epochs`).
 
 ## Why is this bad?
 
@@ -799,21 +800,22 @@ Suppress on a line with `# inspect-evals-lint: ignore[IETS004]` or `ignore[recor
 
 # IETS005: custom_solver_tests
 
-Every @solver function name appears somewhere in the tests.
+Every @solver or @agent function name appears somewhere in the tests.
 
 **Category:** tests · **Applies to:** eval, helper
 
 ## What it does
 
-Finds functions decorated with `@solver` in the package and checks each name appears in a test file. For an evaluation the search covers `tests/<name>/`; for a helper package, the whole tests root, because shared components are usually tested next to the evaluation that motivated them. One diagnostic per untested function. This is a presence check, not a quality check.
+Finds functions decorated with `@solver` or `@agent` in the package and checks each name appears in a test file. An agent is the solver of a sandboxed evaluation, so it is held to the same standard. For an evaluation the search covers `tests/<name>/`; for a helper package, the whole tests root, because shared components are usually tested next to the evaluation that motivated them. One diagnostic per untested function. This is a presence check, not a quality check.
 
 ## Why is this bad?
 
-A custom solver is the evaluation's own logic, the part no upstream test covers. One test that at least constructs it catches import errors and signature changes.
+A custom solver or agent is the evaluation's own logic, the part no upstream test covers. One test that at least constructs it catches import errors and signature changes.
 
 ## See also
 
 - [Solvers: Custom Solvers](https://inspect.aisi.org.uk/solvers.html#custom-solvers)
+- [Custom Agents](https://inspect.aisi.org.uk/agent-custom.html)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IETS005]` or `ignore[custom_solver_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.
 
@@ -851,7 +853,7 @@ Every @tool function name appears somewhere in the tests.
 
 ## What it does
 
-Finds functions decorated with `@tool` in the package and checks each name appears in a test file. For an evaluation the search covers `tests/<name>/`; for a helper package, the whole tests root, because shared components are usually tested next to the evaluation that motivated them. One diagnostic per untested function. This is a presence check, not a quality check.
+Finds functions decorated with `@tool` in the package and checks each name appears in a test file. A tool registered under another name with `@tool(name="submit")` is also satisfied by a mention of that name, since that is what the tests and the transcript call it. For an evaluation the search covers `tests/<name>/`; for a helper package, the whole tests root, because shared components are usually tested next to the evaluation that motivated them. One diagnostic per untested function. This is a presence check, not a quality check.
 
 ## Why is this bad?
 
@@ -868,17 +870,17 @@ Suppress on a line with `# inspect-evals-lint: ignore[IETS007]` or `ignore[custo
 
 # IEBP001: get_model_location
 
-get_model() is only called inside @solver or @scorer functions.
+get_model() is only called inside @solver, @scorer or @agent functions.
 
 **Category:** best_practices · **Applies to:** eval, helper
 
 ## What it does
 
-Warns on each `get_model()` call that is not inside a function decorated with `@solver` or `@scorer`.
+Warns on each `get_model()` call that is not inside a function decorated with `@solver`, `@scorer` or `@agent`. An agent is the solver of a sandboxed evaluation, and its `execute` runs per sample just as a solver's does.
 
 ## Why is this bad?
 
-Resolving a concrete model at import time or inside `@task` fixes it before the caller can choose one. Resolving it inside the solver or scorer keeps the task declarative and lets `--model-role` and task parameters override it.
+Resolving a concrete model at import time or inside `@task` fixes it before the caller can choose one. Resolving it inside the solver, scorer or agent keeps the task declarative and lets `--model-role` and task parameters override it.
 
 ## Example
 
@@ -906,6 +908,7 @@ def graded(model: str | Model | None = None):
 - [Models: Role Resolution](https://inspect.aisi.org.uk/models.html#role-resolution)
 - [Solvers: Models in Solvers](https://inspect.aisi.org.uk/solvers.html#models-in-solvers)
 - [Custom Scorers: Models in Scorers](https://inspect.aisi.org.uk/custom-scorers.html#models-in-scorers)
+- [Custom Agents: Parameters](https://inspect.aisi.org.uk/agent-custom.html#parameters)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP001]` or `ignore[get_model_location]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 

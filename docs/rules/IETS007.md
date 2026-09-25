@@ -8,7 +8,7 @@ Every @tool function name appears somewhere in the tests.
 
 ## What it does
 
-Finds functions decorated with `@tool` in the package and checks each name appears in a test file. For an evaluation the search covers `tests/<name>/`; for a helper package, the whole tests root, because shared components are usually tested next to the evaluation that motivated them. One diagnostic per untested function. This is a presence check, not a quality check.
+Finds functions decorated with `@tool` in the package and checks each name appears in a test file. A tool registered under another name with `@tool(name="submit")` is also satisfied by a mention of that name, since that is what the tests and the transcript call it. For an evaluation the search covers `tests/<name>/`; for a helper package, the whole tests root, because shared components are usually tested next to the evaluation that motivated them. One diagnostic per untested function. This is a presence check, not a quality check.
 
 ## Why is this bad?
 
