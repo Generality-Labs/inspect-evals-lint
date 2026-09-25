@@ -331,14 +331,19 @@ def tests_init(ctx: LintContext) -> Iterable[Finding]:
     ## What it does
     Checks ``<tests-root>/<name>/`` and every directory beneath it for an
     ``__init__.py``, ignoring cache directories. One diagnostic per directory.
-    Skipped when the tests live directly under the tests root, where there is
-    nothing to collide with, and for a helper package with no ``tests/<name>/``
+    Skipped with ``tests-layout = "flat"``, the single-evaluation layout, whether
+    the tests sit directly under the tests root or in a ``tests/<name>/``
+    directory of their own: with one evaluation there is no second test tree to
+    collide with. Also skipped for a helper package with no ``tests/<name>/``
     directory.
 
     ## Why is this bad?
     Per-evaluation test trees with duplicate module basenames (``test_scorer.py``
     in two evaluations) collide during pytest collection unless each tree is a
     package.
+
+    ## Options
+    - `tests-layout`
     """
     if ctx.test_path is None:
         if ctx.kind == "eval":
@@ -346,9 +351,10 @@ def tests_init(ctx: LintContext) -> Iterable[Finding]:
         else:
             yield Outcome("skip", "No test directory named after this package")
         return
-    if ctx.test_path == ctx.tests_root:
+    if ctx.config.tests_layout == "flat":
         yield Outcome(
-            "skip", "Tests live directly under the tests root; __init__.py files not required"
+            "skip",
+            'Single-evaluation test layout (tests-layout = "flat"); __init__.py files not required',
         )
         return
 

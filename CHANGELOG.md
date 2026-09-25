@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- `tests_init` (IETS002) is skipped under `tests-layout = "flat"` whether the tests sit directly under the tests root or in a `tests/<name>/` directory of their own. The `__init__.py` files guard against basename collisions between per-evaluation test trees, and a single-evaluation repository has one tree; before, a `register`-preset repository that namespaced its tests was failed for missing them, so the flat layout's skip never applied to the repositories that used it ([#36](https://github.com/Generality-Labs/inspect-evals-lint/issues/36)).
+
 ## [0.7.0] - 2026-09-25
 
 Two best-practice rules for dataset workarounds, following the inspect_evals audit of `filter_duplicate_ids` ([UKGovernmentBEIS/inspect_evals#2528](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2528)) that found a keep-first duplicate filter had silently truncated three datasets.

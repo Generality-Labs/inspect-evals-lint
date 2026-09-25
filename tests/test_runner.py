@@ -521,14 +521,21 @@ def test_register_layout_same_repo_fails_under_template_preset(
 
 
 def test_flat_layout_prefers_per_eval_directory(register_repo: tuple[Path, LintConfig]) -> None:
-    """A template-derived repo that kept tests/<eval>/ is linted as before, __init__.py included."""
+    """A single-eval repo that namespaces its tests under tests/<eval>/ is linted there."""
     root, config = register_repo
     write(config.tests_dir(root) / "alpha" / "test_other.py", "def test_x():\n    pass\n")
     report = lint_package(root, "alpha", config)
     by_name = {r.rule.name: r for r in report.items()}
     assert "tests/alpha" in by_name["tests_exist"].message
-    assert by_name["tests_init"].status == "fail"  # tests/alpha has no __init__.py
+    assert by_name["tests_init"].status == "skip"  # one evaluation: nothing to collide with
     assert by_name["e2e_test"].status == "fail"  # the flat file is no longer in scope
+
+
+def test_per_eval_layout_still_requires_init_files(register_repo: tuple[Path, LintConfig]) -> None:
+    root, config = register_repo
+    write(config.tests_dir(root) / "alpha" / "test_other.py", "def test_x():\n    pass\n")
+    config = replace(config, tests_layout="per-eval")
+    assert statuses(root, config)["tests_init"] == ["fail"]
 
 
 def test_flat_layout_needs_test_files(register_repo: tuple[Path, LintConfig]) -> None:

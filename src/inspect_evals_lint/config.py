@@ -82,7 +82,7 @@ class LintConfig:
     tests_layout: TestsLayout = field(
         default="per-eval",
         metadata={
-            "doc": "``per-eval`` requires ``<tests_root>/<name>/``; ``flat`` also accepts test files directly under ``tests_root``, as single-evaluation repositories usually have."
+            "doc": "``per-eval`` requires ``<tests_root>/<name>/`` and ``__init__.py`` files throughout it; ``flat``, for a single-evaluation repository, also accepts test files directly under ``tests_root`` and does not require ``__init__.py`` files, since there is no second test tree to collide with."
         },
     )
 
