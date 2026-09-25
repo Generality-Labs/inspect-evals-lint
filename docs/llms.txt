@@ -34,13 +34,13 @@ Every HTML page on this site is also available as raw Markdown at the same path 
 - [IETS002 tests_init](https://inspect-evals-lint.generality.org/rules/IETS002.md): The test directory and its sub-directories contain __init__.py
 - [IETS003 e2e_test](https://inspect-evals-lint.generality.org/rules/IETS003.md): Some test runs eval() against mockllm/model
 - [IETS004 record_to_sample_test](https://inspect-evals-lint.generality.org/rules/IETS004.md): record_to_sample is exercised by a test when the evaluation uses it
-- [IETS005 custom_solver_tests](https://inspect-evals-lint.generality.org/rules/IETS005.md): Every @solver function name appears somewhere in the tests
+- [IETS005 custom_solver_tests](https://inspect-evals-lint.generality.org/rules/IETS005.md): Every @solver or @agent function name appears somewhere in the tests
 - [IETS006 custom_scorer_tests](https://inspect-evals-lint.generality.org/rules/IETS006.md): Every @scorer function name appears somewhere in the tests
 - [IETS007 custom_tool_tests](https://inspect-evals-lint.generality.org/rules/IETS007.md): Every @tool function name appears somewhere in the tests
 
 ## Best practices
 
-- [IEBP001 get_model_location](https://inspect-evals-lint.generality.org/rules/IEBP001.md): get_model() is only called inside @solver or @scorer functions
+- [IEBP001 get_model_location](https://inspect-evals-lint.generality.org/rules/IEBP001.md): get_model() is only called inside @solver, @scorer or @agent functions
 - [IEBP002 model_role_resolution](https://inspect-evals-lint.generality.org/rules/IEBP002.md): get_model(role=...) resolves deliberately: an explicit model, default= or required=True
 - [IEBP003 sample_ids](https://inspect-evals-lint.generality.org/rules/IEBP003.md): Every Sample() passes id=
 - [IEBP004 task_overridable_defaults](https://inspect-evals-lint.generality.org/rules/IEBP004.md): @task parameters naming a solver, scorer, metric, grader or model have defaults

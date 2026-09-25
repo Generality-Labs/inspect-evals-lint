@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- `@agent` functions count as model-resolving components. `get_model_location` (IEBP001) no longer warns about a `get_model()` call inside an `@agent`, and `custom_solver_tests` (IETS005) requires every `@agent` to be mentioned by a test, as it does for `@solver`. An agent is the solver of a sandboxed evaluation, and both rules had been written before `inspect_ai.agent` existed, so agent-based evaluations were warned about for resolving models in the right place while their agents went untested unnoticed ([#36](https://github.com/Generality-Labs/inspect-evals-lint/issues/36)).
+
 ## [0.7.0] - 2026-09-25
 
 Two best-practice rules for dataset workarounds, following the inspect_evals audit of `filter_duplicate_ids` ([UKGovernmentBEIS/inspect_evals#2528](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2528)) that found a keep-first duplicate filter had silently truncated three datasets.
