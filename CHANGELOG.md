@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - `@agent` functions count as model-resolving components. `get_model_location` (IEBP001) no longer warns about a `get_model()` call inside an `@agent`, and `custom_solver_tests` (IETS005) requires every `@agent` to be mentioned by a test, as it does for `@solver`. An agent is the solver of a sandboxed evaluation, and both rules had been written before `inspect_ai.agent` existed, so agent-based evaluations were warned about for resolving models in the right place while their agents went untested unnoticed ([#36](https://github.com/Generality-Labs/inspect-evals-lint/issues/36)).
+- `main_file` (IEFS002) reads every module in the package for `@task` functions instead of only `<name>.py` and `tasks.py`. It still passes on those two, now warns (one per module) when the tasks live only elsewhere, and fails only when no module defines a task or the conventional file does not parse. `init_exports` (IEFS003) checks every task the package defines, wherever it lives, with the relative import to add in the hint; before, a task module under another name made `main_file` fail and `init_exports` skip, so exports went unchecked. Found on a standalone repository whose task module is named after the benchmark ([#36](https://github.com/Generality-Labs/inspect-evals-lint/issues/36)).
 
 ## [0.7.0] - 2026-09-25
 
