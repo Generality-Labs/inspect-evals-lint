@@ -191,7 +191,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 | --------------------------- | ----------------------- | ------------ | -------------------------------------------------------------------- |
 | [IETS001](rules/IETS001.md) | `tests_exist`           | eval         | A test directory exists for the evaluation                           |
 | [IETS002](rules/IETS002.md) | `tests_init`            | eval, helper | The test directory and its sub-directories contain __init__.py       |
-| [IETS003](rules/IETS003.md) | `e2e_test`              | eval         | Some test runs eval() against mockllm/model                          |
+| [IETS003](rules/IETS003.md) | `e2e_test`              | eval         | Some test runs eval() against a mockllm/ model                       |
 | [IETS004](rules/IETS004.md) | `record_to_sample_test` | eval         | record_to_sample is exercised by a test when the evaluation uses it  |
 | [IETS005](rules/IETS005.md) | `custom_solver_tests`   | eval, helper | Every @solver or @agent function name appears somewhere in the tests |
 | [IETS006](rules/IETS006.md) | `custom_scorer_tests`   | eval, helper | Every @scorer function name appears somewhere in the tests           |
@@ -739,13 +739,13 @@ Suppress on a line with `# inspect-evals-lint: ignore[IETS002]` or `ignore[tests
 
 # IETS003: e2e_test
 
-Some test runs eval() against mockllm/model.
+Some test runs eval() against a mockllm/ model.
 
 **Category:** tests · **Applies to:** eval
 
 ## What it does
 
-Looks through the test directory for a file that calls `eval()` or `eval_async()` (or an alias imported from `inspect_ai`) and mentions `mockllm/model`.
+Looks through the test directory for a file that calls `eval()` or `eval_async()` (or an alias imported from `inspect_ai`) and mentions a model under the `mockllm/` provider. `mockllm/model` is the usual name, but any name after the prefix is the same mock, and a test that scripts `custom_outputs` per case commonly names each one (`mockllm/epochs`).
 
 ## Why is this bad?
 
@@ -848,7 +848,7 @@ Every @tool function name appears somewhere in the tests.
 
 ## What it does
 
-Finds functions decorated with `@tool` in the package and checks each name appears in a test file. For an evaluation the search covers `tests/<name>/`; for a helper package, the whole tests root, because shared components are usually tested next to the evaluation that motivated them. One diagnostic per untested function. This is a presence check, not a quality check.
+Finds functions decorated with `@tool` in the package and checks each name appears in a test file. A tool registered under another name with `@tool(name="submit")` is also satisfied by a mention of that name, since that is what the tests and the transcript call it. For an evaluation the search covers `tests/<name>/`; for a helper package, the whole tests root, because shared components are usually tested next to the evaluation that motivated them. One diagnostic per untested function. This is a presence check, not a quality check.
 
 ## Why is this bad?
 
