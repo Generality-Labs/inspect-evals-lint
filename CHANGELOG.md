@@ -17,7 +17,7 @@ Two best-practice rules for dataset workarounds, following the inspect_evals aud
 
 ### Changed
 
-- The documentation site opens in dark mode by default.
+- The documentation site follows the reader's system light or dark setting, and the header toggle still overrides it (#32, #33).
 
 ## [0.6.0] - 2026-09-23
 
