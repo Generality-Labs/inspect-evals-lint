@@ -21,19 +21,21 @@ theme:
     - navigation.top
     - content.code.copy
     - search.suggest
-  # Material shows the first palette by default, so the site opens dark; the
-  # toggle switches to light and remembers the reader's choice.
+  # Follows the reader's system light/dark setting; the toggle overrides it
+  # and remembers the choice.
   palette:
-    - scheme: slate
-      primary: indigo
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
-    - scheme: default
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
       primary: indigo
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
 
 markdown_extensions:
   - admonition
