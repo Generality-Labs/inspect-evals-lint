@@ -199,19 +199,21 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 
 ## Best practices
 
-| Code                        | Rule                        | Applies to   | Summary                                                                                       |
-| --------------------------- | --------------------------- | ------------ | --------------------------------------------------------------------------------------------- |
-| [IEBP001](rules/IEBP001.md) | `get_model_location`        | eval, helper | get_model() is only called inside @solver or @scorer functions                                |
-| [IEBP002](rules/IEBP002.md) | `model_role_resolution`     | eval, helper | get_model(role=...) resolves deliberately: an explicit model, default= or required=True       |
-| [IEBP003](rules/IEBP003.md) | `sample_ids`                | eval, helper | Every Sample() passes id=                                                                     |
-| [IEBP004](rules/IEBP004.md) | `task_overridable_defaults` | eval, helper | @task parameters naming a solver, scorer, metric, grader or model have defaults               |
-| [IEBP005](rules/IEBP005.md) | `sandbox_image_pinning`     | eval, helper | Registry images in compose files use an immutable tag or digest                               |
-| [IEBP006](rules/IEBP006.md) | `gpu_sandbox_check`         | eval         | An evaluation requiring a GPU ships a maintenance sandbox check task                          |
-| [IEBP007](rules/IEBP007.md) | `dockerfile_locking`        | eval         | Dockerfile builds consume locked inputs: committed locks, digest-pinned images, fixed sources |
+| Code                        | Rule                            | Applies to   | Summary                                                                                             |
+| --------------------------- | ------------------------------- | ------------ | --------------------------------------------------------------------------------------------------- |
+| [IEBP001](rules/IEBP001.md) | `get_model_location`            | eval, helper | get_model() is only called inside @solver or @scorer functions                                      |
+| [IEBP002](rules/IEBP002.md) | `model_role_resolution`         | eval, helper | get_model(role=...) resolves deliberately: an explicit model, default= or required=True             |
+| [IEBP003](rules/IEBP003.md) | `sample_ids`                    | eval, helper | Every Sample() passes id=                                                                           |
+| [IEBP004](rules/IEBP004.md) | `task_overridable_defaults`     | eval, helper | @task parameters naming a solver, scorer, metric, grader or model have defaults                     |
+| [IEBP005](rules/IEBP005.md) | `sandbox_image_pinning`         | eval, helper | Registry images in compose files use an immutable tag or digest                                     |
+| [IEBP006](rules/IEBP006.md) | `gpu_sandbox_check`             | eval         | An evaluation requiring a GPU ships a maintenance sandbox check task                                |
+| [IEBP007](rules/IEBP007.md) | `dockerfile_locking`            | eval         | Dockerfile builds consume locked inputs: committed locks, digest-pinned images, fixed sources       |
+| [IEBP008](rules/IEBP008.md) | `duplicate_filter_acknowledged` | eval, helper | Every filter_duplicate_ids() call states how many duplicates it drops and links the upstream report |
+| [IEBP009](rules/IEBP009.md) | `known_broken_reported`         | eval, helper | Every drop_known_broken() entry maps a sample id to the URL of its upstream report                  |
 
 ## Helper packages
 
-Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
+Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
 
 ## Categories
 
@@ -1158,3 +1160,78 @@ RUN uv sync --locked --no-dev --no-install-project
 - [Sandboxing: Prebuilt Images](https://inspect.aisi.org.uk/sandboxing.html#prebuilt-images)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP007]` or `ignore[dockerfile_locking]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+
+
+---
+
+# IEBP008: duplicate_filter_acknowledged
+
+Every filter_duplicate_ids() call states how many duplicates it drops and links the upstream report.
+
+**Category:** best_practices · **Applies to:** eval, helper
+
+## What it does
+
+Flags each `filter_duplicate_ids(...)` call that lacks a `max_duplicates=` keyword, lacks a `reason=` keyword, or gives a literal `reason` with no `http://` or `https://` URL in it. A `reason` passed as a variable is taken at face value, as is `**kwargs`. One diagnostic per call.
+
+## Why is this bad?
+
+Dropping samples that share an id is only safe when they are the same record twice. A call with no count is a workaround nobody has measured, and a reason with no link is a defect nobody upstream knows about; both let a bad id key silently truncate the dataset, which is how WorldSense lost half its trials. The count bounds the damage a revision bump can do and the link is the evidence a reviewer can check.
+
+## Example
+
+```python
+dataset = filter_duplicate_ids(dataset)
+```
+
+Use instead:
+
+```python
+dataset = filter_duplicate_ids(
+    dataset,
+    max_duplicates=11,
+    reason="8 groups of identical rows, see https://github.com/org/repo/issues/268",
+)
+```
+
+## See also
+
+- [Datasets: Dataset Samples](https://inspect.aisi.org.uk/datasets.html#dataset-samples)
+- [Log Files: IDs and Shuffling](https://inspect.aisi.org.uk/eval-logs.html#ids-and-shuffling)
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP008]` or `ignore[duplicate_filter_acknowledged]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+
+
+---
+
+# IEBP009: known_broken_reported
+
+Every drop_known_broken() entry maps a sample id to the URL of its upstream report.
+
+**Category:** best_practices · **Applies to:** eval, helper
+
+## What it does
+
+Flags each `drop_known_broken(...)` call without a `broken=` keyword, and each entry of its `broken` dict whose value is a literal string with no `http://` or `https://` URL. The dict may be written inline or bound to a module-level name in the same file; a name the file does not define, a non-literal value and `**kwargs` are taken at face value. Entry diagnostics point at the entry's line so a suppression can sit beside it.
+
+## Why is this bad?
+
+A hard-coded exclusion list is a workaround for a dataset defect. Without the report beside each id, nobody upstream knows about the defect, a reviewer cannot check the claim, and the entry outlives the fix. The URL is the evidence and the reminder.
+
+## Example
+
+```python
+KNOWN_BROKEN = {"ruin_names_100": "options split on commas"}
+```
+
+Use instead:
+
+```python
+KNOWN_BROKEN = {"ruin_names_100": "https://github.com/org/repo/issues/19"}
+```
+
+## See also
+
+- [Datasets: Dataset Samples](https://inspect.aisi.org.uk/datasets.html#dataset-samples)
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP009]` or `ignore[known_broken_reported]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
