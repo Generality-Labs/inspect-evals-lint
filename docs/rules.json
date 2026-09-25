@@ -32,7 +32,7 @@
         "eval"
       ],
       "allowlist": false,
-      "summary": "<name>.py or tasks.py exists and defines at least one @task function",
+      "summary": "Some module defines a @task function, preferably <name>.py or tasks.py",
       "url": "https://inspect-evals-lint.generality.org/rules/IEFS002/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS002.md",
       "references": [
@@ -54,7 +54,7 @@
         "eval"
       ],
       "allowlist": false,
-      "summary": "__init__.py exports every @task function from the main file",
+      "summary": "__init__.py exports every @task function in the package",
       "url": "https://inspect-evals-lint.generality.org/rules/IEFS003/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS003.md",
       "references": [

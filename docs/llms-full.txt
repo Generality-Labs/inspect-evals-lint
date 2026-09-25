@@ -166,14 +166,14 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 
 ## File structure
 
-| Code                        | Rule               | Applies to   | Summary                                                              |
-| --------------------------- | ------------------ | ------------ | -------------------------------------------------------------------- |
-| [IEFS001](rules/IEFS001.md) | `package_location` | eval, helper | The package exists at <source-root>/<name>/ with an __init__.py      |
-| [IEFS002](rules/IEFS002.md) | `main_file`        | eval         | <name>.py or tasks.py exists and defines at least one @task function |
-| [IEFS003](rules/IEFS003.md) | `init_exports`     | eval         | __init__.py exports every @task function from the main file          |
-| [IEFS004](rules/IEFS004.md) | `registry`         | eval         | The evaluation is registered so inspect eval can find its tasks      |
-| [IEFS005](rules/IEFS005.md) | `eval_yaml`        | eval         | eval.yaml exists, is a mapping, and defines the required fields      |
-| [IEFS006](rules/IEFS006.md) | `readme`           | eval         | README.md exists and has no TODO markers                             |
+| Code                        | Rule               | Applies to   | Summary                                                                |
+| --------------------------- | ------------------ | ------------ | ---------------------------------------------------------------------- |
+| [IEFS001](rules/IEFS001.md) | `package_location` | eval, helper | The package exists at <source-root>/<name>/ with an __init__.py        |
+| [IEFS002](rules/IEFS002.md) | `main_file`        | eval         | Some module defines a @task function, preferably <name>.py or tasks.py |
+| [IEFS003](rules/IEFS003.md) | `init_exports`     | eval         | __init__.py exports every @task function in the package                |
+| [IEFS004](rules/IEFS004.md) | `registry`         | eval         | The evaluation is registered so inspect eval can find its tasks        |
+| [IEFS005](rules/IEFS005.md) | `eval_yaml`        | eval         | eval.yaml exists, is a mapping, and defines the required fields        |
+| [IEFS006](rules/IEFS006.md) | `readme`           | eval         | README.md exists and has no TODO markers                               |
 
 ## Code quality
 
@@ -364,23 +364,24 @@ Suppress on a line with `# inspect-evals-lint: ignore[IEFS001]` or `ignore[packa
 
 # IEFS002: main_file
 
-<name>.py or tasks.py exists and defines at least one @task function.
+Some module defines a @task function, preferably <name>.py or tasks.py.
 
 **Category:** file_structure · **Applies to:** eval
 
 ## What it does
 
-Looks for `<name>.py` first and `tasks.py` second, preferring whichever defines a `@task`, so a stray empty `<name>.py` does not hide the tasks in `tasks.py`. Fails when neither exists, when the file does not parse, or when it defines no task.
+Reads every Python file in the package for `@task` functions. Passes when `<name>.py` or `tasks.py` defines one, preferring whichever does so a stray empty `<name>.py` does not hide the tasks in `tasks.py`. Warns, once per module, when the tasks live only in other modules. Fails when no module defines a task, or when the conventional file exists but does not parse.
 
 ## Why is this bad?
 
-Keeping tasks in a predictably named module lets tooling and readers find them without opening every file in the package.
+A package with no task is not an evaluation, whatever else it contains. Keeping the tasks in a predictably named module is a lesser matter, so it is a warning: it lets readers find them without opening every file, but a package that names its task module after the benchmark still runs.
 
 ## Example
 
 ```text
 src/my_eval/my_eval.py     # defines @task my_eval()
 src/my_eval/tasks.py       # accepted alternative
+src/my_eval/v8.py          # defines the tasks: warned, not failed
 ```
 
 ## See also
@@ -395,13 +396,13 @@ Suppress on a line with `# inspect-evals-lint: ignore[IEFS002]` or `ignore[main_
 
 # IEFS003: init_exports
 
-__init__.py exports every @task function from the main file.
+__init__.py exports every @task function in the package.
 
 **Category:** file_structure · **Applies to:** eval
 
 ## What it does
 
-Reads the task functions from the main file and checks each name appears in `__init__.py`, either in `__all__` or imported with `from ... import`. One diagnostic per missing task.
+Reads the task functions from every module that defines one and checks each name appears in `__init__.py`, either in `__all__` or imported with `from ... import`. One diagnostic per missing task, with the import to add.
 
 ## Why is this bad?
 
