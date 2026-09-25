@@ -73,7 +73,7 @@ preset = "template"   # or "monorepo" / "register"
 
 <!-- config-table:end -->
 
-Without a `[tool.inspect-evals-lint]` table the `template` preset is used. `--preset` overrides the table for one run. A fuller table:
+When nothing names a preset (no `[tool.inspect-evals-lint]` table, or a table without `preset`) the source root decides: exactly one evaluation package gives the `register` preset, the single-evaluation layout; anything else gives `template`. The run says which it chose and why. A repository built from the template ships a table naming its preset, so a repository without one is more likely a standalone evaluation. `--preset` overrides the table for one run. A fuller table:
 
 ```toml
 [tool.inspect-evals-lint]
@@ -100,7 +100,7 @@ Only Python packages are linted: a sub-directory of `source-root` without an `__
 
 Shared code that evaluations import, such as inspect_evals' `utils` package, is not an evaluation but does most of the same things: it grades, it resolves models, it imports third-party packages. Directories listed in `helper-dirs` are linted with the checks that guard that behaviour (`private_api_imports`, `score_constants`, `unscored_reason`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `external_dependencies`, `tests_init` and the `custom_*_tests` checks) and not with the ones about an evaluation's structure and registration (`main_file`, `init_exports`, `readme`, `registry`, `eval_yaml`, `tests_exist`, `e2e_test`, `record_to_sample_test`). Two checks adapt: `external_dependencies` requires a helper's module-level third-party imports to be in `[project].dependencies`, since every evaluation that imports the helper loads them, while imports inside a function, a `try` block or an `if TYPE_CHECKING:` block only need declaring in some group or isolated package; and the `custom_*_tests` checks look for a helper's tests anywhere under `tests-root`, not only in `tests/<name>/`. Allowlists are keyed by package name, so `utils = ["grader"]` under `allowlists.model_role_resolution` works for a helper too. A failing helper check fails the run like any other.
 
-The `register` preset is for an upstream repository listed in the [inspect_evals register](https://github.com/UKGovernmentBEIS/inspect_evals/blob/main/register/README.md): one evaluation, tests directly under `tests/`, the README at the repository root, and metadata held by the register entry rather than an `eval.yaml` in the repo. Run it from outside the repo with `inspect-evals-lint --root <clone> --preset register --all --output-format json`.
+The `register` preset is the single-evaluation layout, as an upstream repository listed in the [inspect_evals register](https://github.com/UKGovernmentBEIS/inspect_evals/blob/main/register/README.md) has: one evaluation, tests directly under `tests/` or in one `tests/<name>/`, the README at the repository root, and metadata held by the register entry rather than an `eval.yaml` in the repo. It is chosen automatically for a repository that names no preset and holds one evaluation package. Run it from outside the repo with `inspect-evals-lint --root <clone> --preset register --all --output-format json`.
 
 ## For agents and tools
 

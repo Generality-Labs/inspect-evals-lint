@@ -245,9 +245,11 @@ PRESETS: dict[str, LintConfig] = {
         isolated_packages_dir="packages",
         rule_options={"dockerfile_locking": {"host_lock_coupling": "warn"}},
     ),
-    # An upstream repo listed in the inspect_evals register: one evaluation,
-    # tests directly under tests/, README at the repo root, and eval.yaml held
-    # by the register entry rather than the repo.
+    # A single-evaluation repository, as listed in the inspect_evals register:
+    # one evaluation, tests directly under tests/ or in one tests/<name>/, README
+    # at the repo root, and eval.yaml optional because the register entry holds
+    # the metadata. Chosen automatically when nothing names a preset and the
+    # source root holds exactly one evaluation package.
     "register": LintConfig(
         tests_layout="flat",
         readme_location="repo-root",
@@ -255,6 +257,9 @@ PRESETS: dict[str, LintConfig] = {
     ),
 }
 DEFAULT_PRESET = "template"
+"""The preset when nothing names one and the source root does not hold exactly one evaluation package."""
+SINGLE_EVAL_PRESET = "register"
+"""The preset when nothing names one and the source root holds exactly one evaluation package."""
 
 _FIELD_NAMES = {f.name for f in fields(LintConfig)}
 
@@ -430,15 +435,38 @@ def read_tool_table(root: Path) -> Mapping[str, Any] | None:
     return cast(dict[str, Any], table)
 
 
+def infer_preset(root: Path, table: Mapping[str, Any]) -> tuple[str, str]:
+    """The preset for a repository whose ``table`` names none, and the reason, in one clause.
+
+    A repository built from the template ships a table naming its preset, so a
+    repository without one is more likely a standalone evaluation. The source
+    root decides: exactly one evaluation package (helpers and ignored
+    directories aside) gives :data:`SINGLE_EVAL_PRESET`, anything else
+    :data:`DEFAULT_PRESET`. The table's own ``source-root``, ``helper-dirs`` and
+    ``ignore-dirs`` are honoured when counting.
+    """
+    from inspect_evals_lint.context import evaluation_names  # lazy: context imports this module
+
+    layout = config_from_table({**table, "preset": DEFAULT_PRESET})
+    count = len(evaluation_names(root, layout))
+    where = f"{layout.source_root}/"
+    if count == 1:
+        return SINGLE_EVAL_PRESET, f"{where} holds one evaluation package"
+    packages = "no evaluation packages" if count == 0 else f"{count} evaluation packages"
+    return DEFAULT_PRESET, f"{where} holds {packages}"
+
+
 def load_config(root: Path, preset: str | None = None) -> LintConfig:
     """Load configuration for the repository at ``root``.
 
-    ``preset`` overrides the ``preset`` key in the pyproject table (or the
-    default when there is no table).
+    ``preset`` overrides the ``preset`` key in the pyproject table. When neither
+    names one, :func:`infer_preset` chooses from the source root's contents.
     """
     table = dict(read_tool_table(root) or {})
     if preset is not None:
         table["preset"] = preset
+    elif "preset" not in table:
+        table["preset"], _ = infer_preset(root, table)
     return config_from_table(table)
 
 
