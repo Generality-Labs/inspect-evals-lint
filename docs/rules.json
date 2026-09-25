@@ -503,6 +503,48 @@
           "url": "https://inspect.aisi.org.uk/sandboxing.html#prebuilt-images"
         }
       ]
+    },
+    {
+      "code": "IEBP008",
+      "name": "duplicate_filter_acknowledged",
+      "category": "best_practices",
+      "scopes": [
+        "eval",
+        "helper"
+      ],
+      "allowlist": false,
+      "summary": "Every filter_duplicate_ids() call states how many duplicates it drops and links the upstream report",
+      "url": "https://inspect-evals-lint.generality.org/rules/IEBP008/",
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP008.md",
+      "references": [
+        {
+          "title": "Datasets: Dataset Samples",
+          "url": "https://inspect.aisi.org.uk/datasets.html#dataset-samples"
+        },
+        {
+          "title": "Log Files: IDs and Shuffling",
+          "url": "https://inspect.aisi.org.uk/eval-logs.html#ids-and-shuffling"
+        }
+      ]
+    },
+    {
+      "code": "IEBP009",
+      "name": "known_broken_reported",
+      "category": "best_practices",
+      "scopes": [
+        "eval",
+        "helper"
+      ],
+      "allowlist": false,
+      "summary": "Every drop_known_broken() entry maps a sample id to the URL of its upstream report",
+      "url": "https://inspect-evals-lint.generality.org/rules/IEBP009/",
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP009.md",
+      "references": [
+        {
+          "title": "Datasets: Dataset Samples",
+          "url": "https://inspect.aisi.org.uk/datasets.html#dataset-samples"
+        }
+      ]
     }
   ]
 }

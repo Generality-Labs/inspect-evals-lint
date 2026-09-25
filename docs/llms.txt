@@ -47,3 +47,5 @@ Every HTML page on this site is also available as raw Markdown at the same path 
 - [IEBP005 sandbox_image_pinning](https://inspect-evals-lint.generality.org/rules/IEBP005.md): Registry images in compose files use an immutable tag or digest
 - [IEBP006 gpu_sandbox_check](https://inspect-evals-lint.generality.org/rules/IEBP006.md): An evaluation requiring a GPU ships a maintenance sandbox check task
 - [IEBP007 dockerfile_locking](https://inspect-evals-lint.generality.org/rules/IEBP007.md): Dockerfile builds consume locked inputs: committed locks, digest-pinned images, fixed sources
+- [IEBP008 duplicate_filter_acknowledged](https://inspect-evals-lint.generality.org/rules/IEBP008.md): Every filter_duplicate_ids() call states how many duplicates it drops and links the upstream report
+- [IEBP009 known_broken_reported](https://inspect-evals-lint.generality.org/rules/IEBP009.md): Every drop_known_broken() entry maps a sample id to the URL of its upstream report

@@ -458,3 +458,243 @@ def model_role_resolution(ctx: LintContext) -> Iterable[Finding]:
         yield Outcome("skip", "No get_model(role=...) calls found")
     else:
         yield Outcome("pass", f"All {total_role_calls} model role call(s) resolve deliberately")
+
+
+def _string_literal(node: ast.expr) -> str | None:
+    """The value of a string literal (implicit concatenation folds into one Constant), else None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _has_url(text: str) -> bool:
+    return "http://" in text or "https://" in text
+
+
+def _keyword(call: ast.Call, name: str) -> ast.keyword | None:
+    for keyword in call.keywords:
+        if keyword.arg == name:
+            return keyword
+    return None
+
+
+def _has_star_kwargs(call: ast.Call) -> bool:
+    return any(keyword.arg is None for keyword in call.keywords)
+
+
+def _module_dict_literals(tree: ast.AST) -> dict[str, ast.Dict]:
+    """Module-level ``NAME = {...}`` / ``NAME: T = {...}`` assignments, by name."""
+    found: dict[str, ast.Dict] = {}
+    for statement in tree.body if isinstance(tree, ast.Module) else []:
+        if isinstance(statement, ast.Assign) and isinstance(statement.value, ast.Dict):
+            for target in statement.targets:
+                if isinstance(target, ast.Name):
+                    found[target.id] = statement.value
+        elif (
+            isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+            and isinstance(statement.value, ast.Dict)
+        ):
+            found[statement.target.id] = statement.value
+    return found
+
+
+def _calls_named(tree: ast.AST, name: str) -> list[ast.Call]:
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and get_call_name(node) == name
+    ]
+    # ast.walk is breadth-first, so sort to report sites in source order.
+    return sorted(calls, key=lambda node: (node.lineno, node.col_offset))
+
+
+_DEDUP_HINT = (
+    "measure the duplicates on the pinned dataset and pass max_duplicates=<n>, and give a "
+    "reason= that links the upstream report; see BEST_PRACTICES.md on deduplicating by id"
+)
+
+
+@rule(
+    code="IEBP008",
+    name="duplicate_filter_acknowledged",
+    category="best_practices",
+    scopes=("eval", "helper"),
+    summary="Every filter_duplicate_ids() call states how many duplicates it drops and links the upstream report",
+    references=(
+        inspect_docs("datasets", "Datasets: Dataset Samples", "dataset-samples"),
+        inspect_docs("eval-logs", "Log Files: IDs and Shuffling", "ids-and-shuffling"),
+    ),
+)
+def duplicate_filter_acknowledged(ctx: LintContext) -> Iterable[Finding]:
+    """Every ``filter_duplicate_ids()`` call states how many duplicates it drops and links the upstream report.
+
+    ## What it does
+    Flags each ``filter_duplicate_ids(...)`` call that lacks a ``max_duplicates=``
+    keyword, lacks a ``reason=`` keyword, or gives a literal ``reason`` with no
+    ``http://`` or ``https://`` URL in it. A ``reason`` passed as a variable is
+    taken at face value, as is ``**kwargs``. One diagnostic per call.
+
+    ## Why is this bad?
+    Dropping samples that share an id is only safe when they are the same record
+    twice. A call with no count is a workaround nobody has measured, and a reason
+    with no link is a defect nobody upstream knows about; both let a bad id key
+    silently truncate the dataset, which is how WorldSense lost half its trials.
+    The count bounds the damage a revision bump can do and the link is the
+    evidence a reviewer can check.
+
+    ## Example
+    ```python
+    dataset = filter_duplicate_ids(dataset)
+    ```
+    Use instead:
+    ```python
+    dataset = filter_duplicate_ids(
+        dataset,
+        max_duplicates=11,
+        reason="8 groups of identical rows, see https://github.com/org/repo/issues/268",
+    )
+    ```
+    """
+    parsed_files = parse_python_files(ctx)
+    yield from parse_failures(parsed_files)
+
+    total = 0
+    issues = 0
+    for parsed in parsed_files.parsed:
+        for call in _calls_named(parsed.tree, "filter_duplicate_ids"):
+            total += 1
+            if _has_star_kwargs(call):
+                continue
+            missing = [
+                name for name in ("max_duplicates", "reason") if _keyword(call, name) is None
+            ]
+            if missing:
+                message = f"filter_duplicate_ids() without {' or '.join(f'{m}=' for m in missing)}"
+            else:
+                reason = _keyword(call, "reason")
+                assert reason is not None
+                text = _string_literal(reason.value)
+                if text is None or _has_url(text):
+                    continue
+                message = (
+                    "filter_duplicate_ids() reason= does not link the upstream report (no URL)"
+                )
+            issues += 1
+            yield Diagnostic(
+                message,
+                file=parsed.path,
+                line=call.lineno,
+                column=column_of(call),
+                end_line=end_line_of(call),
+                hint=_DEDUP_HINT,
+            )
+
+    if issues:
+        return
+    if total == 0:
+        yield Outcome("skip", "No filter_duplicate_ids() calls found")
+    else:
+        yield Outcome(
+            "pass", f"All {total} filter_duplicate_ids() call(s) state a count and link a report"
+        )
+
+
+_BROKEN_HINT = (
+    "report the defect upstream and put the report URL as the entry's value; "
+    "see BEST_PRACTICES.md on excluding known-broken samples"
+)
+
+
+@rule(
+    code="IEBP009",
+    name="known_broken_reported",
+    category="best_practices",
+    scopes=("eval", "helper"),
+    summary="Every drop_known_broken() entry maps a sample id to the URL of its upstream report",
+    references=(inspect_docs("datasets", "Datasets: Dataset Samples", "dataset-samples"),),
+)
+def known_broken_reported(ctx: LintContext) -> Iterable[Finding]:
+    """Every ``drop_known_broken()`` entry maps a sample id to the URL of its upstream report.
+
+    ## What it does
+    Flags each ``drop_known_broken(...)`` call without a ``broken=`` keyword, and
+    each entry of its ``broken`` dict whose value is a literal string with no
+    ``http://`` or ``https://`` URL. The dict may be written inline or bound to a
+    module-level name in the same file; a name the file does not define, a
+    non-literal value and ``**kwargs`` are taken at face value. Entry diagnostics
+    point at the entry's line so a suppression can sit beside it.
+
+    ## Why is this bad?
+    A hard-coded exclusion list is a workaround for a dataset defect. Without the
+    report beside each id, nobody upstream knows about the defect, a reviewer
+    cannot check the claim, and the entry outlives the fix. The URL is the
+    evidence and the reminder.
+
+    ## Example
+    ```python
+    KNOWN_BROKEN = {"ruin_names_100": "options split on commas"}
+    ```
+    Use instead:
+    ```python
+    KNOWN_BROKEN = {"ruin_names_100": "https://github.com/org/repo/issues/19"}
+    ```
+    """
+    parsed_files = parse_python_files(ctx)
+    yield from parse_failures(parsed_files)
+
+    total = 0
+    issues: list[Diagnostic] = []
+    for parsed in parsed_files.parsed:
+        constants = _module_dict_literals(parsed.tree)
+        for call in _calls_named(parsed.tree, "drop_known_broken"):
+            total += 1
+            if _has_star_kwargs(call):
+                continue
+            broken = _keyword(call, "broken")
+            if broken is None:
+                issues.append(
+                    Diagnostic(
+                        "drop_known_broken() without broken=",
+                        file=parsed.path,
+                        line=call.lineno,
+                        column=column_of(call),
+                        end_line=end_line_of(call),
+                        hint=_BROKEN_HINT,
+                    )
+                )
+                continue
+            value = broken.value
+            if isinstance(value, ast.Name):
+                literal = constants.get(value.id)
+            elif isinstance(value, ast.Dict):
+                literal = value
+            else:
+                literal = None
+            if literal is None:
+                continue
+            for key, entry in zip(literal.keys, literal.values, strict=True):
+                text = _string_literal(entry)
+                if text is None or _has_url(text):
+                    continue
+                key_text = _string_literal(key) if key is not None else None
+                label = repr(key_text) if key_text is not None else ast.unparse(key) if key else "?"
+                issues.append(
+                    Diagnostic(
+                        f"known-broken entry {label} has no report URL",
+                        file=parsed.path,
+                        line=entry.lineno,
+                        column=column_of(entry),
+                        end_line=end_line_of(entry),
+                        hint=_BROKEN_HINT,
+                        key=label,
+                    )
+                )
+
+    yield from sorted(issues, key=lambda d: (str(d.file), d.line or 0, d.column or 0))
+    if issues:
+        return
+    if total == 0:
+        yield Outcome("skip", "No drop_known_broken() calls found")
+    else:
+        yield Outcome("pass", f"All {total} drop_known_broken() call(s) link a report per entry")
