@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- `main_file` (IEFS002) reads every module in the package for `@task` functions instead of only `<name>.py` and `tasks.py`. It still passes on those two, now warns (one per module) when the tasks live only elsewhere, and fails only when no module defines a task or the conventional file does not parse. `init_exports` (IEFS003) checks every task the package defines, wherever it lives, with the relative import to add in the hint; before, a task module under another name made `main_file` fail and `init_exports` skip, so exports went unchecked. Found on a standalone repository whose task module is named after the benchmark ([#36](https://github.com/Generality-Labs/inspect-evals-lint/issues/36)).
+
 ## [0.7.0] - 2026-09-25
 
 Two best-practice rules for dataset workarounds, following the inspect_evals audit of `filter_duplicate_ids` ([UKGovernmentBEIS/inspect_evals#2528](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2528)) that found a keep-first duplicate filter had silently truncated three datasets.

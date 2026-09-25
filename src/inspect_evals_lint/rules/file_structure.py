@@ -15,7 +15,7 @@ from inspect_evals_lint.config import LintConfig
 from inspect_evals_lint.context import LintContext, is_package
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
 from inspect_evals_lint.registry import inspect_docs, rule
-from inspect_evals_lint.rules._ast import get_decorator_name
+from inspect_evals_lint.rules._ast import get_decorator_name, iter_python_files
 
 
 def _find_task_functions(file_path: Path) -> list[str]:
@@ -114,31 +114,35 @@ MAIN_FILE_ALTERNATIVE = "tasks.py"
 
 
 def main_file_candidates(package_path: Path, name: str) -> tuple[Path, ...]:
+    """The conventional homes for a package's ``@task`` functions, in order of preference."""
     return (package_path / f"{name}.py", package_path / MAIN_FILE_ALTERNATIVE)
 
 
-def find_main_file(package_path: Path, name: str) -> Path:
-    """The module the rules treat as the evaluation's main file.
+def task_modules(ctx: LintContext) -> list[Path]:
+    """Every module in the package that defines a ``@task``, conventional names first.
 
-    The first candidate that defines a ``@task`` wins, then the first that exists,
-    so a stray empty ``<name>.py`` does not hide the tasks in ``tasks.py``.
-    Falls back to ``<name>.py`` when neither exists, for the failure message.
+    ``<name>.py`` and ``tasks.py`` lead when they qualify, so a stray empty
+    ``<name>.py`` does not hide the tasks in ``tasks.py``; any other module that
+    defines a task follows in path order. Files the ``exclude`` globs rule out are
+    not read.
     """
-    candidates = main_file_candidates(package_path, name)
-    for candidate in candidates:
-        if _find_task_functions(candidate):
-            return candidate
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[0]
+    candidates = main_file_candidates(ctx.path, ctx.name)
+    files = iter_python_files(ctx)
+    leading = [c for c in candidates if c in files and _find_task_functions(c)]
+    others = [f for f in files if f not in candidates and _find_task_functions(f)]
+    return leading + others
+
+
+def _relative_module(ctx: LintContext, module: Path) -> str:
+    """``.sub.mod`` for a module inside the package, as a relative import writes it."""
+    return "." + ".".join(module.relative_to(ctx.path).with_suffix("").parts)
 
 
 @rule(
     code="IEFS002",
     name="main_file",
     category="file_structure",
-    summary="<name>.py or tasks.py exists and defines at least one @task function",
+    summary="Some module defines a @task function, preferably <name>.py or tasks.py",
     references=(
         inspect_docs("tasks", "Tasks: Task Basics", "task-basics"),
         inspect_docs(
@@ -147,52 +151,73 @@ def find_main_file(package_path: Path, name: str) -> Path:
     ),
 )
 def main_file(ctx: LintContext) -> Iterable[Finding]:
-    """``<name>.py`` or ``tasks.py`` exists and defines at least one ``@task`` function.
+    """Some module defines a ``@task`` function, preferably ``<name>.py`` or ``tasks.py``.
 
     ## What it does
-    Looks for ``<name>.py`` first and ``tasks.py`` second, preferring whichever
-    defines a ``@task``, so a stray empty ``<name>.py`` does not hide the tasks in
-    ``tasks.py``. Fails when neither exists, when the file does not parse, or when
-    it defines no task.
+    Reads every Python file in the package for ``@task`` functions. Passes when
+    ``<name>.py`` or ``tasks.py`` defines one, preferring whichever does so a stray
+    empty ``<name>.py`` does not hide the tasks in ``tasks.py``. Warns, once per
+    module, when the tasks live only in other modules. Fails when no module defines
+    a task, or when the conventional file exists but does not parse.
 
     ## Why is this bad?
-    Keeping tasks in a predictably named module lets tooling and readers find them
-    without opening every file in the package.
+    A package with no task is not an evaluation, whatever else it contains.
+    Keeping the tasks in a predictably named module is a lesser matter, so it is a
+    warning: it lets readers find them without opening every file, but a package
+    that names its task module after the benchmark still runs.
 
     ## Example
     ```text
     src/my_eval/my_eval.py     # defines @task my_eval()
     src/my_eval/tasks.py       # accepted alternative
+    src/my_eval/v8.py          # defines the tasks: warned, not failed
     ```
     """
-    target = find_main_file(ctx.path, ctx.name)
+    candidates = main_file_candidates(ctx.path, ctx.name)
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            ast.parse(candidate.read_text(encoding="utf-8"))
+        except SyntaxError as e:
+            yield Diagnostic(
+                f"Syntax error in {candidate.name}: {e}", file=candidate, line=e.lineno
+            )
+            return
 
-    if not target.exists():
-        expected = " or ".join(c.name for c in main_file_candidates(ctx.path, ctx.name))
-        yield Diagnostic(f"Missing main file: {expected}", file=target)
+    modules = task_modules(ctx)
+    expected = " or ".join(c.name for c in candidates)
+    if not modules:
+        present = [c for c in candidates if c.exists()]
+        if present:
+            message = f"{present[0].name} has no @task decorated functions, and no other module defines one"
+        else:
+            message = f"No module defines a @task function; expected {expected}"
+        yield Diagnostic(message, file=present[0] if present else candidates[0])
         return
 
-    try:
-        ast.parse(target.read_text(encoding="utf-8"))
-    except SyntaxError as e:
-        yield Diagnostic(f"Syntax error in {target.name}: {e}", file=target, line=e.lineno)
+    if modules[0] in candidates:
+        task_functions = _find_task_functions(modules[0])
+        yield Outcome(
+            "pass",
+            f"{modules[0].name} has {len(task_functions)} @task function(s): {task_functions}",
+        )
         return
 
-    task_functions = _find_task_functions(target)
-    if not task_functions:
-        yield Diagnostic(f"{target.name} has no @task decorated functions", file=target)
-        return
-
-    yield Outcome(
-        "pass", f"{target.name} has {len(task_functions)} @task function(s): {task_functions}"
-    )
+    for module in modules:
+        yield Diagnostic(
+            f"@task functions are defined in {module.relative_to(ctx.path).as_posix()} rather than {expected}",
+            file=module,
+            severity="warning",
+            hint=f"move them to {expected}, the modules readers look in first",
+        )
 
 
 @rule(
     code="IEFS003",
     name="init_exports",
     category="file_structure",
-    summary="__init__.py exports every @task function from the main file",
+    summary="__init__.py exports every @task function in the package",
     references=(
         inspect_docs(
             "extensions-components", "Extensions: Components: Registration", "registration"
@@ -200,12 +225,12 @@ def main_file(ctx: LintContext) -> Iterable[Finding]:
     ),
 )
 def init_exports(ctx: LintContext) -> Iterable[Finding]:
-    """``__init__.py`` exports every ``@task`` function from the main file.
+    """``__init__.py`` exports every ``@task`` function in the package.
 
     ## What it does
-    Reads the task functions from the main file and checks each name appears in
-    ``__init__.py``, either in ``__all__`` or imported with ``from ... import``.
-    One diagnostic per missing task.
+    Reads the task functions from every module that defines one and checks each
+    name appears in ``__init__.py``, either in ``__all__`` or imported with
+    ``from ... import``. One diagnostic per missing task, with the import to add.
 
     ## Why is this bad?
     ``inspect eval my_eval/task`` resolves tasks through the package, so a task the
@@ -220,7 +245,6 @@ def init_exports(ctx: LintContext) -> Iterable[Finding]:
     ```
     """
     init_file = ctx.path / "__init__.py"
-    target = find_main_file(ctx.path, ctx.name)
 
     if not init_file.exists():
         yield Diagnostic("Missing __init__.py file", file=init_file)
@@ -232,25 +256,21 @@ def init_exports(ctx: LintContext) -> Iterable[Finding]:
         yield Diagnostic(f"Syntax error in __init__.py: {e}", file=init_file, line=e.lineno)
         return
 
-    if not target.exists():
-        yield Outcome("skip", f"Main file {target.name} not found, cannot check exports")
-        return
-
-    task_functions = _find_task_functions(target)
-    if not task_functions:
+    tasks = [(module, fn) for module in task_modules(ctx) for fn in _find_task_functions(module)]
+    if not tasks:
         yield Outcome("skip", "No task functions to check for exports")
         return
 
     exported_names = _get_exported_names(init_file)
-    missing = [fn for fn in task_functions if fn not in exported_names]
-    for fn in missing:
+    missing = [(module, fn) for module, fn in tasks if fn not in exported_names]
+    for module, fn in missing:
         yield Diagnostic(
             f"__init__.py does not export the @task function {fn!r}",
             file=init_file,
-            hint=f"add `from .{target.stem} import {fn}` and list it in __all__",
+            hint=f"add `from {_relative_module(ctx, module)} import {fn}` and list it in __all__",
         )
     if not missing:
-        yield Outcome("pass", f"__init__.py exports all {len(task_functions)} task function(s)")
+        yield Outcome("pass", f"__init__.py exports all {len(tasks)} task function(s)")
 
 
 def _table(mapping: dict[str, Any], key: str) -> dict[str, Any]:
