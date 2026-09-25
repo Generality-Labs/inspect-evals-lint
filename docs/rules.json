@@ -277,13 +277,17 @@
         "helper"
       ],
       "allowlist": false,
-      "summary": "Every @solver function name appears somewhere in the tests",
+      "summary": "Every @solver or @agent function name appears somewhere in the tests",
       "url": "https://inspect-evals-lint.generality.org/rules/IETS005/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IETS005.md",
       "references": [
         {
           "title": "Solvers: Custom Solvers",
           "url": "https://inspect.aisi.org.uk/solvers.html#custom-solvers"
+        },
+        {
+          "title": "Custom Agents",
+          "url": "https://inspect.aisi.org.uk/agent-custom.html"
         }
       ]
     },
@@ -334,7 +338,7 @@
         "helper"
       ],
       "allowlist": false,
-      "summary": "get_model() is only called inside @solver or @scorer functions",
+      "summary": "get_model() is only called inside @solver, @scorer or @agent functions",
       "url": "https://inspect-evals-lint.generality.org/rules/IEBP001/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP001.md",
       "references": [
@@ -349,6 +353,10 @@
         {
           "title": "Custom Scorers: Models in Scorers",
           "url": "https://inspect.aisi.org.uk/custom-scorers.html#models-in-scorers"
+        },
+        {
+          "title": "Custom Agents: Parameters",
+          "url": "https://inspect.aisi.org.uk/agent-custom.html#parameters"
         }
       ]
     },

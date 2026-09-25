@@ -761,3 +761,36 @@ def test_dockerfile_locking_reads_its_option_table(monorepo: tuple[Path, LintCon
     broken = replace(config, rule_options={"dockerfile_locking": {"host_lock_coupling": "x"}})
     with pytest.raises(ConfigError, match="host-lock-coupling"):
         lint_package(root, "alpha", broken, check="IEBP007")
+
+
+AGENT_MODULE = """
+from inspect_ai.agent import agent
+from inspect_ai.model import get_model
+
+
+@agent
+def react_agent(model=None):
+    async def execute(state):
+        agent_model = get_model(model)
+        return state
+
+    return execute
+"""
+
+
+def test_agent_is_a_model_resolving_component(template_repo: tuple[Path, LintConfig]) -> None:
+    """get_model() inside an @agent is not flagged, and the agent must be tested like a solver."""
+    root, config = template_repo
+    write(config.package_dir(root, "alpha") / "agents.py", AGENT_MODULE)
+    result = statuses(root, config)
+    assert result["get_model_location"] == ["pass"]
+    assert result["custom_solver_tests"] == ["fail"]
+
+    report = lint_package(root, "alpha", config)
+    untested = first(report, "custom_solver_tests")
+    assert untested.message == "@agent react_agent() is not mentioned by any test"
+
+    write(
+        config.tests_dir(root) / "alpha" / "test_agent.py", "from alpha.agents import react_agent\n"
+    )
+    assert statuses(root, config)["custom_solver_tests"] == ["pass"]

@@ -56,6 +56,23 @@ def my_scorer():
         assert context == "my_scorer"
         assert is_valid is True
 
+    def test_get_model_in_agent(self):
+        """An agent is the solver of a sandboxed evaluation; get_model() in its execute is late enough."""
+        code = """
+@agent
+def my_agent(model=None):
+    async def execute(state):
+        return await get_model(model).generate(state.messages)
+    return execute
+"""
+        visitor = GetModelVisitor()
+        visitor.visit(ast.parse(code))
+
+        assert len(visitor.calls) == 1
+        _line, context, is_valid = visitor.calls[0]
+        assert context == "execute"
+        assert is_valid is True
+
     def test_get_model_outside_solver_scorer(self):
         """Test that get_model() outside @solver/@scorer is marked invalid."""
         code = """

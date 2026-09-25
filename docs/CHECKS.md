@@ -27,21 +27,21 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 
 ## Tests
 
-| Code                        | Rule                    | Applies to   | Summary                                                             |
-| --------------------------- | ----------------------- | ------------ | ------------------------------------------------------------------- |
-| [IETS001](rules/IETS001.md) | `tests_exist`           | eval         | A test directory exists for the evaluation                          |
-| [IETS002](rules/IETS002.md) | `tests_init`            | eval, helper | The test directory and its sub-directories contain __init__.py      |
-| [IETS003](rules/IETS003.md) | `e2e_test`              | eval         | Some test runs eval() against mockllm/model                         |
-| [IETS004](rules/IETS004.md) | `record_to_sample_test` | eval         | record_to_sample is exercised by a test when the evaluation uses it |
-| [IETS005](rules/IETS005.md) | `custom_solver_tests`   | eval, helper | Every @solver function name appears somewhere in the tests          |
-| [IETS006](rules/IETS006.md) | `custom_scorer_tests`   | eval, helper | Every @scorer function name appears somewhere in the tests          |
-| [IETS007](rules/IETS007.md) | `custom_tool_tests`     | eval, helper | Every @tool function name appears somewhere in the tests            |
+| Code                        | Rule                    | Applies to   | Summary                                                              |
+| --------------------------- | ----------------------- | ------------ | -------------------------------------------------------------------- |
+| [IETS001](rules/IETS001.md) | `tests_exist`           | eval         | A test directory exists for the evaluation                           |
+| [IETS002](rules/IETS002.md) | `tests_init`            | eval, helper | The test directory and its sub-directories contain __init__.py       |
+| [IETS003](rules/IETS003.md) | `e2e_test`              | eval         | Some test runs eval() against mockllm/model                          |
+| [IETS004](rules/IETS004.md) | `record_to_sample_test` | eval         | record_to_sample is exercised by a test when the evaluation uses it  |
+| [IETS005](rules/IETS005.md) | `custom_solver_tests`   | eval, helper | Every @solver or @agent function name appears somewhere in the tests |
+| [IETS006](rules/IETS006.md) | `custom_scorer_tests`   | eval, helper | Every @scorer function name appears somewhere in the tests           |
+| [IETS007](rules/IETS007.md) | `custom_tool_tests`     | eval, helper | Every @tool function name appears somewhere in the tests             |
 
 ## Best practices
 
 | Code                        | Rule                            | Applies to   | Summary                                                                                             |
 | --------------------------- | ------------------------------- | ------------ | --------------------------------------------------------------------------------------------------- |
-| [IEBP001](rules/IEBP001.md) | `get_model_location`            | eval, helper | get_model() is only called inside @solver or @scorer functions                                      |
+| [IEBP001](rules/IEBP001.md) | `get_model_location`            | eval, helper | get_model() is only called inside @solver, @scorer or @agent functions                              |
 | [IEBP002](rules/IEBP002.md) | `model_role_resolution`         | eval, helper | get_model(role=...) resolves deliberately: an explicit model, default= or required=True             |
 | [IEBP003](rules/IEBP003.md) | `sample_ids`                    | eval, helper | Every Sample() passes id=                                                                           |
 | [IEBP004](rules/IEBP004.md) | `task_overridable_defaults`     | eval, helper | @task parameters naming a solver, scorer, metric, grader or model have defaults                     |

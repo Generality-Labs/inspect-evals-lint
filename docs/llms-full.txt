@@ -187,21 +187,21 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 
 ## Tests
 
-| Code                        | Rule                    | Applies to   | Summary                                                             |
-| --------------------------- | ----------------------- | ------------ | ------------------------------------------------------------------- |
-| [IETS001](rules/IETS001.md) | `tests_exist`           | eval         | A test directory exists for the evaluation                          |
-| [IETS002](rules/IETS002.md) | `tests_init`            | eval, helper | The test directory and its sub-directories contain __init__.py      |
-| [IETS003](rules/IETS003.md) | `e2e_test`              | eval         | Some test runs eval() against mockllm/model                         |
-| [IETS004](rules/IETS004.md) | `record_to_sample_test` | eval         | record_to_sample is exercised by a test when the evaluation uses it |
-| [IETS005](rules/IETS005.md) | `custom_solver_tests`   | eval, helper | Every @solver function name appears somewhere in the tests          |
-| [IETS006](rules/IETS006.md) | `custom_scorer_tests`   | eval, helper | Every @scorer function name appears somewhere in the tests          |
-| [IETS007](rules/IETS007.md) | `custom_tool_tests`     | eval, helper | Every @tool function name appears somewhere in the tests            |
+| Code                        | Rule                    | Applies to   | Summary                                                              |
+| --------------------------- | ----------------------- | ------------ | -------------------------------------------------------------------- |
+| [IETS001](rules/IETS001.md) | `tests_exist`           | eval         | A test directory exists for the evaluation                           |
+| [IETS002](rules/IETS002.md) | `tests_init`            | eval, helper | The test directory and its sub-directories contain __init__.py       |
+| [IETS003](rules/IETS003.md) | `e2e_test`              | eval         | Some test runs eval() against mockllm/model                          |
+| [IETS004](rules/IETS004.md) | `record_to_sample_test` | eval         | record_to_sample is exercised by a test when the evaluation uses it  |
+| [IETS005](rules/IETS005.md) | `custom_solver_tests`   | eval, helper | Every @solver or @agent function name appears somewhere in the tests |
+| [IETS006](rules/IETS006.md) | `custom_scorer_tests`   | eval, helper | Every @scorer function name appears somewhere in the tests           |
+| [IETS007](rules/IETS007.md) | `custom_tool_tests`     | eval, helper | Every @tool function name appears somewhere in the tests             |
 
 ## Best practices
 
 | Code                        | Rule                            | Applies to   | Summary                                                                                             |
 | --------------------------- | ------------------------------- | ------------ | --------------------------------------------------------------------------------------------------- |
-| [IEBP001](rules/IEBP001.md) | `get_model_location`            | eval, helper | get_model() is only called inside @solver or @scorer functions                                      |
+| [IEBP001](rules/IEBP001.md) | `get_model_location`            | eval, helper | get_model() is only called inside @solver, @scorer or @agent functions                              |
 | [IEBP002](rules/IEBP002.md) | `model_role_resolution`         | eval, helper | get_model(role=...) resolves deliberately: an explicit model, default= or required=True             |
 | [IEBP003](rules/IEBP003.md) | `sample_ids`                    | eval, helper | Every Sample() passes id=                                                                           |
 | [IEBP004](rules/IEBP004.md) | `task_overridable_defaults`     | eval, helper | @task parameters naming a solver, scorer, metric, grader or model have defaults                     |
@@ -796,21 +796,22 @@ Suppress on a line with `# inspect-evals-lint: ignore[IETS004]` or `ignore[recor
 
 # IETS005: custom_solver_tests
 
-Every @solver function name appears somewhere in the tests.
+Every @solver or @agent function name appears somewhere in the tests.
 
 **Category:** tests · **Applies to:** eval, helper
 
 ## What it does
 
-Finds functions decorated with `@solver` in the package and checks each name appears in a test file. For an evaluation the search covers `tests/<name>/`; for a helper package, the whole tests root, because shared components are usually tested next to the evaluation that motivated them. One diagnostic per untested function. This is a presence check, not a quality check.
+Finds functions decorated with `@solver` or `@agent` in the package and checks each name appears in a test file. An agent is the solver of a sandboxed evaluation, so it is held to the same standard. For an evaluation the search covers `tests/<name>/`; for a helper package, the whole tests root, because shared components are usually tested next to the evaluation that motivated them. One diagnostic per untested function. This is a presence check, not a quality check.
 
 ## Why is this bad?
 
-A custom solver is the evaluation's own logic, the part no upstream test covers. One test that at least constructs it catches import errors and signature changes.
+A custom solver or agent is the evaluation's own logic, the part no upstream test covers. One test that at least constructs it catches import errors and signature changes.
 
 ## See also
 
 - [Solvers: Custom Solvers](https://inspect.aisi.org.uk/solvers.html#custom-solvers)
+- [Custom Agents](https://inspect.aisi.org.uk/agent-custom.html)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IETS005]` or `ignore[custom_solver_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.
 
@@ -865,17 +866,17 @@ Suppress on a line with `# inspect-evals-lint: ignore[IETS007]` or `ignore[custo
 
 # IEBP001: get_model_location
 
-get_model() is only called inside @solver or @scorer functions.
+get_model() is only called inside @solver, @scorer or @agent functions.
 
 **Category:** best_practices · **Applies to:** eval, helper
 
 ## What it does
 
-Warns on each `get_model()` call that is not inside a function decorated with `@solver` or `@scorer`.
+Warns on each `get_model()` call that is not inside a function decorated with `@solver`, `@scorer` or `@agent`. An agent is the solver of a sandboxed evaluation, and its `execute` runs per sample just as a solver's does.
 
 ## Why is this bad?
 
-Resolving a concrete model at import time or inside `@task` fixes it before the caller can choose one. Resolving it inside the solver or scorer keeps the task declarative and lets `--model-role` and task parameters override it.
+Resolving a concrete model at import time or inside `@task` fixes it before the caller can choose one. Resolving it inside the solver, scorer or agent keeps the task declarative and lets `--model-role` and task parameters override it.
 
 ## Example
 
@@ -903,6 +904,7 @@ def graded(model: str | Model | None = None):
 - [Models: Role Resolution](https://inspect.aisi.org.uk/models.html#role-resolution)
 - [Solvers: Models in Solvers](https://inspect.aisi.org.uk/solvers.html#models-in-solvers)
 - [Custom Scorers: Models in Scorers](https://inspect.aisi.org.uk/custom-scorers.html#models-in-scorers)
+- [Custom Agents: Parameters](https://inspect.aisi.org.uk/agent-custom.html#parameters)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP001]` or `ignore[get_model_location]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
