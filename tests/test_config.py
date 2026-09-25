@@ -57,6 +57,9 @@ def test_register_preset_values() -> None:
     assert PRESETS["template"].tests_layout == "per-eval"
     assert PRESETS["template"].readme_location == "eval-dir"
     assert PRESETS["template"].eval_yaml_required is True
+    assert PRESETS["monorepo"].per_eval_dependency_group is True
+    assert PRESETS["template"].per_eval_dependency_group is False
+    assert PRESETS["register"].per_eval_dependency_group is False
 
 
 def test_layout_keys_are_overridable() -> None:

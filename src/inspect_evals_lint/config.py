@@ -145,6 +145,13 @@ class LintConfig:
         },
     )
 
+    per_eval_dependency_group: bool = field(
+        default=False,
+        metadata={
+            "doc": "Whether every evaluation with third-party imports must own an ``[project.optional-dependencies]`` group named after itself, so one evaluation's dependencies install without the rest (the inspect_evals convention). False accepts ``[project].dependencies`` and any extra, as a standalone repository declares them."
+        },
+    )
+
     select: tuple[str, ...] = field(
         default=("IE",),
         metadata={
@@ -243,6 +250,7 @@ PRESETS: dict[str, LintConfig] = {
         registry_module="src/inspect_evals/_registry.py",
         ignore_dirs=frozenset(),
         isolated_packages_dir="packages",
+        per_eval_dependency_group=True,
         rule_options={"dockerfile_locking": {"host_lock_coupling": "warn"}},
     ),
     # A single-evaluation repository, as listed in the inspect_evals register:
@@ -360,7 +368,7 @@ def _coerce(key: str, value: object) -> object:
         return _choice(value, key, TESTS_LAYOUTS)
     if key == "readme_location":
         return _choice(value, key, README_LOCATIONS)
-    if key == "eval_yaml_required":
+    if key in ("eval_yaml_required", "per_eval_dependency_group"):
         return _expect(value, bool, key)
     if key in ("registry_module", "isolated_packages_dir"):
         text = _expect(value, str, key)

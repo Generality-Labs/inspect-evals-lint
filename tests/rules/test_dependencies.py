@@ -1,5 +1,7 @@
 """The external_dependencies rule and its import and name helpers."""
 
+from typing import ClassVar
+
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.rules import dependencies
 from inspect_evals_lint.rules.dependencies import (
@@ -121,6 +123,214 @@ class TestCheckExternalDependenciesNormalisation:
         result = self._status(root, config)
         assert result.status == "fail"
         assert "'some_extra_pkg' (package: some-extra-pkg)" in result.message
+
+
+class TestTransitiveCoreDependencies:
+    """What a core dependency requires is installed by construction, so importing it needs no declaration."""
+
+    REQUIREMENTS: ClassVar[dict[str, list[str]]] = {
+        "inspect-ai": ["pydantic>=2.11", 'anthropic>=0.5; extra == "dev"', "anyio"],
+        "pydantic": ["typing-extensions>=4.6", "annotated-types"],
+    }
+
+    @staticmethod
+    def _status(root, config, name="alpha"):
+        (result,) = external_dependencies(LintContext.build(root, name, config))
+        return result
+
+    def _fake_requires(self, monkeypatch):
+        def fake_requires(dist: str) -> list[str] | None:
+            if dist not in self.REQUIREMENTS:
+                raise dependencies.PackageNotFoundError(dist)
+            return self.REQUIREMENTS[dist]
+
+        monkeypatch.setattr(dependencies, "requires", fake_requires)
+
+    def test_transitive_requirement_is_not_external(self, template_repo, monkeypatch):
+        self._fake_requires(monkeypatch)
+        root, config = template_repo
+        (config.package_dir(root, "alpha") / "alpha.py").write_text(
+            "import pydantic\nimport annotated_types\n"
+            + (config.package_dir(root, "alpha") / "alpha.py").read_text()
+        )
+        assert self._status(root, config).status == "pass"
+
+    def test_extras_only_requirement_is_still_external(self, template_repo, monkeypatch):
+        """``anthropic`` comes with ``inspect_ai[dev]``, which nobody asked for."""
+        self._fake_requires(monkeypatch)
+        root, config = template_repo
+        (config.package_dir(root, "alpha") / "alpha.py").write_text(
+            "import anthropic\n" + (config.package_dir(root, "alpha") / "alpha.py").read_text()
+        )
+        result = self._status(root, config)
+        assert result.status == "fail"
+        assert "'anthropic'" in result.message
+
+    def test_uninstalled_core_dependency_contributes_nothing(self, template_repo, monkeypatch):
+        monkeypatch.setattr(
+            dependencies,
+            "requires",
+            lambda dist: (_ for _ in ()).throw(dependencies.PackageNotFoundError(dist)),
+        )
+        root, config = template_repo
+        (config.package_dir(root, "alpha") / "alpha.py").write_text(
+            "import pydantic\n" + (config.package_dir(root, "alpha") / "alpha.py").read_text()
+        )
+        assert self._status(root, config).status == "fail"
+
+    def test_closure_terminates_on_cycles(self, monkeypatch):
+        monkeypatch.setattr(
+            dependencies, "requires", lambda dist: ["a", "b"] if dist == "a" else ["a"]
+        )
+        assert dependencies._installed_requirements("a") == frozenset({"a", "b"})
+
+
+UV_LOCK = """
+version = 1
+requires-python = ">=3.11"
+
+[[package]]
+name = "inspect-ai"
+version = "0.3.263"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "pydantic" },
+    { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
+]
+
+[[package]]
+name = "pydantic"
+version = "2.13.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-types" },
+]
+
+[[package]]
+name = "anthropic"
+version = "0.115.0"
+source = { registry = "https://pypi.org/simple" }
+"""
+
+
+class TestLockfileCoreDependencies:
+    """``uv.lock`` gives the resolved graph without anything installed, so ``uvx`` runs see it."""
+
+    @staticmethod
+    def _status(root, config, name="alpha"):
+        (result,) = external_dependencies(LintContext.build(root, name, config))
+        return result
+
+    @staticmethod
+    def _import(root, config, line):
+        main = config.package_dir(root, "alpha") / "alpha.py"
+        main.write_text(line + "\n" + main.read_text())
+
+    def test_lock_resolves_transitive_requirements(self, template_repo, monkeypatch):
+        monkeypatch.setattr(
+            dependencies,
+            "requires",
+            lambda dist: (_ for _ in ()).throw(dependencies.PackageNotFoundError(dist)),
+        )
+        root, config = template_repo
+        (root / "uv.lock").write_text(UV_LOCK)
+        self._import(root, config, "import pydantic\nimport annotated_types\nimport exceptiongroup")
+        assert self._status(root, config).status == "pass"
+        core = dependencies._get_core_dependencies(root)
+        assert core.source == "uv.lock"
+        assert {"inspect-ai", "pydantic", "annotated-types", "anyio"} <= core.names
+
+    def test_lock_wins_over_the_environment(self, template_repo, monkeypatch):
+        """A package in the lock that inspect_ai does not require is not core, whatever is installed here."""
+        monkeypatch.setattr(dependencies, "requires", lambda dist: ["anthropic"])
+        root, config = template_repo
+        (root / "uv.lock").write_text(UV_LOCK)
+        self._import(root, config, "import anthropic")
+        result = self._status(root, config)
+        assert result.status == "fail"
+        assert "uv.lock" not in (result.hint or "")
+
+    def test_without_lock_or_environment_the_hint_says_why(self, template_repo, monkeypatch):
+        monkeypatch.setattr(
+            dependencies,
+            "requires",
+            lambda dist: (_ for _ in ()).throw(dependencies.PackageNotFoundError(dist)),
+        )
+        root, config = template_repo
+        self._import(root, config, "import pydantic")
+        result = self._status(root, config)
+        assert result.status == "fail"
+        assert result.hint is not None
+        assert "no uv.lock" in result.hint
+        assert "uv run inspect-evals-lint" in result.hint
+        assert dependencies._get_core_dependencies(root).source is None
+
+    def test_environment_source_gives_a_plain_hint(self, template_repo, monkeypatch):
+        monkeypatch.setattr(
+            dependencies, "requires", lambda dist: ["anyio"] if dist == "inspect-ai" else []
+        )
+        root, config = template_repo
+        self._import(root, config, "import pydantic")
+        result = self._status(root, config)
+        assert result.status == "fail"
+        assert "no uv.lock" not in (result.hint or "")
+        assert dependencies._get_core_dependencies(root).source == "environment"
+
+    def test_unparsable_lock_counts_as_a_lock_with_no_graph(self, template_repo):
+        root, _config = template_repo
+        (root / "uv.lock").write_text("this is not toml [")
+        core = dependencies._get_core_dependencies(root)
+        assert core.source == "uv.lock"
+        assert core.names == {"inspect-ai"}
+
+
+class TestPerEvalDependencyGroup:
+    """The group-named-after-the-evaluation convention is the monorepo's, not a standalone repository's."""
+
+    @staticmethod
+    def _findings(root, config, name="alpha"):
+        return list(external_dependencies(LintContext.build(root, name, config)))
+
+    def _repo_with_extra(self, template_repo):
+        root, config = template_repo
+        (config.package_dir(root, "alpha") / "alpha.py").write_text(
+            "import some_extra_pkg\n" + (config.package_dir(root, "alpha") / "alpha.py").read_text()
+        )
+        pyproject = root / "pyproject.toml"
+        pyproject.write_text(
+            pyproject.read_text()
+            + '\n[project.optional-dependencies]\nmodal = ["some_extra_pkg"]\n'
+        )
+        return root, config
+
+    def test_any_extra_suffices_by_default(self, template_repo):
+        root, config = self._repo_with_extra(template_repo)
+        assert config.per_eval_dependency_group is False
+        (result,) = self._findings(root, config)
+        assert result.status == "pass"
+
+    def test_monorepo_convention_requires_the_named_group(self, template_repo):
+        from dataclasses import replace
+
+        root, config = self._repo_with_extra(template_repo)
+        (result,) = self._findings(root, replace(config, per_eval_dependency_group=True))
+        assert result.status == "fail"
+        assert "no dedicated optional-dependency group" in result.message
+
+    def test_hint_names_the_right_home(self, template_repo):
+        from dataclasses import replace
+
+        root, config = template_repo
+        (config.package_dir(root, "alpha") / "alpha.py").write_text(
+            "import some_extra_pkg\n" + (config.package_dir(root, "alpha") / "alpha.py").read_text()
+        )
+        (standalone,) = self._findings(root, config)
+        assert standalone.hint is not None
+        assert "[project].dependencies" in standalone.hint
+        (monorepo,) = self._findings(root, replace(config, per_eval_dependency_group=True))
+        assert monorepo.hint is not None
+        assert "group named 'alpha'" in monorepo.hint
 
 
 class TestSiblingPackagesAreFirstParty:
