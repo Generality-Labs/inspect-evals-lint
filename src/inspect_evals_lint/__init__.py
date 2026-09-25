@@ -42,7 +42,7 @@ from inspect_evals_lint.registry import (
 )
 from inspect_evals_lint.runner import lint_package, lint_repository, lint_task_files
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 __all__ = [
     "CATEGORIES",

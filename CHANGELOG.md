@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-25
+
+Linting a standalone evaluation repository no longer reports the inspect_evals monorepo's conventions as failures. [#36](https://github.com/Generality-Labs/inspect-evals-lint/issues/36) ran 0.7.0 over a typical single-evaluation repository and found one genuine finding among eight failures; the other seven came from rules that assumed the monorepo or template layout. Each is fixed below, the default preset now follows the repository's shape, and the presets are named for the layout they describe. Every change is additive or aliased: a repository pinned on 0.7.0 gets the same results or fewer false positives, and the old preset names keep working for this release with a notice.
+
 ### Changed
 
 - Presets are named for the layout they describe: `multi-eval` (several evaluation packages under `src/`, each registered by an entry point, as the template produces), `single-eval` (one evaluation package that is the whole repository) and `monorepo` (inspect_evals itself). `single-eval` requires `eval.yaml` like the other two: whether the metadata lives in the repository or in an inspect_evals register entry is a property of the destination, not the layout, so it is now the `eval-yaml-required = false` key, which the register lint service passes explicitly (`REGISTER_CONFIG` in the Python API, the default for `lint_task_files`). The inferred default and its notice use the new names ([#36](https://github.com/Generality-Labs/inspect-evals-lint/issues/36)).
