@@ -1,10 +1,13 @@
 """Static checks for Inspect AI evaluations: structure, tests, best practices and sandbox pinning."""
 
 from inspect_evals_lint.config import (
+    DEFAULT_PRESET,
     PRESETS,
+    SINGLE_EVAL_PRESET,
     ConfigError,
     LintConfig,
     find_repo_root,
+    infer_preset,
     load_config,
 )
 from inspect_evals_lint.context import (
@@ -41,8 +44,10 @@ __version__ = "0.7.0"
 
 __all__ = [
     "CATEGORIES",
+    "DEFAULT_PRESET",
     "PRESETS",
     "RULE_STATUS_ORDER",
+    "SINGLE_EVAL_PRESET",
     "ConfigError",
     "Diagnostic",
     "LintConfig",
@@ -62,6 +67,7 @@ __all__ = [
     "find_repo_root",
     "get_rule",
     "helper_names",
+    "infer_preset",
     "lint_package",
     "lint_repository",
     "lint_task_files",

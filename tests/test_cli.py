@@ -183,6 +183,7 @@ def test_json_all_sends_progress_to_stderr(
     ]
     assert "Linting 2 evaluations and 1 helper package" in captured.err
     assert "No [tool.inspect-evals-lint] table" in captured.err
+    assert "using the 'template' preset (src/ holds 2 evaluation packages)" in captured.err
 
 
 def test_helper_package_can_be_named_directly(
@@ -213,7 +214,36 @@ def test_missing_table_message_keeps_brackets(
 ) -> None:
     make_template_repo(tmp_path)
     assert run("--all", "--root", str(tmp_path)) == 0
-    assert "No [tool.inspect-evals-lint] table" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "No [tool.inspect-evals-lint] table" in out
+    assert "using the 'register' preset (src/ holds one evaluation package)" in out
+
+
+def test_single_eval_repo_without_a_table_is_linted_as_standalone(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The exploitbench shape: one package, root README, tests/<name>/ without __init__.py, no table."""
+    make_template_repo(tmp_path)
+    (tmp_path / "src/alpha/README.md").rename(tmp_path / "README.md")
+    (tmp_path / "tests/alpha/__init__.py").unlink()
+    assert run("--all", "--root", str(tmp_path), "--output-format", "json") == 0
+    data = json.loads(capsys.readouterr().out)
+    alpha = next(p for p in data["packages"] if p["name"] == "alpha")
+    by_rule = {o["rule"]: o["status"] for o in alpha["outcomes"]}
+    assert by_rule["readme"] == "pass"
+    assert by_rule["tests_init"] == "skip"
+    assert run("--all", "--root", str(tmp_path), "--preset", "template") == 1
+
+
+def test_table_without_preset_says_so(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    make_template_repo(tmp_path)
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text() + "\n[tool.inspect-evals-lint]\nignore = ['IEFS004']\n"
+    )
+    assert run("--all", "--root", str(tmp_path)) == 0
+    out = capsys.readouterr().out
+    assert "No 'preset' in [tool.inspect-evals-lint]; using the 'register' preset" in out
 
 
 @pytest.mark.skipif(

@@ -21,6 +21,7 @@ from inspect_evals_lint.config import (
     ConfigError,
     LintConfig,
     find_repo_root,
+    infer_preset,
     known_selectors,
     load_config,
     read_tool_table,
@@ -192,10 +193,16 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     repo_root = (args.root or find_repo_root()).resolve()
     try:
-        if read_tool_table(repo_root) is None and args.preset is None:
+        table = read_tool_table(repo_root)
+        if args.preset is None and (table is None or "preset" not in table):
+            preset, reason = infer_preset(repo_root, table or {})
+            missing = (
+                f"No {escape('[tool.inspect-evals-lint]')} table in {repo_root / 'pyproject.toml'}"
+                if table is None
+                else f"No 'preset' in {escape('[tool.inspect-evals-lint]')}"
+            )
             info.print(
-                f"[dim]No {escape('[tool.inspect-evals-lint]')} table in "
-                f"{repo_root / 'pyproject.toml'}; using the 'template' preset.[/]",
+                f"[dim]{missing}; using the {preset!r} preset ({escape(reason)}).[/]",
                 soft_wrap=True,
             )
         config = load_config(repo_root, preset=args.preset)

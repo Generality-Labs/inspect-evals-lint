@@ -13,7 +13,9 @@ from inspect_evals_lint.config import (
     LintConfig,
     config_from_table,
     find_repo_root,
+    infer_preset,
     load_config,
+    read_tool_table,
 )
 from inspect_evals_lint.registry import get_rule
 from tests.conftest import write
@@ -240,9 +242,45 @@ def test_load_config_reads_pyproject(tmp_path: Path) -> None:
 
 
 def test_load_config_without_table_or_pyproject(tmp_path: Path) -> None:
+    """With nothing under src/ there is no single evaluation to infer, so the template preset stands."""
     assert load_config(tmp_path) == PRESETS["template"]
     write(tmp_path / "pyproject.toml", "[project]\nname = 'x'\n")
     assert load_config(tmp_path) == PRESETS["template"]
+
+
+def test_single_evaluation_package_infers_the_register_preset(tmp_path: Path) -> None:
+    write(tmp_path / "src/alpha/__init__.py", "")
+    write(tmp_path / "src/utils/__init__.py", "")  # a helper does not count
+    write(tmp_path / "src/examples/__init__.py", "")  # nor an ignored directory
+    assert infer_preset(tmp_path, {}) == ("register", "src/ holds one evaluation package")
+    assert load_config(tmp_path) == PRESETS["register"]
+    write(tmp_path / "src/beta/__init__.py", "")
+    assert infer_preset(tmp_path, {}) == ("template", "src/ holds 2 evaluation packages")
+    assert load_config(tmp_path) == PRESETS["template"]
+
+
+def test_inference_honours_the_table_layout_keys(tmp_path: Path) -> None:
+    """A table without ``preset`` still says where the evaluations live and what is a helper."""
+    write(tmp_path / "evals/alpha/__init__.py", "")
+    write(tmp_path / "evals/shared/__init__.py", "")
+    write(
+        tmp_path / "pyproject.toml",
+        "[tool.inspect-evals-lint]\nsource-root = 'evals'\nhelper-dirs = ['shared']\n",
+    )
+    table = read_tool_table(tmp_path)
+    assert table is not None
+    assert infer_preset(tmp_path, table) == ("register", "evals/ holds one evaluation package")
+    cfg = load_config(tmp_path)
+    assert cfg.tests_layout == "flat"
+    assert cfg.source_root == "evals"
+    assert cfg.helper_dirs == frozenset({"shared"})
+
+
+def test_named_preset_is_never_second_guessed(tmp_path: Path) -> None:
+    write(tmp_path / "src/alpha/__init__.py", "")
+    write(tmp_path / "pyproject.toml", "[tool.inspect-evals-lint]\npreset = 'template'\n")
+    assert load_config(tmp_path) == PRESETS["template"]
+    assert load_config(tmp_path, preset="monorepo") == PRESETS["monorepo"]
 
 
 def test_load_config_bad_toml(tmp_path: Path) -> None:
