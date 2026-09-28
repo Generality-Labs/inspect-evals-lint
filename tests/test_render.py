@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 
 from inspect_evals_lint import __version__
@@ -143,6 +144,22 @@ def test_package_to_dict_fields():
     data = package_to_dict(run.packages[1], run.root)
     assert data["passed"] is False
     assert data["skipped"] is None
+    assert data["rules"] == [
+        {
+            "rule": "registry",
+            "code": "IEFS004",
+            "category": "file_structure",
+            "status": "pass",
+            "diagnostics": [],
+        },
+        {
+            "rule": "readme",
+            "code": "IEFS006",
+            "category": "file_structure",
+            "status": "fail",
+            "diagnostics": [0],
+        },
+    ]
     assert data["outcomes"] == [
         {
             "rule": "registry",
@@ -180,9 +197,126 @@ def test_skipped_package_has_no_findings():
     report = PackageReport("examples", "eval", skipped="listed in ignore-dirs")
     data = package_to_dict(report)
     assert data["skipped"] == "listed in ignore-dirs"
+    assert data["rules"] == []
     assert data["outcomes"] == []
     assert data["diagnostics"] == []
     assert data["passed"] is True
+
+
+def test_package_rules_count_reproduces_score():
+    """Consumers can validate score by counting rules by status; indexes point at diagnostics."""
+    main = get_rule("main_file")
+    sample = get_rule("sample_ids")
+    assert main
+    assert sample
+
+    report = PackageReport("mixed_statuses", "eval")
+    report.add(Outcome("pass", "Registered", rule=REGISTRY))
+    report.add(Outcome("pass", "README.md exists", rule=README))
+    report.add(
+        Diagnostic(
+            "Missing README.md",
+            file=Path("/repo/src/mixed_statuses/README.md"),
+            rule=README,
+        )
+    )
+    report.add(
+        Diagnostic(
+            "Sample() call without id=",
+            file=Path("/repo/src/mixed_statuses/mixed.py"),
+            line=10,
+            rule=sample,
+        )
+    )
+    report.add(
+        Diagnostic(
+            "Allowlisted unpinned image",
+            file=Path("/repo/src/mixed_statuses/compose.yaml"),
+            severity="warning",
+            rule=PINNING,
+        )
+    )
+    report.add(Outcome("skip", "No test directory found", rule=E2E))
+    report.add(
+        Diagnostic(
+            "TODO marker",
+            file=Path("/repo/src/mixed_statuses/main.py"),
+            line=1,
+            severity="warning",
+            rule=main,
+            suppressed=True,
+        )
+    )
+    # Skip outcome plus a warning on the same rule: status is warn; only the warning's index.
+    report.add(Outcome("skip", "No compose file", rule=PINNING))
+
+    data = package_to_dict(report, Path("/repo"))
+    assert data["rules"] == [
+        {
+            "rule": "main_file",
+            "code": "IEFS002",
+            "category": "file_structure",
+            "status": "suppressed",
+            "diagnostics": [3],
+        },
+        {
+            "rule": "registry",
+            "code": "IEFS004",
+            "category": "file_structure",
+            "status": "pass",
+            "diagnostics": [],
+        },
+        {
+            "rule": "readme",
+            "code": "IEFS006",
+            "category": "file_structure",
+            "status": "fail",
+            "diagnostics": [0],
+        },
+        {
+            "rule": "e2e_test",
+            "code": "IETS003",
+            "category": "tests",
+            "status": "skip",
+            "diagnostics": [],
+        },
+        {
+            "rule": "sample_ids",
+            "code": "IEBP003",
+            "category": "best_practices",
+            "status": "fail",
+            "diagnostics": [1],
+        },
+        {
+            "rule": "sandbox_image_pinning",
+            "code": "IEBP005",
+            "category": "best_practices",
+            "status": "warn",
+            "diagnostics": [2],
+        },
+    ]
+    for entry in data["rules"]:
+        for i in entry["diagnostics"]:
+            assert data["diagnostics"][i]["rule"] == entry["rule"]
+
+    counts = Counter(r["status"] for r in data["rules"])
+    score = data["score"]
+    assert score["pass"] == counts.get("pass", 0)
+    assert score["fail"] == counts.get("fail", 0)
+    assert score["warn"] == counts.get("warn", 0)
+    assert score["skip"] == counts.get("skip", 0)
+    assert score["suppressed"] == counts.get("suppressed", 0)
+    assert (
+        score["applicable"] == score["pass"] + score["fail"] + score["warn"] + score["suppressed"]
+    )
+    assert score["passing"] == score["pass"] + score["warn"]
+    assert (score["pass"], score["fail"], score["warn"], score["skip"], score["suppressed"]) == (
+        1,
+        2,
+        1,
+        1,
+        1,
+    )
 
 
 def test_render_json_is_parseable_and_newline_terminated():

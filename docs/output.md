@@ -23,6 +23,10 @@ One document per run. `RunReport.to_dict()` produces the same mapping from the P
       "skipped": null,
       "summary": {"pass": 20, "fail": 2, "warn": 0, "skip": 3, "suppressed": 0},
       "score": {"pass": 19, "fail": 1, "warn": 0, "skip": 3, "suppressed": 0, "applicable": 20, "passing": 19, "score": 0.95, "by_category": {"...": "..."}},
+      "rules": [
+        {"rule": "package_location", "code": "IEFS001", "category": "file_structure", "status": "pass", "diagnostics": []},
+        {"rule": "sample_ids", "code": "IEBP003", "category": "best_practices", "status": "fail", "diagnostics": [0]}
+      ],
       "outcomes": [
         {"rule": "package_location", "code": "IEFS001", "category": "file_structure", "status": "pass", "message": "Package located at src/inspect_evals/gpqa"}
       ],
@@ -56,6 +60,7 @@ One document per run. `RunReport.to_dict()` produces the same mapping from the P
 | `packages[].kind`          | `eval` or `helper`. Filter on this rather than expecting separate lists.                                                                                                                                                                                                                                                                                                              |
 | `packages[].skipped`       | Why the package was not linted at all (listed in `ignore-dirs`), else `null`.                                                                                                                                                                                                                                                                                                         |
 | `packages[].score`         | The package's own score, in the same shape as the run's.                                                                                                                                                                                                                                                                                                                              |
+| `packages[].rules[]`       | One entry per rule that ran, in execution order, at the worst status it reported (`fail`, `warn`, `suppressed`, `pass`, `skip`). `diagnostics` is a list of indexes into this package's `diagnostics` array; a pass or skip with no findings has `[]`. Counting these by `status` reproduces `packages[].score`. Additive; `schema_version` stays 1.                                  |
 | `packages[].outcomes[]`    | One per rule that ran and had nothing to point at: `status` is `pass` or `skip`, `message` says why.                                                                                                                                                                                                                                                                                  |
 | `packages[].diagnostics[]` | One per finding. `severity` is `error` or `warning`; `status` is `fail`, `warn` or `suppressed`. `line` and `column` are 1-based and `null` when the finding is about a file or directory as a whole. `hint` is what to do about it, or `null`.                                                                                                                                       |
 
