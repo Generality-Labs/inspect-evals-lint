@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from inspect_evals_lint import __version__
-from inspect_evals_lint.diagnostics import Diagnostic, Outcome, PackageReport, RunReport
+from inspect_evals_lint.diagnostics import (
+    Diagnostic,
+    Outcome,
+    PackageReport,
+    RuleStatus,
+    RunReport,
+)
 from inspect_evals_lint.render.paths import relative_to_root
 
 SCHEMA_VERSION = 1
@@ -39,6 +45,17 @@ def _diagnostic_to_dict(diagnostic: Diagnostic, root: Path | None) -> dict[str, 
     }
 
 
+def _rule_status_to_dict(rule_status: RuleStatus, diagnostics: list[Diagnostic]) -> dict[str, Any]:
+    indexes = [diagnostics.index(d) for d in rule_status.diagnostics]
+    return {
+        "rule": rule_status.rule.name,
+        "code": rule_status.rule.code,
+        "category": rule_status.rule.category,
+        "status": rule_status.status,
+        "diagnostics": indexes,
+    }
+
+
 def package_to_dict(report: PackageReport, root: Path | None = None) -> dict[str, Any]:
     """One package's report as a JSON-serialisable mapping."""
     return {
@@ -48,6 +65,7 @@ def package_to_dict(report: PackageReport, root: Path | None = None) -> dict[str
         "skipped": report.skipped,
         "summary": report.summary(),
         "score": report.score().to_dict(),
+        "rules": [_rule_status_to_dict(rs, report.diagnostics) for rs in report.rule_statuses()],
         "outcomes": [_outcome_to_dict(o) for o in report.outcomes],
         "diagnostics": [_diagnostic_to_dict(d, root) for d in report.diagnostics],
     }
