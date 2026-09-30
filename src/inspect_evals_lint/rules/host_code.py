@@ -36,9 +36,10 @@ SinkKind = Literal["code", "data", "shell", "argv", "command", "program", "impor
 """How a sink's payload is judged.
 
 ``code``, ``data`` and ``shell`` always report; ``argv`` is a ``subprocess``
-call that is a shell sink with ``shell=`` and a program sink without;
-``command`` takes a string (run by a shell) or a list; ``program`` and
-``import`` report only when tainted.
+call (or ``pty.spawn``) that is a shell sink with ``shell=`` and a program
+sink without; ``command`` is a shell sink when its payload is written as a
+string and an argv otherwise; ``program`` and ``import`` report only when
+tainted.
 """
 
 
@@ -1132,47 +1133,67 @@ def host_code_execution(ctx: LintContext) -> Iterable[Finding]:
 
     **Sinks:**
 
-    - the builtins ``exec``, ``eval``, ``compile`` and ``__import__``, called
-      bare or through ``builtins``. An import such as
-      ``from inspect_ai import eval`` rebinds only the name it imports, and
-      only where it is in force: everywhere in the file when it sits at the
-      top level (or in a top-level ``try``), otherwise only in the function or
-      block that holds it. ``exec``, ``compile`` and ``__import__`` stay
-      checked;
-    - ``pickle.load`` and ``pickle.loads``; ``yaml.unsafe_load``,
-      ``yaml.full_load`` and their ``_all`` forms; ``yaml.load`` and
-      ``yaml.load_all`` without ``SafeLoader``, ``CSafeLoader``, ``BaseLoader``
-      or a class in the same file that subclasses one; ``torch.load`` without
-      ``weights_only=True``;
+    - code: the builtins ``exec``, ``eval``, ``compile`` and ``__import__``,
+      called bare or through ``builtins``, and ``runpy.run_path`` and
+      ``runpy.run_module``. An import such as ``from inspect_ai import eval``
+      rebinds only the name it imports, and only where it is in force: the
+      whole file when it sits at the top level (or in a top-level ``try``);
+      a module-level block such as an ``if __name__ == "__main__":`` guard
+      and the functions defined in it; or a function and the functions
+      nested in it. ``exec``, ``compile`` and ``__import__`` stay checked;
+    - data: ``pickle``, ``marshal``, ``dill`` and ``cloudpickle`` ``load``
+      and ``loads``; ``joblib.load``; ``pandas.read_pickle``; ``numpy.load``
+      with ``allow_pickle=`` anything but a false literal;
+      ``yaml.unsafe_load``, ``yaml.full_load`` and their ``_all`` forms;
+      ``yaml.load`` and ``yaml.load_all`` without a safe loader; and
+      ``torch.load`` without ``weights_only=True``. A safe loader is
+      ``SafeLoader``, ``CSafeLoader`` or ``BaseLoader``,
+      ``getattr(yaml, "CSafeLoader", yaml.SafeLoader)`` where the name and
+      the default are both safe, or a class in the same file that subclasses
+      one. A same-file class is judged by its bases, not its name;
     - shell commands: ``os.system``, ``os.popen``, ``subprocess.getoutput``,
       ``subprocess.getstatusoutput``, ``asyncio.create_subprocess_shell``,
-      ``inspect_ai.util.subprocess`` with anything but a list literal (a
-      string runs through a shell), and ``subprocess.run``, ``Popen``,
-      ``call``, ``check_call`` and ``check_output`` with ``shell=`` anything
-      but a false literal;
-    - the same ``subprocess`` calls without a shell, ``inspect_ai.util.subprocess``
-      with a list literal, and ``asyncio.create_subprocess_exec``, only when the
-      program (the first argv element) or ``executable=`` is tainted. A tainted
+      ``inspect_ai.util.subprocess`` with a payload written as a string (a
+      literal, f-string, concatenation, ``%`` or ``.format``), and
+      ``subprocess.run``, ``Popen``, ``call``, ``check_call`` and
+      ``check_output`` with ``shell=`` anything but a false literal. With a
+      shell and a list, only the first element is the command;
+    - programs, reported only when the program or ``executable=`` is
+      tainted: the same ``subprocess`` calls without a shell, ``pty.spawn``
+      and ``inspect_ai.util.subprocess`` with a list or tuple literal, whose
+      program is the first element (or the whole argv when it is written as
+      a string); ``asyncio.create_subprocess_exec``, ``os.exec*`` and
+      ``os.posix_spawn``/``posix_spawnp``, whose program is the first
+      argument; and ``os.spawn*``, whose program follows the mode. A tainted
       argument to a constant program is not reported;
     - ``importlib.import_module``, only when the module name is tainted.
 
     Only the argument that is run counts: the code of ``exec``, not the
     namespace passed beside it. Model input handed to constant code as data is
-    not traced. A module sink is recognised only through a name an import
-    binds, so a local variable called ``yaml`` or a parameter called ``os`` is
-    not mistaken for the module.
+    not traced.
+
+    A module sink is recognised only through a name an import in force
+    binds. Imports at the top level or in a top-level ``try`` apply to the
+    whole file. A function's imports apply in that function and the
+    functions nested in it. A module-level block's imports apply inside it,
+    and elsewhere only to names no top-level import binds. A parameter or
+    other local binding hides an imported module in its function: with
+    ``import os`` at the top, ``def f(os): os.system(x)`` is not the module,
+    and neither is ``yaml.load`` after ``yaml = YAML()`` in a function.
 
     **Propagation** is within one file. In a function, a name (or an attribute
     such as ``self.code``) is tainted if any assignment, loop target, ``with``
-    target, walrus or ``append``/``update``-style call puts a tainted value
-    into it, wherever the sink sits. An expression is tainted if anything in
-    it is, which covers f-strings, concatenation, ``.format`` and calls such as
-    ``str(x)``. Nested functions see their enclosing function's taint and
-    sandbox bindings. Calls to functions and ``self`` or ``cls`` methods
-    (static methods included) in the same file are followed one level:
-    tainted arguments, including unpacked ``*args`` and ``**kwargs``, taint the
-    callee's parameters, and a callee returning a source taints the call.
-    Nothing crosses files.
+    target, walrus, ``match`` capture, default argument or
+    ``append``/``update``-style call puts a tainted value into it, wherever
+    the sink sits. An expression is tainted if anything in it is, which
+    covers f-strings, concatenation, ``.format`` and calls such as ``str(x)``.
+    Nested functions see their enclosing function's taint and sandbox
+    bindings. Calls to functions and ``self`` or ``cls`` methods (static
+    methods included) in the same file are followed one level: tainted
+    arguments, including unpacked ``*args`` and ``**kwargs``, taint the
+    callee's parameters, and a callee returning a source taints the call. A
+    callee is analysed in the scope that defines it, with that scope's
+    taint, sandbox bindings and imports. Nothing crosses files.
 
     **Statuses:**
 
@@ -1183,13 +1204,30 @@ def host_code_execution(ctx: LintContext) -> Iterable[Finding]:
       code, so a reviewer sees each one. Mark a reviewed site with
       ``# inspect-evals-lint: ignore[host_code_execution] -- <why it is safe>``
       on any line of the call;
-    - warning when a process runs from an argv that is not a list literal and
-      carries model-controlled input, since the program cannot be told.
+    - warning when a process runs from an argv that is not a literal and
+      carries model-controlled input, since the program cannot be told. This
+      includes ``inspect_ai.util.subprocess`` given a variable, which may
+      hold a string or a list.
 
-    **Known limits.** An interpreter given code on its command line, such as
-    ``["bash", "-c", tool_argument]``, is a constant program with a tainted
-    argument and is not reported. A same-file ``def eval`` or a relative
-    import of ``eval`` is still taken for the builtin.
+    **Known limits:**
+
+    - an interpreter given code on its command line, such as
+      ``["bash", "-c", tool_argument]``, is a constant program with a
+      tainted argument and is not reported;
+    - a same-file ``def eval`` or a relative import of ``eval`` is still
+      taken for the builtin, and aliasing a builtin by assignment
+      (``ev = eval; ev(x)``) is not followed;
+    - a chained ``__import__("os").system(x)`` is not recognised as
+      ``os.system``; the ``__import__`` call itself is still checked;
+    - an import in a module-level ``with`` block, such as
+      ``with suppress(ImportError):``, is treated like one in an ``if``: a
+      builtin rebinding there applies only inside the block;
+    - ``global`` and ``nonlocal`` writes are not traced from one function to
+      another;
+    - a static method called through its class name (``H.run(x)``) is not
+      followed, only one called through ``self`` or ``cls``;
+    - a sandbox bound in one method, such as ``self.sb = sandbox()`` in
+      ``__init__``, is not seen in another.
 
     ## Why is this bad?
 
