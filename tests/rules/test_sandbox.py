@@ -1,8 +1,11 @@
 """Sandbox rules for images, runtime privileges, and GPU maintenance checks."""
 
+from dataclasses import replace
+
 import pytest
 import yaml
 
+from inspect_evals_lint.config import PRESETS
 from inspect_evals_lint.rules.sandbox import (
     gpu_sandbox_check,
     sandbox_image_pinning,
@@ -110,6 +113,33 @@ class TestSandboxImagePinning:
 
     def test_invalid_yaml_warns(self, tmp_path):
         results = self.run_check(tmp_path, "services: [unclosed\n")
+        assert [r.status for r in results] == ["warn"]
+
+    def test_docker_compose_files_are_checked(self, tmp_path):
+        (tmp_path / "docker-compose.yml").write_text(
+            "services:\n  default:\n    image: example/untagged\n"
+        )
+        results = list(sandbox_image_pinning(context_for(tmp_path)))
+        assert [r.status for r in results] == ["fail"]
+
+    def test_excluded_directories_are_still_checked(self, tmp_path):
+        eval_path = tmp_path / "my_eval"
+        (eval_path / "challenges").mkdir(parents=True)
+        (eval_path / "challenges" / "compose.yaml").write_text(
+            "services:\n  default:\n    image: example/untagged\n"
+        )
+        config = replace(PRESETS["multi-eval"], exclude=("my_eval/challenges/**",))
+        results = list(sandbox_image_pinning(context_for(eval_path, config)))
+        assert [r.status for r in results] == ["fail"]
+
+    def test_directory_named_like_a_compose_file_is_ignored(self, tmp_path):
+        (tmp_path / "compose.yaml").mkdir()
+        results = list(sandbox_image_pinning(context_for(tmp_path)))
+        assert [r.status for r in results] == ["skip"]
+
+    def test_non_utf8_file_warns(self, tmp_path):
+        (tmp_path / "compose.yaml").write_bytes(b"services:\n  default:\n    image: \xff\n")
+        results = list(sandbox_image_pinning(context_for(tmp_path)))
         assert [r.status for r in results] == ["warn"]
 
 
@@ -316,6 +346,43 @@ class TestSandboxPrivileges:
         (tmp_path / "compose.yml").write_text(content)
         (result,) = list(sandbox_privileges(context_for(tmp_path)))
         assert result.status == "warn"
+
+    def test_non_utf8_file_warns(self, tmp_path):
+        (tmp_path / "compose.yaml").write_bytes(b"services:\n  default:\n    image: \xff\n")
+        (result,) = list(sandbox_privileges(context_for(tmp_path)))
+        assert result.status == "warn"
+
+    @pytest.mark.parametrize("content", ["", "# placeholder\n", "services:\n"])
+    def test_empty_compose_file_passes(self, tmp_path, content):
+        (tmp_path / "compose.yaml").write_text(content)
+        (result,) = list(sandbox_privileges(context_for(tmp_path)))
+        assert result.status == "pass"
+        assert "0 service(s)" in result.message
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "services:\n  default:\n    privileged: !override true\n",
+            "services:\n  default:\n    privileged: true\n    ports: !override ['80:80']\n",
+            "services:\n  default:\n    privileged: true\n    build: !reset null\n",
+            "services:\n  default: !override\n    privileged: true\n",
+            "services:\n  default:\n    cap_add: !reset [SYS_ADMIN]\n",
+        ],
+    )
+    def test_compose_merge_tags_are_checked_as_written(self, tmp_path, content):
+        (tmp_path / "compose.override.yaml").write_text(content)
+        (result,) = list(sandbox_privileges(context_for(tmp_path)))
+        assert result.status == "fail"
+
+    def test_excluded_directories_are_still_checked(self, tmp_path):
+        eval_path = tmp_path / "my_eval"
+        (eval_path / "challenges").mkdir(parents=True)
+        (eval_path / "challenges" / "compose.yaml").write_text(
+            "services:\n  default:\n    privileged: true\n"
+        )
+        config = replace(PRESETS["multi-eval"], exclude=("my_eval/challenges/**",))
+        (result,) = list(sandbox_privileges(context_for(eval_path, config)))
+        assert result.status == "fail"
 
     def test_no_compose_files_skips(self, tmp_path):
         (result,) = list(sandbox_privileges(context_for(tmp_path)))

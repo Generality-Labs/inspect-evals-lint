@@ -11,6 +11,7 @@ import yaml
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome, Severity
 from inspect_evals_lint.registry import Reference, inspect_docs, rule
+from inspect_evals_lint.rules._compose import iter_compose_files, load_compose
 
 PIN_HINT = (
     "pin it: use a dated tag you publish yourself for images you rebuild "
@@ -42,8 +43,9 @@ def sandbox_image_pinning(ctx: LintContext) -> Iterable[Finding]:
     """Registry images in compose files use an immutable tag or digest.
 
     ## What it does
-    Reads every ``compose*.y*ml`` under the package and flags each service whose
-    ``image`` is untagged or ``:latest``. Services built locally (``build:``) and
+    Reads every ``compose*.y*ml`` and ``docker-compose*.y*ml`` under the package,
+    ``exclude``d directories included, and flags each service whose ``image`` is
+    untagged or ``:latest``. Services built locally (``build:``) and
     ``${VAR}`` interpolated references are skipped. Each diagnostic is keyed by the
     image reference, which is what an allowlist entry names.
 
@@ -69,7 +71,7 @@ def sandbox_image_pinning(ctx: LintContext) -> Iterable[Finding]:
     ## Options
     - `allowlists.sandbox_image_pinning`: `{ package = ["image/ref"] }` entries reported as warnings while they are pinned.
     """
-    compose_files = sorted(ctx.path.rglob("compose*.y*ml"))
+    compose_files = iter_compose_files(ctx)
     if not compose_files:
         yield Outcome("skip", "No compose files found")
         return
@@ -77,13 +79,10 @@ def sandbox_image_pinning(ctx: LintContext) -> Iterable[Finding]:
     issues = 0
     checked_images = 0
     for compose_file in compose_files:
-        try:
-            compose: Any = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
-        except yaml.YAMLError as e:
+        compose, problem = load_compose(compose_file)
+        if problem is not None:
             issues += 1
-            yield Diagnostic(
-                f"Could not parse compose file: {e}", file=compose_file, severity="warning"
-            )
+            yield problem
             continue
         if not isinstance(compose, dict):
             continue
@@ -284,12 +283,15 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
     ## What it does
 
     Reads parsed YAML from every ``compose*.y*ml`` and ``docker-compose*.y*ml``
-    under the package, including nested files and overrides. Reports one error
-    per service and field for the settings described below.
+    under the package, including nested files and overrides. ``exclude`` does not
+    apply: Compose files configure the sandbox from the host even when they sit
+    beside challenge code that is excluded. Reports one error per service and
+    field for the settings described below.
 
     GPU reservations under ``deploy.resources.reservations.devices``, ordinary
     named or anonymous volumes, and namespaces shared by ``service:`` reference
-    are accepted. YAML anchors are resolved; comments are ignored.
+    are accepted. YAML anchors are resolved; comments are ignored. A value tagged
+    ``!override`` or ``!reset`` is checked as written.
 
     ## Why is this bad?
 
@@ -456,9 +458,7 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
       as ``default:post_start.privileged``. Removed settings leave stale entries
       for the runner to report.
     """
-    compose_files = sorted(
-        set(ctx.path.rglob("compose*.y*ml")) | set(ctx.path.rglob("docker-compose*.y*ml"))
-    )
+    compose_files = iter_compose_files(ctx)
     if not compose_files:
         yield Outcome("skip", "No compose files found")
         return
@@ -466,15 +466,14 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
     issues = 0
     checked_services = 0
     for compose_file in compose_files:
-        try:
-            compose: Any = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
-        except yaml.YAMLError as e:
+        compose, problem = load_compose(compose_file)
+        if problem is not None:
             issues += 1
-            yield Diagnostic(
-                f"Could not parse compose file: {e}", file=compose_file, severity="warning"
-            )
+            yield problem
             continue
-        services = _mapping(compose).get("services", {})
+        services = _mapping(compose).get("services")
+        if services is None:
+            services = {}
         if not isinstance(compose, dict) or not isinstance(services, dict):
             issues += 1
             yield Diagnostic(

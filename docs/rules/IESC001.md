@@ -8,9 +8,9 @@ Compose services do not grant additional sandbox privileges or host access.
 
 ## What it does
 
-Reads parsed YAML from every `compose*.y*ml` and `docker-compose*.y*ml` under the package, including nested files and overrides. Reports one error per service and field for the settings described below.
+Reads parsed YAML from every `compose*.y*ml` and `docker-compose*.y*ml` under the package, including nested files and overrides. `exclude` does not apply: Compose files configure the sandbox from the host even when they sit beside challenge code that is excluded. Reports one error per service and field for the settings described below.
 
-GPU reservations under `deploy.resources.reservations.devices`, ordinary named or anonymous volumes, and namespaces shared by `service:` reference are accepted. YAML anchors are resolved; comments are ignored.
+GPU reservations under `deploy.resources.reservations.devices`, ordinary named or anonymous volumes, and namespaces shared by `service:` reference are accepted. YAML anchors are resolved; comments are ignored. A value tagged `!override` or `!reset` is checked as written.
 
 ## Why is this bad?
 

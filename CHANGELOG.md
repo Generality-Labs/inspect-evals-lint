@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - JSON reports use `schema_version: 2` because the category set now includes `security`. Consumers must accept the new category and rule prefix before upgrading. Existing rule codes and categories are unchanged.
 
+### Fixed
+
+- `sandbox_image_pinning` (IEBP005) also reads `docker-compose*.y*ml` files, so an unpinned image there is now reported. Compose's `!override` and `!reset` tags no longer make a file unreadable, a non-UTF-8 file is reported as unreadable instead of stopping the run, and a directory named like a compose file is ignored. The rules that read Compose files share one reader.
+
 ## [0.8.0] - 2026-09-25
 
 Linting a standalone evaluation repository no longer reports the inspect_evals monorepo's conventions as failures. [#36](https://github.com/Generality-Labs/inspect-evals-lint/issues/36) ran 0.7.0 over a typical single-evaluation repository and found one genuine finding among eight failures; the other seven came from rules that assumed the monorepo or template layout. Each is fixed below, the default preset now follows the repository's shape, and the presets are named for the layout they describe. Every change is additive or aliased: a repository pinned on 0.7.0 gets the same results or fewer false positives, and the old preset names keep working for this release with a notice.

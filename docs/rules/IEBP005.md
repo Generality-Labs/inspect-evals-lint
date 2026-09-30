@@ -8,7 +8,7 @@ Registry images in compose files use an immutable tag or digest.
 
 ## What it does
 
-Reads every `compose*.y*ml` under the package and flags each service whose `image` is untagged or `:latest`. Services built locally (`build:`) and `${VAR}` interpolated references are skipped. Each diagnostic is keyed by the image reference, which is what an allowlist entry names.
+Reads every `compose*.y*ml` and `docker-compose*.y*ml` under the package, `exclude`d directories included, and flags each service whose `image` is untagged or `:latest`. Services built locally (`build:`) and `${VAR}` interpolated references are skipped. Each diagnostic is keyed by the image reference, which is what an allowlist entry names.
 
 ## Why is this bad?
 
