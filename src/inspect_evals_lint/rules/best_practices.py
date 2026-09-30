@@ -167,7 +167,7 @@ class FieldSpecSite:
     node: ast.Call
     has_id: bool
     loaders: dict[int, ast.Call] = field(default_factory=dict)
-    """Calls passing this FieldSpec as ``sample_fields=``, directly or through a name bound to it."""
+    """Calls passing this FieldSpec as ``sample_fields``, directly or through a name bound to it."""
 
     @property
     def auto_id(self) -> bool:
@@ -179,12 +179,36 @@ def _is_field_spec(node: ast.AST | None) -> bool:
     return isinstance(node, ast.Call) and get_call_name(node) == "FieldSpec"
 
 
+SAMPLE_FIELDS_POSITION = {
+    "hf_dataset": 5,
+    "csv_dataset": 1,
+    "json_dataset": 1,
+    "file_dataset": 1,
+    "load_csv_dataset": 2,
+    "load_json_dataset": 2,
+}
+"""Where each known loader takes ``sample_fields`` positionally; ``auto_id`` follows it in every one."""
+
+
+def _loader_argument(call: ast.Call, name: str, offset: int) -> ast.expr | None:
+    """``name=``, or the argument ``offset`` places after where a known loader takes ``sample_fields``."""
+    keyword = next((k for k in call.keywords if k.arg == name), None)
+    if keyword is not None:
+        return keyword.value
+    position = SAMPLE_FIELDS_POSITION.get(get_call_name(call) or "")
+    if position is None or len(call.args) <= position + offset:
+        return None
+    if any(isinstance(arg, ast.Starred) for arg in call.args[: position + offset + 1]):
+        return None
+    return call.args[position + offset]
+
+
 def _passes_auto_id(call: ast.Call) -> bool:
-    """``auto_id=`` with anything but a false literal; a non-literal is taken as set, as ``required=`` is."""
-    keyword = next((k for k in call.keywords if k.arg == "auto_id"), None)
-    if keyword is None:
+    """``auto_id`` with anything but a false literal; a non-literal is taken as set, as ``required=`` is."""
+    value = _loader_argument(call, "auto_id", 1)
+    if value is None:
         return False
-    return not (isinstance(keyword.value, ast.Constant) and not keyword.value.value)
+    return not (isinstance(value, ast.Constant) and not value.value)
 
 
 def _field_spec_has_id(node: ast.Call) -> bool:
@@ -399,7 +423,7 @@ class _BindingCollector(ast.NodeVisitor):
 
 
 def _sample_fields_argument(call: ast.Call) -> ast.expr | None:
-    return next((k.value for k in call.keywords if k.arg == "sample_fields"), None)
+    return _loader_argument(call, "sample_fields", 0)
 
 
 def _within(outer: tuple[int, ...], inner: tuple[int, ...]) -> bool:
@@ -476,7 +500,8 @@ def _field_specs_in(
 def field_spec_sites(tree: ast.AST) -> list[FieldSpecSite]:
     """Every ``FieldSpec(...)`` call in a file, with the loaders it reaches.
 
-    A loader is any call passing ``sample_fields=``. The value may be the
+    A loader is any call passing ``sample_fields=``, or a known loader (see
+    ``SAMPLE_FIELDS_POSITION``) passing it positionally. The value may be the
     ``FieldSpec(...)`` call itself or a name bound to one, resolved as Python
     scopes it: a function's own names, then enclosing functions', then the
     module's. A function passed as ``sample_fields`` builds its own

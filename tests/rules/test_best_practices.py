@@ -625,3 +625,27 @@ class TestSampleIdsFieldSpec:
             "        return hf_dataset('x', sample_fields=FIELDS, auto_id=True)\n",
         )
         assert [(r.status, r.line) for r in results] == [("fail", 3)]
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            "csv_dataset('a.csv', FieldSpec(input='q'), auto_id=True)",
+            "json_dataset('a.json', FieldSpec(input='q'), True)",
+            "file_dataset('a.json', FIELDS, True)",
+            "hf_dataset('x', 'test', None, None, None, FieldSpec(input='q'), True)",
+            "load_json_dataset('a.json', 'alpha', FieldSpec(input='q'), True)",
+            "dataset.csv_dataset('a.csv', FieldSpec(input='q'), auto_id=True)",
+        ],
+    )
+    def test_positional_sample_fields_and_auto_id_are_read(self, tmp_path: Path, call: str):
+        results = self.run(tmp_path, f"FIELDS = FieldSpec(input='r')\nds = {call}\n")
+        assert [r.status for r in results] == (["pass"] if "FIELDS" in call else ["fail"])
+        assert all(r.line == 1 for r in results if r.status == "fail")  # only the unused FIELDS
+
+    def test_positional_auto_id_false_does_not_count(self, tmp_path: Path):
+        results = self.run(tmp_path, "ds = csv_dataset('a.csv', FieldSpec(input='q'), False)\n")
+        assert [(r.status, r.line) for r in results] == [("fail", 1)]
+
+    def test_a_positional_fieldspec_to_an_unknown_call_is_not_a_loader(self, tmp_path: Path):
+        results = self.run(tmp_path, "ds = my_loader('a.csv', FieldSpec(input='q'), True)\n")
+        assert [r.status for r in results] == ["fail"]
