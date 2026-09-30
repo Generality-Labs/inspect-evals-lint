@@ -524,3 +524,104 @@ class TestSampleIdsFieldSpec:
         assert [(r.status, r.message) for r in results] == [
             ("skip", "No Sample() or FieldSpec() calls found")
         ]
+
+    @pytest.mark.parametrize(
+        "load",
+        [
+            "def load():\n"
+            "    FIELDS = FieldSpec(input='q', id='qid')\n"
+            "    return hf_dataset('x', sample_fields=FIELDS, auto_id=True)\n",
+            "def load(FIELDS):\n    return hf_dataset('x', sample_fields=FIELDS, auto_id=True)\n",
+        ],
+        ids=["local", "parameter"],
+    )
+    def test_a_local_name_hides_the_module_one(self, tmp_path: Path, load: str):
+        results = self.run(tmp_path, "FIELDS = FieldSpec(input='q')\n" + load)
+        assert [(r.status, r.line) for r in results] == [("fail", 1)]
+
+    def test_sibling_functions_reusing_a_name_keep_their_own_fieldspec(self, tmp_path: Path):
+        results = self.run(
+            tmp_path,
+            "def outer():\n"
+            "    def a():\n"
+            "        fields = FieldSpec(input='q')\n"
+            "        return hf_dataset('x', sample_fields=fields)\n"
+            "    def b():\n"
+            "        fields = FieldSpec(input='q')\n"
+            "        return hf_dataset('y', sample_fields=fields, auto_id=True)\n"
+            "    return a(), b()\n",
+        )
+        assert [(r.status, r.line) for r in results] == [("fail", 3)]
+
+    def test_a_nested_function_sees_the_enclosing_functions_name(self, tmp_path: Path):
+        results = self.run(
+            tmp_path,
+            "def outer():\n"
+            "    fields = FieldSpec(input='q')\n"
+            "    def load():\n"
+            "        return hf_dataset('x', sample_fields=fields, auto_id=True)\n"
+            "    return load()\n",
+        )
+        assert [r.status for r in results] == ["pass"]
+
+    def test_a_rebound_name_reaches_the_loader_after_each_binding(self, tmp_path: Path):
+        results = self.run(
+            tmp_path,
+            "def load():\n"
+            "    fields = FieldSpec(input='q')\n"
+            "    a = hf_dataset('x', sample_fields=fields, auto_id=True)\n"
+            "    fields = FieldSpec(input='q', id='qid')\n"
+            "    return a, hf_dataset('y', sample_fields=fields)\n",
+        )
+        assert [r.status for r in results] == ["pass"]
+
+    def test_a_rebinding_after_the_loader_is_not_what_it_uses(self, tmp_path: Path):
+        results = self.run(
+            tmp_path,
+            "def load():\n"
+            "    fields = FieldSpec(input='q', id='qid')\n"
+            "    a = hf_dataset('x', sample_fields=fields)\n"
+            "    fields = FieldSpec(input='q')\n"
+            "    return a, hf_dataset('y', sample_fields=fields)\n",
+        )
+        assert [(r.status, r.line) for r in results] == [("fail", 4)]
+
+    def test_either_branch_may_reach_the_loader(self, tmp_path: Path):
+        results = self.run(
+            tmp_path,
+            "def load(x):\n"
+            "    if x:\n"
+            "        fields = FieldSpec(input='q')\n"
+            "    else:\n"
+            "        fields = FieldSpec(input='r')\n"
+            "    return hf_dataset('x', sample_fields=fields, auto_id=True)\n",
+        )
+        assert [r.status for r in results] == ["pass"]
+
+    @pytest.mark.parametrize(
+        "binding",
+        [
+            "try:\n    FIELDS = FieldSpec(input='q')\nexcept ImportError:\n    raise\n",
+            "if True:\n    FIELDS = FieldSpec(input='q')\n",
+            "FIELDS: FieldSpec = FieldSpec(input='q')\n",
+            "FIELDS, OTHER = FieldSpec(input='q'), 1\n",
+            "OTHER = FIELDS = FieldSpec(input='q')\n",
+        ],
+        ids=["try", "if", "annotated", "tuple", "chained"],
+    )
+    def test_module_level_bindings_are_followed(self, tmp_path: Path, binding: str):
+        results = self.run(
+            tmp_path, binding + "ds = hf_dataset('x', sample_fields=FIELDS, auto_id=True)\n"
+        )
+        assert [r.status for r in results] == ["pass"]
+
+    def test_a_class_level_name_is_not_visible_in_its_methods(self, tmp_path: Path):
+        results = self.run(
+            tmp_path,
+            "FIELDS = FieldSpec(input='q', id='qid')\n"
+            "class Loader:\n"
+            "    FIELDS = FieldSpec(input='q')\n"
+            "    def load(self):\n"
+            "        return hf_dataset('x', sample_fields=FIELDS, auto_id=True)\n",
+        )
+        assert [(r.status, r.line) for r in results] == [("fail", 3)]

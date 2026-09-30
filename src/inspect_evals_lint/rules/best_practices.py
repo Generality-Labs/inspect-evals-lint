@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Literal, cast
 
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
@@ -193,31 +194,292 @@ def _field_spec_has_id(node: ast.Call) -> bool:
     )
 
 
-def _field_spec_names(nodes: Iterable[ast.AST]) -> dict[str, ast.Call]:
-    """Names bound to a ``FieldSpec(...)`` call by the assignments among ``nodes``."""
-    names: dict[str, ast.Call] = {}
-    for node in nodes:
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
-            if _is_field_spec(node.value):
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        names[target.id] = node.value
-        elif (
-            isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and isinstance(node.value, ast.Call)
-            and _is_field_spec(node.value)
+Position = tuple[int, int]
+"""``(line, column)`` in the file, for ordering bindings against the calls that use them."""
+
+
+@dataclass
+class _Binding:
+    """One binding of a name: the value bound, where it takes effect, and the statement lists it sits in."""
+
+    value: ast.expr | None
+    """None where the value isn't an expression in the file: a parameter, an import, a loop target."""
+    position: Position
+    blocks: tuple[int, ...]
+    """``id`` of each statement list enclosing the binding, outermost first."""
+
+
+@dataclass
+class _Scope:
+    """A module, function, class or comprehension body, with the names it binds."""
+
+    kind: Literal["module", "function", "class", "comprehension"]
+    parent: _Scope | None
+    bindings: dict[str, list[_Binding]] = field(default_factory=dict)
+    declared: dict[str, Literal["global", "nonlocal"]] = field(default_factory=dict)
+
+
+@dataclass
+class _LoaderCall:
+    """A call passing ``sample_fields``, with where it runs."""
+
+    call: ast.Call
+    sample_fields: ast.expr
+    scope: _Scope
+    blocks: tuple[int, ...]
+
+
+def _position(node: ast.expr | ast.stmt | ast.excepthandler | ast.pattern) -> Position:
+    return (node.lineno, node.col_offset)
+
+
+def _end(node: ast.expr | ast.stmt) -> Position:
+    return (node.end_lineno or node.lineno, node.end_col_offset or node.col_offset)
+
+
+def _unpack(target: ast.expr, value: ast.expr | None) -> Iterable[tuple[ast.Name, ast.expr | None]]:
+    """The names an assignment target binds, each with its part of ``value`` where that can be told."""
+    if isinstance(target, ast.Name):
+        yield target, value
+    elif isinstance(target, ast.Starred):
+        yield from _unpack(target.value, None)
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        parts: list[ast.expr | None] = [None] * len(target.elts)
+        if (
+            isinstance(value, (ast.Tuple, ast.List))
+            and len(value.elts) == len(target.elts)
+            and not any(isinstance(e, ast.Starred) for e in [*target.elts, *value.elts])
         ):
-            names[node.target.id] = node.value
-    return names
+            parts = list(value.elts)
+        for element, part in zip(target.elts, parts, strict=True):
+            yield from _unpack(element, part)
+
+
+class _BindingCollector(ast.NodeVisitor):
+    """Record each scope's name bindings and each call passing ``sample_fields``, in one pass over a file."""
+
+    def __init__(self) -> None:
+        self.module = _Scope("module", None)
+        self.scope: _Scope = self.module
+        self.blocks: list[int] = []
+        self.loaders: list[_LoaderCall] = []
+        self._bound: set[int] = set()
+        """``id`` of each ``Name`` target already bound with its value."""
+
+    def _bind(self, name: str, value: ast.expr | None, position: Position) -> None:
+        scope = self.scope
+        while scope.kind == "comprehension" and scope.parent is not None and value is not None:
+            scope = scope.parent  # only a walrus binds a value inside a comprehension
+        declared = scope.declared.get(name)
+        if declared == "global":
+            scope = self.module
+        elif declared == "nonlocal":
+            enclosing = scope.parent
+            while enclosing is not None and enclosing.kind != "function":
+                enclosing = enclosing.parent
+            scope = enclosing or scope
+        scope.bindings.setdefault(name, []).append(_Binding(value, position, tuple(self.blocks)))
+
+    def generic_visit(self, node: ast.AST) -> None:
+        for _, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                self._visit_list(cast(list[object], value))
+            elif isinstance(value, ast.AST):
+                self.visit(value)
+
+    def _visit_list(self, items: list[object]) -> None:
+        block = bool(items) and isinstance(items[0], ast.stmt)
+        if block:
+            self.blocks.append(id(items))
+        for item in items:
+            if isinstance(item, ast.AST):
+                self.visit(item)
+        if block:
+            self.blocks.pop()
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Store) and id(node) not in self._bound:
+            self._bind(node.id, None, _position(node))
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        self.visit(node.value)
+        for target in node.targets:
+            for name, value in _unpack(target, node.value):
+                self._bound.add(id(name))
+                self._bind(name.id, value, _end(node))
+            self.visit(target)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        self.visit(node.annotation)
+        if node.value is None:
+            return
+        self.visit(node.value)
+        for name, value in _unpack(node.target, node.value):
+            self._bound.add(id(name))
+            self._bind(name.id, value, _end(node))
+        self.visit(node.target)
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        self.visit(node.value)
+        self._bound.add(id(node.target))
+        self._bind(node.target.id, node.value, _end(node))
+
+    def visit_Global(self, node: ast.Global) -> None:
+        self.scope.declared.update(dict.fromkeys(node.names, "global"))
+
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        self.scope.declared.update(dict.fromkeys(node.names, "nonlocal"))
+
+    def visit_Import(self, node: ast.Import | ast.ImportFrom) -> None:
+        for alias in node.names:
+            self._bind(alias.asname or alias.name.split(".")[0], None, _position(node))
+
+    visit_ImportFrom = visit_Import  # noqa: N815
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name:
+            self._bind(node.name, None, _position(node))
+        self.generic_visit(node)
+
+    def visit_MatchAs(self, node: ast.MatchAs | ast.MatchStar) -> None:
+        if node.name:
+            self._bind(node.name, None, _position(node))
+        self.generic_visit(node)
+
+    visit_MatchStar = visit_MatchAs  # noqa: N815
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda) -> None:
+        arguments = node.args
+        # Decorators and defaults run in the enclosing scope.
+        decorators = [] if isinstance(node, ast.Lambda) else node.decorator_list
+        for expr in [*decorators, *arguments.defaults, *arguments.kw_defaults]:
+            if expr is not None:
+                self.visit(expr)
+        outer = self.scope
+        self.scope = _Scope("function", outer)
+        parameters = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+        parameters += [a for a in (arguments.vararg, arguments.kwarg) if a is not None]
+        for parameter in parameters:
+            self._bind(parameter.arg, None, _position(node))
+        if isinstance(node, ast.Lambda):
+            self.visit(node.body)
+        else:
+            self._visit_list(list(node.body))
+        self.scope = outer
+        if not isinstance(node, ast.Lambda):
+            self._bind(node.name, None, _end(node))
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # noqa: N815
+    visit_Lambda = visit_FunctionDef  # noqa: N815
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        for expr in [*node.decorator_list, *node.bases, *(k.value for k in node.keywords)]:
+            self.visit(expr)
+        outer = self.scope
+        self.scope = _Scope("class", outer)
+        self._visit_list(list(node.body))
+        self.scope = outer
+        self._bind(node.name, None, _end(node))
+
+    def visit_ListComp(
+        self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp
+    ) -> None:
+        outer = self.scope
+        self.scope = _Scope("comprehension", outer)
+        self.generic_visit(node)
+        self.scope = outer
+
+    visit_SetComp = visit_DictComp = visit_GeneratorExp = visit_ListComp  # noqa: N815
+
+    def visit_Call(self, node: ast.Call) -> None:
+        value = _sample_fields_argument(node)
+        if value is not None:
+            self.loaders.append(_LoaderCall(node, value, self.scope, tuple(self.blocks)))
+        self.generic_visit(node)
+
+
+def _sample_fields_argument(call: ast.Call) -> ast.expr | None:
+    return next((k.value for k in call.keywords if k.arg == "sample_fields"), None)
+
+
+def _within(outer: tuple[int, ...], inner: tuple[int, ...]) -> bool:
+    """Whether the statement list at the end of ``outer`` is, or encloses, the one at the end of ``inner``."""
+    return inner[: len(outer)] == outer
+
+
+def _defining_scope(name: str, scope: _Scope) -> tuple[_Scope, bool] | None:
+    """The scope whose bindings of ``name`` a use in ``scope`` sees, and whether that scope's code runs in order up to the use.
+
+    A function body runs after its enclosing code, so any binding there may be the one in force.
+    A class body is skipped once left, as Python does for the functions it defines.
+    """
+    in_order = True
+    current: _Scope | None = scope
+    while current is not None:
+        declared = current.declared.get(name)
+        if declared == "global":
+            while current.parent is not None:
+                current = current.parent
+            return (current, False) if name in current.bindings else None
+        visible = current is scope or current.kind != "class"
+        if declared is None and visible and name in current.bindings:
+            return current, in_order
+        if current.kind == "function":
+            in_order = False
+        current = current.parent
+    return None
+
+
+def _reaching(
+    name: str, scope: _Scope, position: Position, blocks: tuple[int, ...]
+) -> list[_Binding]:
+    """The bindings of ``name`` that may be in force at ``position`` in ``scope``.
+
+    Where the defining scope runs in order up to the use, a binding is in force
+    if it comes earlier and no later binding in the same or an enclosing
+    statement list, one that also encloses the use, replaces it.
+    """
+    found = _defining_scope(name, scope)
+    if found is None:
+        return []
+    owner, in_order = found
+    bindings = owner.bindings[name]
+    if not in_order:
+        return bindings
+    earlier = [b for b in bindings if b.position < position]
+    return [
+        b
+        for b in earlier
+        if not any(
+            later.position > b.position
+            and _within(later.blocks, b.blocks)
+            and _within(later.blocks, blocks)
+            for later in earlier
+        )
+    ]
+
+
+def _field_specs_in(
+    expr: ast.expr, scope: _Scope, position: Position, blocks: tuple[int, ...], seen: frozenset[int]
+) -> Iterable[ast.Call]:
+    """The ``FieldSpec(...)`` calls ``expr`` may evaluate to: the call itself, or what a name is bound to."""
+    if _is_field_spec(expr):
+        yield cast(ast.Call, expr)
+    elif isinstance(expr, ast.Name):
+        for binding in _reaching(expr.id, scope, position, blocks):
+            if binding.value is not None and id(binding) not in seen:
+                yield from _field_specs_in(
+                    binding.value, scope, binding.position, binding.blocks, seen | {id(binding)}
+                )
 
 
 def field_spec_sites(tree: ast.AST) -> list[FieldSpecSite]:
     """Every ``FieldSpec(...)`` call in a file, with the loaders it reaches.
 
     A loader is any call passing ``sample_fields=``. The value may be the
-    ``FieldSpec(...)`` call itself or a name bound to one in the same function
-    or at module level. A function passed as ``sample_fields`` builds its own
+    ``FieldSpec(...)`` call itself or a name bound to one, resolved as Python
+    scopes it: a function's own names, then enclosing functions', then the
+    module's. A function passed as ``sample_fields`` builds its own
     ``Sample()`` calls, which are checked as such.
     """
     sites = {
@@ -225,26 +487,13 @@ def field_spec_sites(tree: ast.AST) -> list[FieldSpecSite]:
         for node in ast.walk(tree)
         if isinstance(node, ast.Call) and _is_field_spec(node)
     }
-    module_names = _field_spec_names(tree.body if isinstance(tree, ast.Module) else [])
-    scopes: list[tuple[ast.AST, dict[str, ast.Call]]] = [(tree, {})]
-    scopes += [
-        (fn, _field_spec_names(ast.walk(fn)))
-        for fn in ast.walk(tree)
-        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
-    for scope, local_names in scopes:
-        for node in ast.walk(scope):
-            if not isinstance(node, ast.Call):
-                continue
-            for keyword in node.keywords:
-                if keyword.arg != "sample_fields":
-                    continue
-                value = keyword.value
-                spec = value if isinstance(value, ast.Call) and _is_field_spec(value) else None
-                if spec is None and isinstance(value, ast.Name):
-                    spec = local_names.get(value.id) or module_names.get(value.id)
-                if spec is not None:
-                    sites[id(spec)].loaders[id(node)] = node
+    collector = _BindingCollector()
+    collector.visit(tree)
+    for loader in collector.loaders:
+        for spec in _field_specs_in(
+            loader.sample_fields, loader.scope, _position(loader.call), loader.blocks, frozenset()
+        ):
+            sites[id(spec)].loaders[id(loader.call)] = loader.call
     return sorted(sites.values(), key=lambda site: (site.node.lineno, site.node.col_offset))
 
 
