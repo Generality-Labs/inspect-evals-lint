@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from inspect_evals_lint import LintConfig, RunReport, lint_package
@@ -100,6 +101,22 @@ def test_empty_report_scores_none() -> None:
     assert score.applicable == 0
     assert score.score is None
     assert score.to_dict()["by_category"] == {}
+
+
+def test_security_category_in_json_and_markdown(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    write(
+        config.package_dir(root, "alpha") / "compose.yaml",
+        "services:\n  default:\n    privileged: true\n",
+    )
+    report = lint_package(root, "alpha", replace(config, select=("IESC",)))
+    run = RunReport(root=root, packages=[report])
+    data = run.to_dict()
+    assert data["schema_version"] == 2
+    assert data["score"]["by_category"]["security"]["fail"] == 1
+    assert data["packages"][0]["diagnostics"][0]["code"] == "IESC001"
+    assert data["packages"][0]["diagnostics"][0]["category"] == "security"
+    assert "Security 0/1" in render_markdown(run)
 
 
 def test_run_score_aggregates_packages_and_json_carries_scores(tmp_path: Path) -> None:

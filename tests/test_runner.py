@@ -44,7 +44,7 @@ HELPER_RULES = {r.name for r in rules() if "helper" in r.scopes}
 
 def test_all_check_names_are_registered() -> None:
     assert rule_names() == sorted(r.name for r in rules())
-    assert len(rule_names()) == 27
+    assert len(rule_names()) == 28
 
 
 def test_every_check_has_a_category() -> None:
@@ -473,6 +473,29 @@ def test_sandbox_allowlist_from_config(monorepo: tuple[Path, LintConfig]) -> Non
     assert statuses(root, config)["sandbox_image_pinning"] == ["warn"]
     (warning,) = lint_package(root, "alpha", config).statuses()["sandbox_image_pinning"]
     assert warning == "warn"
+
+
+def test_sandbox_privileges_allowlist_is_scoped_to_service_and_field(
+    monorepo: tuple[Path, LintConfig],
+) -> None:
+    root, config = monorepo
+    write(
+        config.package_dir(root, "alpha") / "compose.yaml",
+        "services:\n  default:\n    privileged: true\n    cap_add: [SYS_PTRACE]\n"
+        "  other:\n    privileged: true\n",
+    )
+    with (root / "pyproject.toml").open("a") as f:
+        f.write(
+            "\n[tool.inspect-evals-lint.allowlists.sandbox_privileges]\n"
+            'alpha = ["default:privileged"]\n'
+        )
+    report = lint_package(root, "alpha", check="IESC001")
+    assert [(d.key, d.status) for d in report.diagnostics] == [
+        ("default:privileged", "warn"),
+        ("default:cap_add", "fail"),
+        ("other:privileged", "fail"),
+    ]
+    assert report.diagnostics[0].message.startswith("Allowlisted:")
 
 
 def test_stale_allowlist_entry_warns_at_pyproject(monorepo: tuple[Path, LintConfig]) -> None:

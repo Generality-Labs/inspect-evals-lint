@@ -33,7 +33,7 @@ Run it inside the project's environment (`uv run inspect-evals-lint`): `external
 
 `--output-format json` writes one document to stdout and sends progress to stderr, so the output can be piped straight into other tooling ([docs/output.md](output.md) has the schema). `--output-format github` writes one GitHub Actions annotation per finding instead, each message starting with the file, line and rule, so a lint step marks up the pull request and the job log still names every location; in an Actions job it also appends the Markdown summary to the job summary (`GITHUB_STEP_SUMMARY`). `--output-format markdown` writes, per package, a headline of rules met with a per-category split and a collapsible list of the rules not met, with warnings or suppressed, for a pull request comment or job summary.
 
-`--task <path>` (repeatable) lints the package holding a task file instead of a named package: the evaluation is the directory holding the file, its parent is the source root, and enclosing packages form the import prefix, so a repository can be linted from a register entry's `task_path` without knowing its layout. A task file with no `__init__.py` beside it is a usage error naming the problem. Everything but the layout comes from the configuration or `--preset`. It carries `schema_version`, `passed`, run-wide `summary` counts and a `packages` list. Each package has its `kind` (`eval` or `helper`), `rules` (one entry per rule that ran, at its worst status, with indexes into that package's `diagnostics`), `outcomes` (one per rule that passed or did not apply) and `diagnostics` (one per finding, with `rule`, `code`, `category` (`file_structure`, `code_quality`, `tests` or `best_practices`), `severity`, `status`, `message`, `file` relative to the repository root, `line`, `column` and a `hint`). Every finding points at a file, and at a line where the finding is in a file's contents, so `# inspect-evals-lint: ignore[<rule>]` on that line suppresses it whatever the rule. The set of categories is stable: a new rule always joins one of the four, because badge and dashboard tooling keys on them.
+`--task <path>` (repeatable) lints the package holding a task file instead of a named package: the evaluation is the directory holding the file, its parent is the source root, and enclosing packages form the import prefix, so a repository can be linted from a register entry's `task_path` without knowing its layout. A task file with no `__init__.py` beside it is a usage error naming the problem. Everything but the layout comes from the configuration or `--preset`. It carries `schema_version`, `passed`, run-wide `summary` counts and a `packages` list. Each package has its `kind` (`eval` or `helper`), `rules` (one entry per rule that ran, at its worst status, with indexes into that package's `diagnostics`), `outcomes` (one per rule that passed or did not apply) and `diagnostics` (one per finding, with `rule`, `code`, `category` (`file_structure`, `code_quality`, `tests`, `best_practices` or `security`), `severity`, `status`, `message`, `file` relative to the repository root, `line`, `column` and a `hint`). Every finding points at a file, and at a line where the finding is in a file's contents, so `# inspect-evals-lint: ignore[<rule>]` on that line suppresses it whatever the rule. JSON schema version 2 adds the `security` category and `IESC` rule prefix. Consumers of version 1 must update their category and code validation before upgrading. Existing rule codes and categories are unchanged.
 
 The repository root is the nearest `pyproject.toml` carrying a `[tool.inspect-evals-lint]` table (falling back to the nearest `pyproject.toml`, then the current directory). Pass `--root` to override.
 
@@ -165,7 +165,7 @@ See [RELEASING.md](https://github.com/Generality-Labs/inspect-evals-lint/blob/ma
 
 # Rule index
 
-Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four categories below) and a name; either is accepted by `--select`, `--ignore` and in suppression comments, and a prefix selects a whole category. A rule reports one diagnostic per site it finds something wrong at, each with a file and, where the finding is in a file's contents, a line and column. A rule with nothing to point at reports `pass`, or `skip` with the reason. Diagnostics are `fail` or `warn`; only `fail` makes the run exit non-zero. `inspect-evals-lint --explain <code>` prints the same text as a rule's page.
+Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the categories below) and a name; either is accepted by `--select`, `--ignore` and in suppression comments, and a prefix selects a whole category. A rule reports one diagnostic per site it finds something wrong at, each with a file and, where the finding is in a file's contents, a line and column. A rule with nothing to point at reports `pass`, or `skip` with the reason. Diagnostics are `fail` or `warn`; only `fail` makes the run exit non-zero. `inspect-evals-lint --explain <code>` prints the same text as a rule's page.
 
 ## File structure
 
@@ -214,13 +214,25 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 | [IEBP008](rules/IEBP008.md) | `duplicate_filter_acknowledged` | eval, helper | Every filter_duplicate_ids() call states how many duplicates it drops and links the upstream report |
 | [IEBP009](rules/IEBP009.md) | `known_broken_reported`         | eval, helper | Every drop_known_broken() entry maps a sample id to the URL of its upstream report                  |
 
+## Security
+
+| Code                        | Rule                 | Applies to   | Summary                                                                    |
+| --------------------------- | -------------------- | ------------ | -------------------------------------------------------------------------- |
+| [IESC001](rules/IESC001.md) | `sandbox_privileges` | eval, helper | Compose services do not grant additional sandbox privileges or host access |
+
 ## Helper packages
 
-Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
+Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`, `sandbox_privileges`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
 
 ## Categories
 
-Each rule belongs to one of exactly four categories, the sections above. The JSON output and `registry.CATEGORIES` expose them, and downstream tooling (badges, the register lint service) is built around that fixed set. A new rule joins one of the four; adding a category would be a breaking change.
+Each rule belongs to one category. The JSON output and `registry.CATEGORIES` expose this set; changing it requires a JSON schema version update and coordinated consumer changes. Schema version 2 adds `security`. Existing rule codes and categories are unchanged.
+
+- File structure covers package layout, registration, and metadata.
+- Code quality covers Python API conventions and dependency declarations.
+- Tests covers the presence of tests for evaluation components and execution.
+- Best practices covers evaluation configuration, dataset handling, and reproducibility. Image pinning and dependency locking remain here because their primary check is whether inputs are fixed.
+- Security covers isolation and access to the host, other containers, or execution capabilities. Runtime-user and build-isolation checks would also belong here as separate rules.
 
 ## Suppression
 
@@ -244,7 +256,7 @@ One document per run. `RunReport.to_dict()` produces the same mapping from the P
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "version": "0.3.0",
   "root": "/abs/path/to/repo",
   "passed": false,
@@ -287,7 +299,7 @@ One document per run. `RunReport.to_dict()` produces the same mapping from the P
 
 | Field                      | Meaning                                                                                                                                                                                                                                                                                                                                                                               |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema_version`           | Integer, bumped when this document changes shape. Check it first.                                                                                                                                                                                                                                                                                                                     |
+| `schema_version`           | Integer, bumped for incompatible output changes, including the category set. Check it first.                                                                                                                                                                                                                                                                                          |
 | `version`                  | The inspect-evals-lint version that produced the document.                                                                                                                                                                                                                                                                                                                            |
 | `root`                     | Absolute repository root the run used. Every `file` below is relative to it when it falls under it.                                                                                                                                                                                                                                                                                   |
 | `passed`                   | `true` when no diagnostic in any package has status `fail`. Mirrors the exit code.                                                                                                                                                                                                                                                                                                    |
@@ -296,11 +308,13 @@ One document per run. `RunReport.to_dict()` produces the same mapping from the P
 | `packages[].kind`          | `eval` or `helper`. Filter on this rather than expecting separate lists.                                                                                                                                                                                                                                                                                                              |
 | `packages[].skipped`       | Why the package was not linted at all (listed in `ignore-dirs`), else `null`.                                                                                                                                                                                                                                                                                                         |
 | `packages[].score`         | The package's own score, in the same shape as the run's.                                                                                                                                                                                                                                                                                                                              |
-| `packages[].rules[]`       | One entry per rule that ran, in execution order, at the worst status it reported (`fail`, `warn`, `suppressed`, `pass`, `skip`). `diagnostics` is a list of indexes into this package's `diagnostics` array; a pass or skip with no findings has `[]`. Counting these by `status` reproduces `packages[].score`. Additive; `schema_version` stays 1.                                  |
+| `packages[].rules[]`       | One entry per rule that ran, in execution order, at the worst status it reported (`fail`, `warn`, `suppressed`, `pass`, `skip`). `diagnostics` is a list of indexes into this package's `diagnostics` array; a pass or skip with no findings has `[]`. Counting these by `status` reproduces `packages[].score`. This field was added in schema version 1 and remains in version 2.   |
 | `packages[].outcomes[]`    | One per rule that ran and had nothing to point at: `status` is `pass` or `skip`, `message` says why.                                                                                                                                                                                                                                                                                  |
 | `packages[].diagnostics[]` | One per finding. `severity` is `error` or `warning`; `status` is `fail`, `warn` or `suppressed`. `line` and `column` are 1-based and `null` when the finding is about a file or directory as a whole. `hint` is what to do about it, or `null`.                                                                                                                                       |
 
-`category` is always one of `file_structure`, `code_quality`, `tests` and `best_practices`; a new rule joins one of the four, so tooling that groups by category (badges, dashboards) does not change when rules are added.
+`category` is one of `file_structure`, `code_quality`, `tests`, `best_practices`, and `security`. Schema version 2 adds `security` and the `IESC` rule prefix. Existing codes, categories, fields, and score calculations are unchanged. Consumers must accept both versions during migration, add the category to validation and displays, and accept `IESC` codes. Adding or changing categories requires a schema version update.
+
+Update the register publisher and documentation dashboard before deploying a linter release that emits version 2. The register service wraps lint reports in its own result and summary formats; their schema versions are independent of the nested lint report version.
 
 ## GitHub Actions (`--output-format github`)
 
@@ -1263,3 +1277,61 @@ KNOWN_BROKEN = {"ruin_names_100": "https://github.com/org/repo/issues/19"}
 - [Datasets: Dataset Samples](https://inspect.aisi.org.uk/datasets.html#dataset-samples)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP009]` or `ignore[known_broken_reported]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+
+
+---
+
+# IESC001: sandbox_privileges
+
+Compose services do not grant additional sandbox privileges or host access.
+
+**Category:** security · **Applies to:** eval, helper · **Allowlist:** `[tool.inspect-evals-lint.allowlists.sandbox_privileges]`
+
+## What it does
+
+Reads parsed YAML from every `compose*.y*ml` and `docker-compose*.y*ml` under the package, including nested files and overrides. Reports one error per service and field for:
+
+- `privileged: true` and `use_api_socket: true`.
+- Nonempty `cap_add`, `devices`, and `device_cgroup_rules`.
+- `security_opt` disabling seccomp, AppArmor, SELinux labels, or protected system paths. Both `option:value` and `option=value` are checked.
+- `host` in `network_mode`, `pid`, `ipc`, `userns_mode`, `uts`, or `cgroup`, and `container:` namespaces in `network_mode`, `pid`, or `ipc`.
+- Host bind mounts in either volume syntax, Windows named pipe mounts, and named volumes using the local driver's `bind` or `rbind` options. Docker daemon socket sources are identified in the message. Read-only host mounts are also reported because they still expose host data.
+- `volumes_from` referring to external containers.
+- Privileged `pre_start`, `post_start`, and `pre_stop` commands.
+
+GPU reservations under `deploy.resources.reservations.devices`, ordinary named or anonymous volumes, and namespaces shared by `service:` reference are accepted. YAML anchors are resolved; comments are ignored.
+
+## Why is this bad?
+
+These settings can give model-controlled processes access to host data, devices, namespaces, or the container engine, or remove runtime restrictions. Some evaluations need them. Each exception needs review and an allowlist entry; a finding does not establish that a setting is exploitable.
+
+## Example
+
+```yaml
+services:
+  default:
+    image: example/sandbox:1.0
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+
+Remove the settings when they are unnecessary. If required, document the reason next to `default:privileged` and `default:volumes` entries in `allowlists.sandbox_privileges`.
+
+## Scope and related checks
+
+This is a static check of declared Compose settings. It does not run Docker, read environment files, inspect images, combine overrides, follow `include` or `extends` files, or inspect Kubernetes settings. Interpolated privilege, namespace, security-option, and mount values that cannot be checked produce warnings. A pass means no listed settings were found in the files checked.
+
+Dockerfile `USER` and Compose `user` belong in a separate runtime-user rule: root within a container does not itself grant host access. That rule would need to account for the selected build stage, inherited image user, Compose overrides, and Inspect's per-command user selection. Flagging every `USER root` would also flag temporary root use during image builds.
+
+Build privileges (`build.privileged`, `build.entitlements`, and Dockerfile `RUN --security=insecure` or `RUN --network=host`) belong in a separate build-isolation rule. Published ports, external networks, and host-gateway mappings need a network-exposure policy. Missing hardening settings such as `read_only` or `no-new-privileges` are outside this rule's checks.
+
+## Options
+
+- `allowlists.sandbox_privileges`: `{ package = ["service:field"] }` entries report warnings while present. The key applies to that service and field across the package's Compose files. Nested fields use keys such as `default:post_start.privileged`. Removed settings leave stale entries for the runner to report.
+
+## See also
+
+- [Sandboxing](https://inspect.aisi.org.uk/sandboxing.html)
+
+Suppress on a line with `# inspect-evals-lint: ignore[IESC001]` or `ignore[sandbox_privileges]`; select or ignore it in configuration by either, or by the prefix `IESC`.

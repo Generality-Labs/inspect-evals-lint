@@ -34,7 +34,13 @@ def test_allowlist_rules_name_their_table() -> None:
 
 def test_index_groups_by_category_and_links_pages() -> None:
     index = docs.index_page()
-    for heading in ("## File structure", "## Code quality", "## Tests", "## Best practices"):
+    for heading in (
+        "## File structure",
+        "## Code quality",
+        "## Tests",
+        "## Best practices",
+        "## Security",
+    ):
         assert heading in index
     assert "[IEBP002](rules/IEBP002.md)" in index
     assert "`utils`" in index

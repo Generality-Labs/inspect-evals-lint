@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `sandbox_privileges` (IESC001) checks Compose services for elevated privileges, added capabilities, disabled security restrictions, host or external-container namespaces, host mounts, device access, and privileged lifecycle commands. It includes Docker API socket access and named volumes backed by host bind mounts. Findings use `service:field` allowlist keys; unresolved interpolations produce warnings. GPU reservations and ordinary named volumes are accepted ([#46](https://github.com/Generality-Labs/inspect-evals-lint/issues/46)).
+- The `security` category uses the `IESC` rule prefix and covers isolation and access to the host, other containers, or execution capabilities.
+
+### Changed
+
+- JSON reports use `schema_version: 2` because the category set now includes `security`. Consumers must accept the new category and rule prefix before upgrading. Existing rule codes and categories are unchanged.
+
 ## [0.8.0] - 2026-09-25
 
 Linting a standalone evaluation repository no longer reports the inspect_evals monorepo's conventions as failures. [#36](https://github.com/Generality-Labs/inspect-evals-lint/issues/36) ran 0.7.0 over a typical single-evaluation repository and found one genuine finding among eight failures; the other seven came from rules that assumed the monorepo or template layout. Each is fixed below, the default preset now follows the repository's shape, and the presets are named for the layout they describe. Every change is additive or aliased: a repository pinned on 0.7.0 gets the same results or fewer false positives, and the old preset names keep working for this release with a notice.

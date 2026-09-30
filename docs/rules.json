@@ -553,6 +553,25 @@
           "url": "https://inspect.aisi.org.uk/datasets.html#dataset-samples"
         }
       ]
+    },
+    {
+      "code": "IESC001",
+      "name": "sandbox_privileges",
+      "category": "security",
+      "scopes": [
+        "eval",
+        "helper"
+      ],
+      "allowlist": true,
+      "summary": "Compose services do not grant additional sandbox privileges or host access",
+      "url": "https://inspect-evals-lint.generality.org/rules/IESC001/",
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IESC001.md",
+      "references": [
+        {
+          "title": "Sandboxing",
+          "url": "https://inspect.aisi.org.uk/sandboxing.html"
+        }
+      ]
     }
   ]
 }

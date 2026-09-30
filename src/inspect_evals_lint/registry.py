@@ -19,19 +19,20 @@ from typing import Literal, get_args
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Finding, PackageKind
 
-Category = Literal["file_structure", "code_quality", "tests", "best_practices"]
+Category = Literal["file_structure", "code_quality", "tests", "best_practices", "security"]
 CATEGORIES: tuple[str, ...] = get_args(Category)
-"""The four sections of the documentation. Downstream badge tooling groups by exactly these."""
+"""The report categories. Changes to this set require a JSON schema version update."""
 
 CATEGORY_PREFIX: dict[str, str] = {
     "file_structure": "IEFS",
     "code_quality": "IECQ",
     "tests": "IETS",
     "best_practices": "IEBP",
+    "security": "IESC",
 }
 """Rule code prefix per category. ``IE`` namespaces the codes away from ruff's."""
 
-_CODE_PATTERN = re.compile(r"^IE(FS|CQ|TS|BP)\d{3}$")
+_CODE_PATTERN = re.compile(r"^IE(FS|CQ|TS|BP|SC)\d{3}$")
 
 REQUIRED_DOC_SECTIONS: tuple[str, ...] = ("## What it does", "## Why is this bad?")
 """Every rule's docstring carries these headings; ``## Example`` and ``## Options`` are optional."""
