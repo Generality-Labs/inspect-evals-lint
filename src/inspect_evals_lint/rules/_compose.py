@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -26,8 +27,56 @@ def iter_compose_files(ctx: LintContext) -> list[Path]:
     return sorted(path for path in ctx.path.rglob("*.y*ml") if is_compose_file(path))
 
 
+class ComposeMapping(dict[Any, Any]):
+    """A loaded mapping that remembers the line each key is on."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lines: dict[Any, int] = {}
+
+
+class ComposeSequence(list[Any]):
+    """A loaded sequence that remembers the line each item is on."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lines: list[int] = []
+
+
+def line_of(container: Any, key: Any) -> int | None:
+    """The 1-based line of a mapping key or sequence index in a loaded compose file."""
+    if isinstance(container, ComposeMapping):
+        return container.lines.get(key)
+    if (
+        isinstance(container, ComposeSequence)
+        and isinstance(key, int)
+        and key < len(container.lines)
+    ):
+        return container.lines[key]
+    return None
+
+
 class _ComposeLoader(yaml.SafeLoader):
-    """Safe loading that accepts Compose's own tags."""
+    """Safe loading that keeps line numbers and accepts Compose's own tags."""
+
+
+def _construct_mapping(loader: yaml.SafeLoader, node: yaml.MappingNode) -> Iterator[ComposeMapping]:
+    data = ComposeMapping()
+    yield data
+    data.update(loader.construct_mapping(node))  # pyright: ignore[reportUnknownMemberType]
+    # construct_mapping has merged any << keys into node.value, the file's own keys last.
+    for key_node, _ in node.value:
+        key = loader.construct_object(key_node)  # pyright: ignore[reportUnknownMemberType]
+        data.lines[key] = key_node.start_mark.line + 1
+
+
+def _construct_sequence(
+    loader: yaml.SafeLoader, node: yaml.SequenceNode
+) -> Iterator[ComposeSequence]:
+    data = ComposeSequence()
+    yield data
+    data.extend(loader.construct_sequence(node))  # pyright: ignore[reportUnknownMemberType]
+    data.lines = [item.start_mark.line + 1 for item in node.value]
 
 
 def _construct_tagged(loader: yaml.SafeLoader, suffix: str, node: yaml.Node) -> Any:
@@ -44,6 +93,8 @@ def _construct_tagged(loader: yaml.SafeLoader, suffix: str, node: yaml.Node) -> 
     return loader.construct_object(untagged)  # pyright: ignore[reportUnknownMemberType]
 
 
+_ComposeLoader.add_constructor("tag:yaml.org,2002:map", _construct_mapping)  # pyright: ignore[reportUnknownMemberType]
+_ComposeLoader.add_constructor("tag:yaml.org,2002:seq", _construct_sequence)  # pyright: ignore[reportUnknownMemberType]
 _ComposeLoader.add_multi_constructor("!", _construct_tagged)  # pyright: ignore[reportUnknownMemberType]
 
 

@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - `sandbox_image_pinning` (IEBP005) also reads `docker-compose*.y*ml` files, so an unpinned image there is now reported. Compose's `!override` and `!reset` tags no longer make a file unreadable, a non-UTF-8 file is reported as unreadable instead of stopping the run, and a directory named like a compose file is ignored. The rules that read Compose files share one reader.
+- Findings in Compose files point at the line of the setting or list item, and `# inspect-evals-lint: ignore[...]` comments in Compose files are read. Before, `sandbox_image_pinning` findings had no line, so the documented line suppression could not apply to them.
 
 ## [0.8.0] - 2026-09-25
 

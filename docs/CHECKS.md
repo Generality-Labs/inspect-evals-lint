@@ -73,7 +73,7 @@ Each rule belongs to one category. The JSON output and `registry.CATEGORIES` exp
 
 ## Suppression
 
-- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. In a Dockerfile, on the line above the instruction.
+- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. In a Dockerfile, on the line above the instruction. In a Compose file, on the setting's line or the list item's line.
 - File: `# inspect-evals-lint: ignore-file[<rule>]` within the first ten lines.
 - Paths: `per-file-ignores = { "<glob>" = ["<rule>"] }` in `[tool.inspect-evals-lint]`.
 - Never read: `exclude = ["<glob>"]` keeps files out of the AST-based rules entirely, for code shipped into a sandbox.

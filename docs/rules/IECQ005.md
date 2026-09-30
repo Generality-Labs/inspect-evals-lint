@@ -8,7 +8,7 @@ Every suppression marker is one the linter reads.
 
 ## What it does
 
-Reads the `# inspect-evals-lint: ignore[...]` comments in the package's Python files and Dockerfiles (`exclude`d files are skipped) and warns about each marker that suppresses nothing: a comment in the removed `# noautolint` syntax or a `.noautolint` file, an `ignore` or `ignore-file` without a bracketed rule list, an `ignore-file` past the first ten lines, and a selector that names no rule. One warning per marker, at its line. The other selectors in the same comment still apply.
+Reads the `# inspect-evals-lint: ignore[...]` comments in the package's Python files and Dockerfiles (`exclude`d files are skipped) and Compose files, and warns about each marker that suppresses nothing: a comment in the removed `# noautolint` syntax or a `.noautolint` file, an `ignore` or `ignore-file` without a bracketed rule list, an `ignore-file` past the first ten lines, and a selector that names no rule. One warning per marker, at its line. The other selectors in the same comment still apply.
 
 ## Why is this bad?
 

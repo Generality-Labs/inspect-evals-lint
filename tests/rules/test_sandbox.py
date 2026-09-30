@@ -326,6 +326,34 @@ class TestSandboxPrivileges:
             ("default:volumes:/b", "fail"),
         ]
 
+    def test_findings_point_at_the_line_of_the_setting(self, tmp_path):
+        (tmp_path / "compose.yaml").write_text(
+            "x-defaults: &defaults\n"
+            "  cap_add: [SYS_ADMIN]\n"
+            "services:\n"
+            "  default:\n"
+            "    <<: *defaults\n"
+            "    image: example/untagged\n"
+            "    privileged: true\n"
+            "    volumes:\n"
+            "      - data:/data\n"
+            "      - /var/run/docker.sock:/var/run/docker.sock\n"
+            "    post_start:\n"
+            "      - command: ./setup.sh\n"
+            "        privileged: true\n"
+            "  broken: []\n"
+        )
+        results = list(sandbox_privileges(context_for(tmp_path)))
+        assert [(r.key, r.line) for r in results] == [
+            ("default:privileged", 7),
+            ("default:cap_add:SYS_ADMIN", 2),
+            ("default:post_start.privileged", 13),
+            ("default:volumes:/var/run/docker.sock", 10),
+            (None, 14),
+        ]
+        (pinning,) = sandbox_image_pinning(context_for(tmp_path))
+        assert pinning.line == 6
+
     def test_yaml_anchors_comments_and_multiple_files(self, tmp_path):
         (tmp_path / "compose.yaml").write_text(
             "x-defaults: &defaults\n  privileged: true\nservices:\n"

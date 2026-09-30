@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -140,6 +141,25 @@ def test_dockerfile_comment_covers_the_instruction_below_or_its_own_line(tmp_pat
     assert s.file_level == {dockerfile: {"IEBP005"}}
     assert s.line_level[dockerfile] == {5: {"readme"}, 6: {"IEBP", "sample_ids"}, 7: {"IEFS001"}}
     assert s.line_level[pkg / "dockerfile.py"] == {1: {"IEFS002"}}
+
+
+def test_compose_comment_covers_its_own_line(monorepo: tuple[Path, LintConfig]) -> None:
+    root, config = monorepo
+    write(
+        config.package_dir(root, "alpha") / "challenges" / "compose.yaml",
+        "services:\n"
+        "  default:\n"
+        "    image: example/untagged  # inspect-evals-lint: ignore[IEBP005]\n"
+        "    privileged: true  # inspect-evals-lint: ignore[sandbox_privileges]\n"
+        "    cap_add:\n"
+        "      - SYS_PTRACE  # inspect-evals-lint: ignore[IESC001]\n"
+        "      - SYS_ADMIN\n",
+    )
+    config = replace(config, exclude=("src/alpha/challenges/**",))
+    report = lint_package(root, "alpha", config)
+    statuses = report.statuses()
+    assert statuses["sandbox_image_pinning"] == ["suppressed"]
+    assert sorted(statuses["sandbox_privileges"]) == ["fail", "suppressed", "suppressed"]
 
 
 def test_dockerfile_legacy_comment_is_a_problem(tmp_path: Path) -> None:

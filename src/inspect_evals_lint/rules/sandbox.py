@@ -12,7 +12,7 @@ import yaml
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome, Severity
 from inspect_evals_lint.registry import Reference, inspect_docs, rule
-from inspect_evals_lint.rules._compose import iter_compose_files, load_compose
+from inspect_evals_lint.rules._compose import iter_compose_files, line_of, load_compose
 
 PIN_HINT = (
     "pin it: use a dated tag you publish yourself for images you rebuild "
@@ -110,6 +110,7 @@ def sandbox_image_pinning(ctx: LintContext) -> Iterable[Finding]:
                 f"Service '{service_name}' image '{image}' is untagged or :latest, "
                 "so registry pushes silently change the eval environment",
                 file=compose_file,
+                line=line_of(service, "image"),
                 hint=PIN_HINT,
                 key=image,
             )
@@ -189,6 +190,7 @@ class _Privilege:
     field: str
     value: str | None
     detail: str
+    line: int | None
     severity: Severity = "error"
 
     def key(self, service_name: str) -> str:
@@ -196,10 +198,12 @@ class _Privilege:
         return key if self.value is None else f"{key}:{self.value}"
 
 
-def _values(value: Any) -> list[str]:
-    """The entries of a list setting, or the setting itself when it is a single value."""
-    items = _sequence(value) if isinstance(value, list) else [value] if value else []
-    return [str(item) for item in items]
+def _values(container: dict[str, Any], field: str) -> list[tuple[str, int | None]]:
+    """A list setting's entries with their lines, or the setting itself when it is one value."""
+    value = container.get(field)
+    if isinstance(value, list):
+        return [(str(item), line_of(value, i)) for i, item in enumerate(_sequence(value))]
+    return [(str(value), line_of(container, field))] if value else []
 
 
 def _service_privileges(
@@ -207,26 +211,28 @@ def _service_privileges(
 ) -> Iterable[_Privilege]:
     for field in ("privileged", "use_api_socket", *_HOST_NAMESPACES):
         value = service.get(field)
+        line = line_of(service, field)
         if field in ("privileged", "use_api_socket") and _enabled(value):
             detail = (
                 "runs with elevated container privileges"
                 if field == "privileged"
                 else "exposes the container engine API socket and credentials"
             )
-            yield _Privilege(field, None, detail)
+            yield _Privilege(field, None, detail, line)
         elif field in _HOST_NAMESPACES and value == "host":
-            yield _Privilege(field, value, "uses a host namespace")
+            yield _Privilege(field, value, "uses a host namespace", line)
         elif (
             field in ("network_mode", "pid", "ipc")
             and isinstance(value, str)
             and value.startswith("container:")
         ):
-            yield _Privilege(field, value, f"joins an external container namespace ({value})")
+            yield _Privilege(field, value, f"joins an external container namespace ({value})", line)
         elif isinstance(value, str) and "$" in value:
             yield _Privilege(
                 field,
                 value,
                 "contains an interpolation whose privileges cannot be checked",
+                line,
                 "warning",
             )
 
@@ -235,50 +241,59 @@ def _service_privileges(
         ("devices", "grants device access to"),
         ("device_cgroup_rules", "adds device access rule"),
     ):
-        for value in _values(service.get(field)):
-            yield _Privilege(field, value, f"{detail} '{value}'")
+        for value, line in _values(service, field):
+            yield _Privilege(field, value, f"{detail} '{value}'", line)
 
-    for option in _sequence(service.get("security_opt")):
-        if not isinstance(option, str):
-            continue
+    for option, line in _values(service, "security_opt"):
         parts = re.split(r"[:=]", option, maxsplit=1)
         if len(parts) == 2 and _UNCONFINED_OPTIONS.get(parts[0]) == parts[1]:
-            yield _Privilege("security_opt", option, f"disables a security restriction ({option})")
+            yield _Privilege(
+                "security_opt", option, f"disables a security restriction ({option})", line
+            )
         elif "$" in option:
             yield _Privilege(
                 "security_opt",
                 option,
                 "contains an interpolation whose restrictions cannot be checked",
+                line,
                 "warning",
             )
 
     for hook in ("pre_start", "post_start", "pre_stop"):
         for command in _sequence(service.get(hook)):
             value = _mapping(command).get("privileged")
+            line = line_of(command, "privileged")
             if _enabled(value):
                 yield _Privilege(
-                    f"{hook}.privileged", None, "runs a lifecycle command with elevated privileges"
+                    f"{hook}.privileged",
+                    None,
+                    "runs a lifecycle command with elevated privileges",
+                    line,
                 )
             elif isinstance(value, str) and "$" in value:
                 yield _Privilege(
                     f"{hook}.privileged",
                     None,
                     "contains an interpolation whose privileges cannot be checked",
+                    line,
                     "warning",
                 )
 
-    for volume in _sequence(service.get("volumes")):
+    volumes = service.get("volumes")
+    for index, volume in enumerate(_sequence(volumes)):
+        line = line_of(volumes, index)
         source = _bind_source(volume, named_volumes)
         if source is not None:
             detail = f"bind-mounts host path '{source}'"
             if "docker.sock" in source or "docker_engine" in source:
                 detail += ", exposing the Docker daemon socket"
-            yield _Privilege("volumes", source, detail)
+            yield _Privilege("volumes", source, detail, line)
         elif isinstance(volume, str) and "$" in volume:
             yield _Privilege(
                 "volumes",
                 volume,
                 "contains an interpolation whose mount source cannot be checked",
+                line,
                 "warning",
             )
         elif any("$" in str(_mapping(volume).get(field, "")) for field in ("type", "source")):
@@ -286,19 +301,24 @@ def _service_privileges(
                 "volumes",
                 str(_mapping(volume).get("source")),
                 "contains an interpolation whose mount source cannot be checked",
+                line,
                 "warning",
             )
 
-    for source in _sequence(service.get("volumes_from")):
-        if isinstance(source, str) and source.startswith("container:"):
+    for source, line in _values(service, "volumes_from"):
+        if source.startswith("container:"):
             yield _Privilege(
-                "volumes_from", source, f"imports mounts from an external container ({source})"
+                "volumes_from",
+                source,
+                f"imports mounts from an external container ({source})",
+                line,
             )
-        elif isinstance(source, str) and "$" in source:
+        elif "$" in source:
             yield _Privilege(
                 "volumes_from",
                 source,
                 "contains an interpolation whose container cannot be checked",
+                line,
                 "warning",
             )
 
@@ -325,8 +345,13 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
 
     GPU reservations under ``deploy.resources.reservations.devices``, ordinary
     named or anonymous volumes, and namespaces shared by ``service:`` reference
-    are accepted. YAML anchors are resolved; comments are ignored. A value tagged
-    ``!override`` or ``!reset`` is checked as written.
+    are accepted. YAML anchors are resolved; commented-out settings are ignored.
+    A value tagged ``!override`` or ``!reset`` is checked as written.
+
+    Each finding points at the line of the setting, or of the list item for list
+    settings such as ``volumes`` and ``cap_add``. A setting merged from a YAML
+    anchor points at the anchor, so a suppression comment there covers every
+    service that merges it.
 
     ## Why is this bad?
 
@@ -529,6 +554,7 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
                 yield Diagnostic(
                     f"Could not check service '{service_name}': expected a mapping",
                     file=compose_file,
+                    line=line_of(services, service_name),
                     severity="warning",
                 )
                 continue
@@ -541,6 +567,7 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
                 yield Diagnostic(
                     f"Service '{service_name}' {privilege.field}: {privilege.detail}",
                     file=compose_file,
+                    line=privilege.line,
                     severity=privilege.severity,
                     key=key,
                     hint="remove the setting, or review the required access and document it "
