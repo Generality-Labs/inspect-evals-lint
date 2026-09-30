@@ -1,8 +1,9 @@
 """A Markdown summary of a run: per package, a headline count and the rules that need attention.
 
 This is the shape a pull-request comment or a job summary wants: one line
-saying how many rules are met, the per-category split, and a collapsible
-list of the rules not met, with warnings or suppressed, each finding on its
+saying how many rules are met (and how many by suppression), the per-category
+split, and a collapsible list of the rules not met, with warnings, or met by
+suppression, each finding on its
 own line with the hint under it. Rules that passed or did not apply are
 counted but not listed. Every piece of text is escaped so that a message or
 path from the linted repository cannot inject markup or break a table.
@@ -73,9 +74,12 @@ def location(diagnostic: Diagnostic, root: Path | None, source_link: SourceLink 
 
 
 def headline(package: PackageReport) -> str:
-    """``**14/17 checks met** · Structure 6/6 · ...`` for one package."""
+    """``**14/17 checks met** (2 by suppression) · Structure 6/6 · ...`` for one package."""
     score = package.score()
-    parts = [f"**{counts(score)} checks met**"]
+    met = f"**{counts(score)} checks met**"
+    if score.suppressed:
+        met += f" ({score.suppressed} by suppression)"
+    parts = [met]
     for category in CATEGORIES:
         parts.append(f"{CATEGORY_LABELS[category]} {counts(score.by_category.get(category))}")
     return " · ".join(parts)
@@ -125,7 +129,7 @@ def package_markdown(
     return [
         *lines,
         "<details>",
-        f"<summary>{rules_listed} rule(s) not met, with warnings or suppressed</summary>",
+        f"<summary>{rules_listed} rule(s) not met, with warnings, or met by suppression</summary>",
         "",
         *actionable,
         "",
@@ -156,8 +160,8 @@ def render_markdown(
         )
     if footer:
         lines.append(
-            "Counts are rules met out of applicable rules: warnings count as met, suppressed "
-            "findings count against the total, and rules that do not apply are excluded. "
-            "Rule names link to their documentation."
+            "Counts are rules met out of applicable rules: warnings and suppressed findings "
+            "count as met, the headline says how many rules were met by suppression, and "
+            "rules that do not apply are excluded. Rule names link to their documentation."
         )
     return "\n".join(lines).rstrip("\n") + "\n"

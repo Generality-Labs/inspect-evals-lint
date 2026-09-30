@@ -73,8 +73,8 @@ def test_score_counts_rules_not_findings() -> None:
     score = report.score()
     assert (score.pass_, score.fail, score.warn, score.suppressed, score.skip) == (1, 1, 1, 1, 1)
     assert score.applicable == 4  # skip is not applicable
-    assert score.passing == 2  # pass + warn
-    assert score.score == 0.5
+    assert score.passing == 3  # pass + warn + suppressed
+    assert score.score == 0.75
     assert score.by_category["best_practices"].applicable == 1  # sample_ids; the skip is excluded
     assert score.by_category["tests"].to_dict(by_category=False) == {
         "pass": 0,
@@ -83,8 +83,8 @@ def test_score_counts_rules_not_findings() -> None:
         "skip": 0,
         "suppressed": 1,
         "applicable": 1,
-        "passing": 0,
-        "score": 0.0,
+        "passing": 1,
+        "score": 1.0,
     }
     assert report.summary()["fail"] == 2  # summary still counts findings
 
@@ -93,7 +93,7 @@ def test_suppressed_outranks_pass_so_views_agree() -> None:
     report = report_with(("sample_ids", "pass", None), ("sample_ids", "suppressed", None))
     assert report.rule_statuses()[0].status == "suppressed"
     assert report.score().suppressed == 1
-    assert report.score().passing == 0
+    assert report.score().passing == 1  # met, and reported as met by suppression
 
 
 def test_empty_report_scores_none() -> None:
@@ -112,7 +112,7 @@ def test_security_category_in_json_and_markdown(monorepo: tuple[Path, LintConfig
     report = lint_package(root, "alpha", replace(config, select=("IESC",)))
     run = RunReport(root=root, packages=[report])
     data = run.to_dict()
-    assert data["schema_version"] == 2
+    assert data["schema_version"] == 3
     assert data["score"]["by_category"]["security"]["fail"] == 1
     assert data["packages"][0]["diagnostics"][0]["code"] == "IESC001"
     assert data["packages"][0]["diagnostics"][0]["category"] == "security"
@@ -147,7 +147,7 @@ def test_markdown_headline_lists_categories_and_folds_actionable_rules(tmp_path:
         "**2/3 checks met** · Structure 1/1 · Code quality — · Tests 0/1 · Best practices 1/1"
         in text
     )
-    assert "<summary>2 rule(s) not met, with warnings or suppressed</summary>" in text
+    assert "<summary>2 rule(s) not met, with warnings, or met by suppression</summary>" in text
     assert (
         "- **Not met** [`e2e_test`](https://inspect-evals-lint.generality.org/rules/IETS003/)"
         in text
@@ -156,6 +156,22 @@ def test_markdown_headline_lists_categories_and_folds_actionable_rules(tmp_path:
     assert "- **Warning** [`sample_ids`]" in text
     assert "  - *suppressed* `src/alpha/alpha.py:7` Sample() call without id=" in text
     assert "readme" not in text.split("<details>", 1)[1]
+
+
+def test_markdown_headline_says_how_many_rules_are_met_by_suppression() -> None:
+    report = report_with(
+        ("readme", "pass", None),
+        ("e2e_test", "suppressed", "No E2E test found"),
+        ("sample_ids", "suppressed", "Sample() call without id="),
+    )
+    text = "\n".join(package_markdown(report, Path("/repo")))
+    assert "**3/3 checks met** (2 by suppression) · Structure 1/1" in text
+    assert "- **Suppressed** [`e2e_test`]" in text
+
+
+def test_markdown_footer_says_suppressed_findings_count_as_met(tmp_path: Path) -> None:
+    run = RunReport(root=tmp_path, packages=[report_with(("readme", "pass", None))])
+    assert "suppressed findings count as met" in render_markdown(run)
 
 
 def test_markdown_links_locations_when_asked(tmp_path: Path) -> None:

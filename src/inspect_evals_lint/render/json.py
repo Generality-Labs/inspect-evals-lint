@@ -16,7 +16,7 @@ from inspect_evals_lint.diagnostics import (
 )
 from inspect_evals_lint.render.paths import relative_to_root
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 """Bumped for incompatible output changes, including categories. Consumers should check it first."""
 
 
