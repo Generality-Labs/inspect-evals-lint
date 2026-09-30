@@ -130,8 +130,8 @@ class TestSuppressionSyntax:
         ]
         assert results[0].message == "ignore-file[readme] gives no reason"
         assert results[1].hint == (
-            "write why the finding is acceptable after ' -- ', e.g. "
-            "`# inspect-evals-lint: ignore[sample_ids] -- <why this is acceptable>`"
+            "say why the finding is acceptable after ' -- ', e.g. "
+            "`# inspect-evals-lint: ignore[sample_ids] -- <reason>`"
         )
 
     def test_every_kind_of_dead_marker_is_one_warning(self, tmp_path):

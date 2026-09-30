@@ -10,7 +10,9 @@ Every suppression marker is one the linter reads, and says why.
 
 Reads the `# inspect-evals-lint: ignore[...]` comments in the package's Python files and Dockerfiles (`exclude`d files are skipped) and Compose files, and warns about each marker that suppresses nothing: a comment in the removed `# noautolint` syntax or a `.noautolint` file, an `ignore` or `ignore-file` without a bracketed rule list, an `ignore-file` past the first ten lines, and a selector that names no rule. One warning per marker, at its line. The other selectors in the same comment still apply.
 
-Also warns about each comment that suppresses something but gives no reason. The reason follows the rule list after `--`: `# inspect-evals-lint: ignore[sample_ids] -- ids are row numbers`. The suppression applies either way.
+Also warns about each comment that suppresses something but gives no reason. The reason follows the rule list after `--`: `# inspect-evals-lint: ignore[sample_ids] -- ids are row numbers`. It runs to the end of the line, and markers quoted in it are not read. Another tool's comment straight after `--`, a second `--` and an unfilled `<reason>` placeholder are not reasons. The suppression applies either way.
+
+A comment cannot suppress this rule's findings, since they are about comments: `ignore[IECQ]` would otherwise hide its own missing reason. Use `per-file-ignores` to suppress them for a path.
 
 ## Why is this bad?
 
@@ -30,4 +32,4 @@ Use instead:
 from inspect_ai.model._model import thing  # inspect-evals-lint: ignore[private_api_imports] -- no public equivalent yet
 ```
 
-Suppress on a line with `# inspect-evals-lint: ignore[IECQ005]` or `ignore[suppression_syntax]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
+Suppress on a line with `# inspect-evals-lint: ignore[IECQ005] -- <reason>` or `ignore[suppression_syntax] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IECQ`.

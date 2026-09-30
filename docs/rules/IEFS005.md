@@ -30,4 +30,4 @@ tasks:
 - `eval-yaml-required`
 - `eval-yaml-required-fields`
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEFS005]` or `ignore[eval_yaml]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS005] -- <reason>` or `ignore[eval_yaml] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEFS`.

@@ -27,4 +27,4 @@ __all__ = ["my_eval", "my_eval_hard"]
 
 - [Extensions: Components: Registration](https://inspect.aisi.org.uk/extensions-components.html#registration)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEFS003]` or `ignore[init_exports]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS003] -- <reason>` or `ignore[init_exports] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEFS`.

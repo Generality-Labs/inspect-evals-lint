@@ -89,7 +89,7 @@ def rule_page(rule: Rule) -> str:
         body.strip(),
         "",
         *see_also,
-        f"Suppress on a line with `# inspect-evals-lint: ignore[{rule.code}]` or `ignore[{rule.name}]`; "
+        f"Suppress on a line with `# inspect-evals-lint: ignore[{rule.code}] -- <reason>` or `ignore[{rule.name}] -- <reason>`; "
         f"select or ignore it in configuration by either, or by the prefix `{rule.code[:4]}`.",
         "",
     ]
@@ -290,7 +290,7 @@ def llms_txt() -> str:
         "",
         "> Static checks for Inspect AI evaluations: file structure, code quality, test coverage conventions, best practices, and security. Every check is a rule with a code (IEFS, IECQ, IETS, IEBP, IESC prefixes for the categories) and a name.",
         "",
-        "Every HTML page on this site is also available as raw Markdown at the same path with a `.md` suffix (for example `rules/IEBP002.md`). The full documentation is concatenated in `llms-full.txt`. `rules.json` lists every rule with its code, name, category, scopes and page URLs. Suppress a finding with `# inspect-evals-lint: ignore[<code or name>]` on the offending line; configure the linter under `[tool.inspect-evals-lint]` in `pyproject.toml`. Locally, `inspect-evals-lint --explain <code>` prints a rule's page and `inspect-evals-lint --list-rules --output-format json` lists them.",
+        "Every HTML page on this site is also available as raw Markdown at the same path with a `.md` suffix (for example `rules/IEBP002.md`). The full documentation is concatenated in `llms-full.txt`. `rules.json` lists every rule with its code, name, category, scopes and page URLs. Suppress a finding with `# inspect-evals-lint: ignore[<code or name>] -- <reason>` on the offending line; configure the linter under `[tool.inspect-evals-lint]` in `pyproject.toml`. Locally, `inspect-evals-lint --explain <code>` prints a rule's page and `inspect-evals-lint --list-rules --output-format json` lists them.",
         "",
         "## Reference",
         "",

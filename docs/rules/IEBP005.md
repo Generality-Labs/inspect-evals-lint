@@ -39,4 +39,4 @@ services:
 
 - [Sandboxing: Task Configuration](https://inspect.aisi.org.uk/sandboxing.html#task-configuration)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP005]` or `ignore[sandbox_image_pinning]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP005] -- <reason>` or `ignore[sandbox_image_pinning] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.

@@ -269,8 +269,14 @@ def suppression_syntax(ctx: LintContext) -> Iterable[Finding]:
 
     Also warns about each comment that suppresses something but gives no reason.
     The reason follows the rule list after ``--``:
-    ``# inspect-evals-lint: ignore[sample_ids] -- ids are row numbers``. The
-    suppression applies either way.
+    ``# inspect-evals-lint: ignore[sample_ids] -- ids are row numbers``. It runs
+    to the end of the line, and markers quoted in it are not read. Another
+    tool's comment straight after ``--``, a second ``--`` and an unfilled
+    ``<reason>`` placeholder are not reasons. The suppression applies either way.
+
+    A comment cannot suppress this rule's findings, since they are about
+    comments: ``ignore[IECQ]`` would otherwise hide its own missing reason. Use
+    ``per-file-ignores`` to suppress them for a path.
 
     ## Why is this bad?
     A marker the linter does not read does nothing, silently: the finding it was

@@ -22,7 +22,7 @@ def test_every_rule_has_a_page_with_the_required_sections() -> None:
         assert docs.GENERATED_NOTE in page
         assert "## What it does" in page
         assert "## Why is this bad?" in page
-        assert f"ignore[{rule.code}]" in page
+        assert f"ignore[{rule.code}] -- <reason>" in page
         assert "``" not in page.replace("```", "")  # RST double backticks converted to Markdown
 
 

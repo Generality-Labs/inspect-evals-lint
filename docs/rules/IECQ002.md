@@ -33,4 +33,4 @@ return Score(value=CORRECT)
 - [Custom Scorers: Score](https://inspect.aisi.org.uk/custom-scorers.html#score)
 - [Custom Scorers: Score Value](https://inspect.aisi.org.uk/custom-scorers.html#score-value)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IECQ002]` or `ignore[score_constants]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
+Suppress on a line with `# inspect-evals-lint: ignore[IECQ002] -- <reason>` or `ignore[score_constants] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IECQ`.

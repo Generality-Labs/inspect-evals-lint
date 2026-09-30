@@ -18,4 +18,4 @@ A custom tool is the evaluation's own logic, the part no upstream test covers. O
 
 - [Tools: Custom Tools](https://inspect.aisi.org.uk/tools.html#custom-tools)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IETS007]` or `ignore[custom_tool_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IETS007] -- <reason>` or `ignore[custom_tool_tests] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IETS`.
