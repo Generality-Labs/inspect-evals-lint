@@ -558,6 +558,39 @@ def f(stream):
         )
         assert statuses(results) == ["warn"]
 
+    @pytest.mark.parametrize(
+        ("loader", "status"),
+        [
+            ('getattr(yaml, "CSafeLoader", yaml.SafeLoader)', "pass"),
+            ('getattr(yaml, "CSafeLoader")', "pass"),
+            ('getattr(yaml, "CLoader", yaml.SafeLoader)', "warn"),
+            ('getattr(yaml, "CSafeLoader", yaml.Loader)', "warn"),
+            ("getattr(yaml, name, yaml.SafeLoader)", "warn"),
+        ],
+    )
+    def test_yaml_loader_chosen_with_getattr(self, tmp_path, loader, status):
+        results = run(
+            tmp_path,
+            f"import yaml\n\ndef f(stream, name):\n    yaml.load(stream, Loader={loader})\n",
+        )
+        assert statuses(results) == [status]
+
+    @pytest.mark.parametrize(
+        ("base", "loader", "status"),
+        [
+            ("yaml.UnsafeLoader", "SafeLoader", "warn"),
+            ("yaml.SafeLoader", "SafeLoader", "pass"),
+            ("yaml.UnsafeLoader", "yaml.SafeLoader", "pass"),
+        ],
+    )
+    def test_a_same_file_class_is_safe_only_through_its_bases(self, tmp_path, base, loader, status):
+        """A local class named after a safe loader is judged by what it subclasses, not its name."""
+        results = run(
+            tmp_path,
+            f"import yaml\n\nclass SafeLoader({base}):\n    pass\n\ndef f(stream):\n    yaml.load(stream, {loader})\n",
+        )
+        assert statuses(results) == [status]
+
     def test_yaml_unsafe_load(self, tmp_path):
         results = run(tmp_path, "import yaml\n\ndef f(text):\n    yaml.unsafe_load(text)\n")
         assert statuses(results) == ["warn"]

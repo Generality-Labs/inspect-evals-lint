@@ -1037,31 +1037,56 @@ def _program_argument(program: ast.expr | None) -> ast.expr | None | Literal[Fal
     return False if isinstance(program, ast.Starred) else program
 
 
-def _class_name(node: ast.expr) -> str | None:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        return node.attr
-    return None
+@dataclass(frozen=True)
+class SafeLoaders:
+    """Which ``yaml.load`` loaders are safe in one file."""
+
+    local: frozenset[str]
+    """Classes the file defines, which a bare name refers to instead of PyYAML's."""
+    safe_local: frozenset[str]
+    """The local classes that subclass a safe loader, however deep."""
+
+    def is_safe(self, loader: ast.expr | None) -> bool:
+        """``SafeLoader``, ``yaml.CSafeLoader``, a safe local subclass, or ``getattr(yaml, "CSafeLoader", <safe>)``."""
+        if isinstance(loader, ast.Name):
+            if loader.id in self.local:
+                return loader.id in self.safe_local
+            return loader.id in _SAFE_YAML_LOADERS
+        if isinstance(loader, ast.Attribute):
+            return loader.attr in _SAFE_YAML_LOADERS or loader.attr in self.safe_local
+        if (
+            isinstance(loader, ast.Call)
+            and get_call_name(loader) == "getattr"
+            and len(loader.args) in (2, 3)
+            and not loader.keywords
+        ):
+            name = loader.args[1]
+            return (
+                isinstance(name, ast.Constant)
+                and name.value in _SAFE_YAML_LOADERS | self.safe_local
+                and (len(loader.args) == 2 or self.is_safe(loader.args[2]))
+            )
+        return False
 
 
-def safe_yaml_loaders(tree: ast.AST) -> frozenset[str]:
-    """PyYAML's safe loaders plus the classes in this file that subclass one, however deep."""
+def safe_yaml_loaders(tree: ast.AST) -> SafeLoaders:
+    """PyYAML's safe loaders plus the classes in this file that subclass one; a local class is judged by its bases, not its name."""
     classes = [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
-    safe = set(_SAFE_YAML_LOADERS)
+    loaders = SafeLoaders(frozenset(node.name for node in classes), frozenset())
     changed = True
     while changed:
         changed = False
         for node in classes:
-            if node.name not in safe and any(_class_name(b) in safe for b in node.bases):
-                safe.add(node.name)
+            if node.name not in loaders.safe_local and any(
+                loaders.is_safe(base) for base in node.bases
+            ):
+                loaders = SafeLoaders(loaders.local, loaders.safe_local | {node.name})
                 changed = True
-    return frozenset(safe)
+    return loaders
 
 
-def _has_safe_loader(call: ast.Call, safe_loaders: frozenset[str]) -> bool:
-    loader = _argument(call, 1, ("Loader",))
-    return loader is not None and _class_name(loader) in safe_loaders
+def _has_safe_loader(call: ast.Call, safe_loaders: SafeLoaders) -> bool:
+    return safe_loaders.is_safe(_argument(call, 1, ("Loader",)))
 
 
 @rule(
