@@ -27,4 +27,4 @@ src/my_eval/v8.py          # defines the tasks: warned, not failed
 - [Tasks: Task Basics](https://inspect.aisi.org.uk/tasks.html#task-basics)
 - [Extensions: Components: Registration](https://inspect.aisi.org.uk/extensions-components.html#registration)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEFS002]` or `ignore[main_file]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS002] -- <reason>` or `ignore[main_file] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEFS`.

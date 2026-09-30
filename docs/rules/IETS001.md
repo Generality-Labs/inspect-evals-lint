@@ -19,4 +19,4 @@ An evaluation with no tests at all has never been run against the mock model, so
 - `tests-root`
 - `tests-layout`
 
-Suppress on a line with `# inspect-evals-lint: ignore[IETS001]` or `ignore[tests_exist]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IETS001] -- <reason>` or `ignore[tests_exist] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IETS`.

@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Suppression comments take a reason after `--`: `# inspect-evals-lint: ignore[sample_ids] -- ids are row numbers`. `suppression_syntax` (IECQ005) warns about a comment that suppresses something without one. The suppression still applies, and a warning counts as passing, so no score changes. The reason runs to the end of the line and is never read for other markers. `--` followed by another tool's comment, a second `--`, or an unfilled `<reason>` placeholder does not count as a reason. The rule's pass message now says every comment has a reason.
+- A comment can no longer suppress `suppression_syntax` findings, which are about the comments themselves. `per-file-ignores` still can.
+- Every suppression the tool suggests now includes `-- <reason>`: the CLI's failure summary, the footer on each rule page, the `llms.txt` intro, and the hints for legacy, malformed and past-header markers.
+
+### Fixed
+
+- A second marker on the same line, before any reason, is now read. Before, only the first marker on a line took effect.
+
 ## [0.9.0] - 2026-09-30
 
 Compose files are now checked for sandbox privileges and host access. The new `security` category holds `sandbox_privileges` (IESC001), which fails a package whose Compose services grant extra privileges or host access unless each exception is allowlisted. Upgrading can fail a package that passed on 0.8.0: IESC001 reports errors by default, and IEBP005 now also reads `docker-compose*.y*ml` files. JSON reports move to `schema_version: 2`. Consumers that validate categories or rule codes must accept `security` and `IESC` before upgrading.

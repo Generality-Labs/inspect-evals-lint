@@ -19,4 +19,4 @@ A custom solver or agent is the evaluation's own logic, the part no upstream tes
 - [Solvers: Custom Solvers](https://inspect.aisi.org.uk/solvers.html#custom-solvers)
 - [Custom Agents](https://inspect.aisi.org.uk/agent-custom.html)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IETS005]` or `ignore[custom_solver_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IETS005] -- <reason>` or `ignore[custom_solver_tests] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IETS`.

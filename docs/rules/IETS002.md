@@ -18,4 +18,4 @@ Per-evaluation test trees with duplicate module basenames (`test_scorer.py` in t
 
 - `tests-layout`
 
-Suppress on a line with `# inspect-evals-lint: ignore[IETS002]` or `ignore[tests_init]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IETS002] -- <reason>` or `ignore[tests_init] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IETS`.

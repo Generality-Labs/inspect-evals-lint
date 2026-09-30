@@ -18,4 +18,4 @@ The README is the evaluation's front door. A missing one leaves users guessing a
 
 - `readme-location`
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEFS006]` or `ignore[readme]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS006] -- <reason>` or `ignore[readme] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEFS`.

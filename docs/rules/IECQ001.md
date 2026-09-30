@@ -26,4 +26,4 @@ Use instead:
 from inspect_ai.scorer import Score
 ```
 
-Suppress on a line with `# inspect-evals-lint: ignore[IECQ001]` or `ignore[private_api_imports]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
+Suppress on a line with `# inspect-evals-lint: ignore[IECQ001] -- <reason>` or `ignore[private_api_imports] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IECQ`.

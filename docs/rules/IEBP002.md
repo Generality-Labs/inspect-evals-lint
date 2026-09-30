@@ -38,4 +38,4 @@ grader = get_model(role="grader", required=True)
 - [Models: Role Defaults](https://inspect.aisi.org.uk/models.html#role-defaults)
 - [Tasks: Model Roles](https://inspect.aisi.org.uk/tasks.html#model-roles)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP002]` or `ignore[model_role_resolution]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP002] -- <reason>` or `ignore[model_role_resolution] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.

@@ -103,13 +103,36 @@ class TestSuppressionSyntax:
         pkg = tmp_path / "alpha"
         write(
             pkg / "a.py",
-            "# inspect-evals-lint: ignore-file[readme]\nx = 1  # inspect-evals-lint: ignore[IEBP003, sample_ids]\n",
+            "# inspect-evals-lint: ignore-file[readme] -- upstream README\n"
+            "x = 1  # inspect-evals-lint: ignore[IEBP003, sample_ids] -- ids are row numbers\n",
         )
-        write(pkg / "Dockerfile", "# inspect-evals-lint: ignore[IEBP007]\nFROM python:3.12\n")
+        write(
+            pkg / "Dockerfile",
+            "# inspect-evals-lint: ignore[IEBP007] -- lock copied from upstream\nFROM python:3.12\n",
+        )
         results = list(suppression_syntax(context_for(pkg)))
         assert [(r.status, r.message) for r in results] == [
-            ("pass", "3 suppression comment(s) read")
+            ("pass", "3 suppression comment(s) read, each with a reason")
         ]
+
+    def test_suppressions_without_a_reason_warn_and_still_apply(self, tmp_path):
+        pkg = tmp_path / "alpha"
+        write(
+            pkg / "a.py",
+            "# inspect-evals-lint: ignore-file[readme]\n"
+            "x = 1  # inspect-evals-lint: ignore[IEBP003] -- ids are row numbers\n"
+            "y = 2  # inspect-evals-lint: ignore[sample_ids]\n",
+        )
+        results = list(suppression_syntax(context_for(pkg)))
+        assert [(r.status, r.file.name, r.line) for r in results] == [
+            ("warn", "a.py", 1),
+            ("warn", "a.py", 3),
+        ]
+        assert results[0].message == "ignore-file[readme] gives no reason"
+        assert results[1].hint == (
+            "say why the finding is acceptable after ' -- ', e.g. "
+            "`# inspect-evals-lint: ignore[sample_ids] -- <reason>`"
+        )
 
     def test_every_kind_of_dead_marker_is_one_warning(self, tmp_path):
         pkg = tmp_path / "alpha"

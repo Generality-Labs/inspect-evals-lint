@@ -31,4 +31,4 @@ Sample(input=record["question"], target=record["answer"], id=record["id"])
 - [Datasets: Dataset Samples](https://inspect.aisi.org.uk/datasets.html#dataset-samples)
 - [Log Files: IDs and Shuffling](https://inspect.aisi.org.uk/eval-logs.html#ids-and-shuffling)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP003]` or `ignore[sample_ids]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP003] -- <reason>` or `ignore[sample_ids] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.
