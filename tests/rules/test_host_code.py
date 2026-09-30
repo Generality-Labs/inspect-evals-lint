@@ -1286,7 +1286,7 @@ class TestProgramSinks:
             ("pty.spawn(f'{state.output.completion}')", "fail"),
             ("pty.spawn(['bash', state.output.completion])", "pass"),
             ("pty.spawn('bash')", "pass"),
-            ("pty.spawn(state.output.completion)", "warn"),
+            ("pty.spawn(state.output.completion)", "fail"),  # a completion is a string: its program
         ],
     )
     def test_pty_spawn_program_is_a_string_or_the_first_element(self, tmp_path, call, status):
@@ -1341,3 +1341,27 @@ class TestCodeAndDataSinks:
         assert statuses(results) == [status]
         if status == "fail":
             assert diagnostics(results)[0].key == "tools.py:numpy.load"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "state.output.completion",
+        "state.messages[-1].text",
+        "(await sandbox().exec(['cat', 'cmd.txt'])).stdout",
+        "await sandbox().read_file('cmd.sh')",
+        "str(state.output.completion)",
+    ],
+)
+def test_inspect_ai_subprocess_of_a_value_that_is_always_a_string_is_a_shell_command(
+    tmp_path, payload
+):
+    """``.completion``, ``.text``, ``.stdout`` and ``read_file()`` are strings, which inspect_ai runs through a shell."""
+    results = run(
+        tmp_path,
+        "from inspect_ai.util import sandbox, subprocess\n\n"
+        f"async def solve(state, generate):\n    await subprocess({payload})\n",
+    )
+    (d,) = diagnostics(results)
+    assert d.status == "fail"
+    assert "shell command" in d.message

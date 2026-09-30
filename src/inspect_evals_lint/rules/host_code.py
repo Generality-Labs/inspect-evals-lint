@@ -989,19 +989,35 @@ def _is_true(keyword: ast.keyword | None) -> bool:
     )
 
 
+_STRING_ATTRIBUTES = frozenset({"completion", "text", "stdout", "stderr"})
+"""Attributes that are always strings where the rule meets them: model output and sandbox exec results."""
+
+
 def _is_string(node: ast.expr | None) -> bool:
-    """Whether ``node`` is written as a string: a literal, an f-string, concatenation or ``%`` with one, or ``.format`` on one."""
+    """Whether ``node`` is a string by how it is written or what it reads.
+
+    A literal, an f-string, concatenation or ``%`` with one, ``.format`` on one
+    and ``str(...)`` are written as strings. ``.completion``, ``.text``,
+    ``.stdout``, ``.stderr`` and an awaited ``read_file(...)`` are strings by
+    what they read.
+    """
+    if isinstance(node, ast.Await):
+        node = node.value
     if isinstance(node, ast.Constant):
         return isinstance(node.value, str)
     if isinstance(node, ast.JoinedStr):
         return True
     if isinstance(node, ast.BinOp):
         return _is_string(node.left) or _is_string(node.right)
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "format"
-        and _is_string(node.func.value)
+    if isinstance(node, ast.Attribute):
+        return node.attr in _STRING_ATTRIBUTES
+    if not isinstance(node, ast.Call):
+        return False
+    if isinstance(node.func, ast.Name):
+        return node.func.id == "str"
+    return isinstance(node.func, ast.Attribute) and (
+        node.func.attr == "read_file"
+        or (node.func.attr == "format" and _is_string(node.func.value))
     )
 
 
@@ -1153,8 +1169,10 @@ def host_code_execution(ctx: LintContext) -> Iterable[Finding]:
       one. A same-file class is judged by its bases, not its name;
     - shell commands: ``os.system``, ``os.popen``, ``subprocess.getoutput``,
       ``subprocess.getstatusoutput``, ``asyncio.create_subprocess_shell``,
-      ``inspect_ai.util.subprocess`` with a payload written as a string (a
-      literal, f-string, concatenation, ``%`` or ``.format``), and
+      ``inspect_ai.util.subprocess`` with a payload that is a string by how
+      it is written (a literal, f-string, concatenation, ``%``, ``.format`` or
+      ``str(...)``) or by what it reads (``.completion``, ``.text``,
+      ``.stdout``, ``.stderr`` or an awaited ``read_file(...)``), and
       ``subprocess.run``, ``Popen``, ``call``, ``check_call`` and
       ``check_output`` with ``shell=`` anything but a false literal. With a
       shell and a list, only the first element is the command;
