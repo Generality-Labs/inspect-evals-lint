@@ -1289,7 +1289,7 @@ Compose services do not grant additional sandbox privileges or host access.
 
 ## What it does
 
-Reads parsed YAML from every `compose*.y*ml` and `docker-compose*.y*ml` under the package, including nested files and overrides. `exclude` does not apply: Compose files configure the sandbox from the host even when they sit beside challenge code that is excluded. Reports one error per service and field for the settings described below.
+Reads parsed YAML from every `compose*.y*ml` and `docker-compose*.y*ml` under the package, including nested files and overrides. `exclude` does not apply: Compose files configure the sandbox from the host even when they sit beside challenge code that is excluded. Reports one error per service, field and value for the settings described below.
 
 GPU reservations under `deploy.resources.reservations.devices`, ordinary named or anonymous volumes, and namespaces shared by `service:` reference are accepted. YAML anchors are resolved; comments are ignored. A value tagged `!override` or `!reset` is checked as written.
 
@@ -1361,7 +1361,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 ```
 
-Remove the settings when they are unnecessary. If required, document the reason next to `default:privileged` and `default:volumes` entries in `allowlists.sandbox_privileges`.
+Remove the settings when they are unnecessary. If required, document the reason next to `default:privileged` and `default:volumes:/var/run/docker.sock` entries in `allowlists.sandbox_privileges`.
 
 ## Scope and related checks
 
@@ -1371,7 +1371,7 @@ Published ports, external networks, and host-gateway mappings need a network-exp
 
 ## Options
 
-- `allowlists.sandbox_privileges`: `{ package = ["service:field"] }` entries report warnings while present. The key applies to that service and field across the package's Compose files. Nested fields use keys such as `default:post_start.privileged`. Removed settings leave stale entries for the runner to report.
+- `allowlists.sandbox_privileges`: `{ package = ["service:field:value"] }` entries report warnings while present. Each finding names its key in the hint. The value is the capability, device, rule, namespace mode, security option, host path or container, so allowing `default:cap_add:SYS_PTRACE` does not allow `ALL`, and allowing one host path does not allow another. Settings without a value use `service:field`, such as `default:privileged` and `default:post_start.privileged`. A key applies to that service across the package's Compose files. Removed settings leave stale entries for the runner to report.
 
 ## See also
 

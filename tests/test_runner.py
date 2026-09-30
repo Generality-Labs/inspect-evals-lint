@@ -475,27 +475,32 @@ def test_sandbox_allowlist_from_config(monorepo: tuple[Path, LintConfig]) -> Non
     assert warning == "warn"
 
 
-def test_sandbox_privileges_allowlist_is_scoped_to_service_and_field(
+def test_sandbox_privileges_allowlist_is_scoped_to_service_field_and_value(
     monorepo: tuple[Path, LintConfig],
 ) -> None:
     root, config = monorepo
     write(
         config.package_dir(root, "alpha") / "compose.yaml",
-        "services:\n  default:\n    privileged: true\n    cap_add: [SYS_PTRACE]\n"
+        "services:\n  default:\n    privileged: true\n    cap_add: [SYS_PTRACE, ALL]\n"
+        "    volumes: ['./data:/data:ro', '/var/run/docker.sock:/var/run/docker.sock']\n"
         "  other:\n    privileged: true\n",
     )
     with (root / "pyproject.toml").open("a") as f:
         f.write(
             "\n[tool.inspect-evals-lint.allowlists.sandbox_privileges]\n"
-            'alpha = ["default:privileged"]\n'
+            'alpha = ["default:privileged", "default:cap_add:SYS_PTRACE", "default:volumes:./data"]\n'
         )
     report = lint_package(root, "alpha", check="IESC001")
     assert [(d.key, d.status) for d in report.diagnostics] == [
         ("default:privileged", "warn"),
-        ("default:cap_add", "fail"),
+        ("default:cap_add:SYS_PTRACE", "warn"),
+        ("default:cap_add:ALL", "fail"),
+        ("default:volumes:./data", "warn"),
+        ("default:volumes:/var/run/docker.sock", "fail"),
         ("other:privileged", "fail"),
     ]
     assert report.diagnostics[0].message.startswith("Allowlisted:")
+    assert "'default:cap_add:ALL'" in (report.diagnostics[2].hint or "")
 
 
 def test_stale_allowlist_entry_warns_at_pyproject(monorepo: tuple[Path, LintConfig]) -> None:

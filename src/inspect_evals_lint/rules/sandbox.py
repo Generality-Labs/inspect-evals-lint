@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any, cast
 
 import yaml
@@ -181,9 +182,29 @@ def _bind_source(volume: Any, named_volumes: dict[str, Any]) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class _Privilege:
+    """One setting that grants access, with the value an allowlist entry names."""
+
+    field: str
+    value: str | None
+    detail: str
+    severity: Severity = "error"
+
+    def key(self, service_name: str) -> str:
+        key = f"{service_name}:{self.field}"
+        return key if self.value is None else f"{key}:{self.value}"
+
+
+def _values(value: Any) -> list[str]:
+    """The entries of a list setting, or the setting itself when it is a single value."""
+    items = _sequence(value) if isinstance(value, list) else [value] if value else []
+    return [str(item) for item in items]
+
+
 def _service_privileges(
     service: dict[str, Any], named_volumes: dict[str, Any]
-) -> Iterable[tuple[str, str, Severity]]:
+) -> Iterable[_Privilege]:
     for field in ("privileged", "use_api_socket", *_HOST_NAMESPACES):
         value = service.get(field)
         if field in ("privileged", "use_api_socket") and _enabled(value):
@@ -192,35 +213,41 @@ def _service_privileges(
                 if field == "privileged"
                 else "exposes the container engine API socket and credentials"
             )
-            yield field, detail, "error"
+            yield _Privilege(field, None, detail)
         elif field in _HOST_NAMESPACES and value == "host":
-            yield field, "uses a host namespace", "error"
+            yield _Privilege(field, value, "uses a host namespace")
         elif (
             field in ("network_mode", "pid", "ipc")
             and isinstance(value, str)
             and value.startswith("container:")
         ):
-            yield field, f"joins an external container namespace ({value})", "error"
+            yield _Privilege(field, value, f"joins an external container namespace ({value})")
         elif isinstance(value, str) and "$" in value:
-            yield field, "contains an interpolation whose privileges cannot be checked", "warning"
+            yield _Privilege(
+                field,
+                value,
+                "contains an interpolation whose privileges cannot be checked",
+                "warning",
+            )
 
     for field, detail in (
-        ("cap_add", "adds Linux capabilities"),
-        ("devices", "grants device access"),
-        ("device_cgroup_rules", "adds device access rules"),
+        ("cap_add", "adds Linux capability"),
+        ("devices", "grants device access to"),
+        ("device_cgroup_rules", "adds device access rule"),
     ):
-        if service.get(field):
-            yield field, detail, "error"
+        for value in _values(service.get(field)):
+            yield _Privilege(field, value, f"{detail} '{value}'")
 
     for option in _sequence(service.get("security_opt")):
         if not isinstance(option, str):
             continue
         parts = re.split(r"[:=]", option, maxsplit=1)
         if len(parts) == 2 and _UNCONFINED_OPTIONS.get(parts[0]) == parts[1]:
-            yield "security_opt", f"disables a security restriction ({option})", "error"
+            yield _Privilege("security_opt", option, f"disables a security restriction ({option})")
         elif "$" in option:
-            yield (
+            yield _Privilege(
                 "security_opt",
+                option,
                 "contains an interpolation whose restrictions cannot be checked",
                 "warning",
             )
@@ -229,14 +256,13 @@ def _service_privileges(
         for command in _sequence(service.get(hook)):
             value = _mapping(command).get("privileged")
             if _enabled(value):
-                yield (
-                    f"{hook}.privileged",
-                    "runs a lifecycle command with elevated privileges",
-                    "error",
+                yield _Privilege(
+                    f"{hook}.privileged", None, "runs a lifecycle command with elevated privileges"
                 )
             elif isinstance(value, str) and "$" in value:
-                yield (
+                yield _Privilege(
                     f"{hook}.privileged",
+                    None,
                     "contains an interpolation whose privileges cannot be checked",
                     "warning",
                 )
@@ -247,22 +273,31 @@ def _service_privileges(
             detail = f"bind-mounts host path '{source}'"
             if "docker.sock" in source or "docker_engine" in source:
                 detail += ", exposing the Docker daemon socket"
-            yield "volumes", detail, "error"
-        elif (isinstance(volume, str) and "$" in volume) or (
-            any("$" in str(_mapping(volume).get(field, "")) for field in ("type", "source"))
-        ):
-            yield (
+            yield _Privilege("volumes", source, detail)
+        elif isinstance(volume, str) and "$" in volume:
+            yield _Privilege(
                 "volumes",
+                volume,
+                "contains an interpolation whose mount source cannot be checked",
+                "warning",
+            )
+        elif any("$" in str(_mapping(volume).get(field, "")) for field in ("type", "source")):
+            yield _Privilege(
+                "volumes",
+                str(_mapping(volume).get("source")),
                 "contains an interpolation whose mount source cannot be checked",
                 "warning",
             )
 
     for source in _sequence(service.get("volumes_from")):
         if isinstance(source, str) and source.startswith("container:"):
-            yield "volumes_from", f"imports mounts from an external container ({source})", "error"
+            yield _Privilege(
+                "volumes_from", source, f"imports mounts from an external container ({source})"
+            )
         elif isinstance(source, str) and "$" in source:
-            yield (
+            yield _Privilege(
                 "volumes_from",
+                source,
                 "contains an interpolation whose container cannot be checked",
                 "warning",
             )
@@ -285,8 +320,8 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
     Reads parsed YAML from every ``compose*.y*ml`` and ``docker-compose*.y*ml``
     under the package, including nested files and overrides. ``exclude`` does not
     apply: Compose files configure the sandbox from the host even when they sit
-    beside challenge code that is excluded. Reports one error per service and
-    field for the settings described below.
+    beside challenge code that is excluded. Reports one error per service,
+    field and value for the settings described below.
 
     GPU reservations under ``deploy.resources.reservations.devices``, ordinary
     named or anonymous volumes, and namespaces shared by ``service:`` reference
@@ -433,7 +468,8 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
     ```
 
     Remove the settings when they are unnecessary. If required, document the
-    reason next to ``default:privileged`` and ``default:volumes`` entries in
+    reason next to ``default:privileged`` and
+    ``default:volumes:/var/run/docker.sock`` entries in
     ``allowlists.sandbox_privileges``.
 
     ## Scope and related checks
@@ -452,11 +488,16 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
 
     ## Options
 
-    - ``allowlists.sandbox_privileges``: ``{ package = ["service:field"] }``
-      entries report warnings while present. The key applies to that service
-      and field across the package's Compose files. Nested fields use keys such
-      as ``default:post_start.privileged``. Removed settings leave stale entries
-      for the runner to report.
+    - ``allowlists.sandbox_privileges``: ``{ package = ["service:field:value"] }``
+      entries report warnings while present. Each finding names its key in the
+      hint. The value is the capability, device, rule, namespace mode,
+      security option, host path or container, so allowing
+      ``default:cap_add:SYS_PTRACE`` does not allow ``ALL``, and allowing one
+      host path does not allow another. Settings without a value use
+      ``service:field``, such as ``default:privileged`` and
+      ``default:post_start.privileged``. A key applies to that service across
+      the package's Compose files. Removed settings leave stale entries for the
+      runner to report.
     """
     compose_files = iter_compose_files(ctx)
     if not compose_files:
@@ -492,22 +533,18 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
                 )
                 continue
             checked_services += 1
-            findings: dict[str, list[tuple[str, Severity]]] = {}
-            for field, detail, severity in _service_privileges(
+            for privilege in _service_privileges(
                 _mapping(service), _mapping(_mapping(compose).get("volumes"))
             ):
-                findings.setdefault(field, []).append((detail, severity))
-            for field, details in findings.items():
                 issues += 1
-                severity = "error" if any(s == "error" for _, s in details) else "warning"
+                key = privilege.key(service_name)
                 yield Diagnostic(
-                    f"Service '{service_name}' {field}: "
-                    + "; ".join(dict.fromkeys(detail for detail, _ in details)),
+                    f"Service '{service_name}' {privilege.field}: {privilege.detail}",
                     file=compose_file,
-                    severity=severity,
-                    key=f"{service_name}:{field}",
-                    hint="remove the setting, or review and document the required access in "
-                    "allowlists.sandbox_privileges",
+                    severity=privilege.severity,
+                    key=key,
+                    hint="remove the setting, or review the required access and document it "
+                    f"as '{key}' in allowlists.sandbox_privileges",
                 )
     if not issues:
         yield Outcome(

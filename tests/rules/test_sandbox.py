@@ -152,31 +152,31 @@ class TestSandboxPrivileges:
         return list(sandbox_privileges(context_for(tmp_path)))
 
     @pytest.mark.parametrize(
-        ("field", "value"),
+        ("field", "value", "key"),
         [
-            ("privileged", True),
-            ("privileged", "true"),
-            ("use_api_socket", True),
-            ("cap_add", ["SYS_PTRACE"]),
-            ("cap_add", ["ALL"]),
-            ("devices", ["/dev/kvm:/dev/kvm"]),
-            ("device_cgroup_rules", ["c 1:3 mr"]),
-            ("network_mode", "host"),
-            ("pid", "host"),
-            ("ipc", "host"),
-            ("userns_mode", "host"),
-            ("uts", "host"),
-            ("cgroup", "host"),
-            ("network_mode", "container:outside"),
-            ("pid", "container:outside"),
-            ("ipc", "container:outside"),
-            ("volumes_from", ["container:outside:ro"]),
+            ("privileged", True, "privileged"),
+            ("privileged", "true", "privileged"),
+            ("use_api_socket", True, "use_api_socket"),
+            ("cap_add", ["SYS_PTRACE"], "cap_add:SYS_PTRACE"),
+            ("cap_add", ["ALL"], "cap_add:ALL"),
+            ("devices", ["/dev/kvm:/dev/kvm"], "devices:/dev/kvm:/dev/kvm"),
+            ("device_cgroup_rules", ["c 1:3 mr"], "device_cgroup_rules:c 1:3 mr"),
+            ("network_mode", "host", "network_mode:host"),
+            ("pid", "host", "pid:host"),
+            ("ipc", "host", "ipc:host"),
+            ("userns_mode", "host", "userns_mode:host"),
+            ("uts", "host", "uts:host"),
+            ("cgroup", "host", "cgroup:host"),
+            ("network_mode", "container:outside", "network_mode:container:outside"),
+            ("pid", "container:outside", "pid:container:outside"),
+            ("ipc", "container:outside", "ipc:container:outside"),
+            ("volumes_from", ["container:outside:ro"], "volumes_from:container:outside:ro"),
         ],
     )
-    def test_service_privilege_fails_with_allowlist_key(self, tmp_path, field, value):
+    def test_service_privilege_fails_with_allowlist_key(self, tmp_path, field, value, key):
         (result,) = self.run_check(tmp_path, {field: value})
         assert result.status == "fail"
-        assert result.key == f"default:{field}"
+        assert result.key == f"default:{key}"
         assert result.file == tmp_path / "compose.yaml"
 
     @pytest.mark.parametrize("option", ["seccomp", "apparmor", "label", "systempaths"])
@@ -186,7 +186,7 @@ class TestSandboxPrivileges:
         setting = f"{option}{separator}{value}"
         (result,) = self.run_check(tmp_path, {"security_opt": [setting]})
         assert result.status == "fail"
-        assert result.key == "default:security_opt"
+        assert result.key == f"default:security_opt:{setting}"
         assert setting in result.message
 
     @pytest.mark.parametrize("hook", ["pre_start", "post_start", "pre_stop"])
@@ -222,7 +222,8 @@ class TestSandboxPrivileges:
     def test_host_mounts(self, tmp_path, mount):
         (result,) = self.run_check(tmp_path, {"volumes": [mount]})
         assert result.status == "fail"
-        assert result.key == "default:volumes"
+        assert result.key is not None
+        assert result.key.startswith("default:volumes:")
 
     @pytest.mark.parametrize(
         "source", ["/var/run/docker.sock", "/run/docker.sock", "/run/user/1000/docker.sock"]
@@ -243,7 +244,7 @@ class TestSandboxPrivileges:
             volumes={"data": {"driver_opts": {"type": "none", "o": mode, "device": "/host"}}},
         )
         assert result.status == "fail"
-        assert result.key == "default:volumes"
+        assert result.key == "default:volumes:/host"
         assert "/host" in result.message
 
     def test_ordinary_settings_and_gpu_reservations_pass(self, tmp_path):
@@ -304,24 +305,26 @@ class TestSandboxPrivileges:
         assert result.status == "warn"
         assert "cannot be checked" in result.message
 
-    def test_one_finding_per_service_field(self, tmp_path):
+    def test_one_finding_per_value(self, tmp_path):
         results = self.run_check(
             tmp_path,
             {
                 "privileged": True,
+                "cap_add": ["SYS_PTRACE", "NET_ADMIN"],
                 "volumes": ["/a:/a", "/b:/b"],
                 "security_opt": ["seccomp=unconfined", "apparmor:unconfined", "${OPTION}"],
             },
         )
-        assert {r.key for r in results} == {
-            "default:privileged",
-            "default:volumes",
-            "default:security_opt",
-        }
-        assert len(results) == 3
-        assert all(r.status == "fail" for r in results)
-        assert "/a" in results[-1].message
-        assert "/b" in results[-1].message
+        assert [(r.key, r.status) for r in results] == [
+            ("default:privileged", "fail"),
+            ("default:cap_add:SYS_PTRACE", "fail"),
+            ("default:cap_add:NET_ADMIN", "fail"),
+            ("default:security_opt:seccomp=unconfined", "fail"),
+            ("default:security_opt:apparmor:unconfined", "fail"),
+            ("default:security_opt:${OPTION}", "warn"),
+            ("default:volumes:/a", "fail"),
+            ("default:volumes:/b", "fail"),
+        ]
 
     def test_yaml_anchors_comments_and_multiple_files(self, tmp_path):
         (tmp_path / "compose.yaml").write_text(
@@ -336,7 +339,7 @@ class TestSandboxPrivileges:
         results = list(sandbox_privileges(context_for(tmp_path)))
         assert [(r.key, r.file) for r in results] == [
             ("default:privileged", tmp_path / "compose.yaml"),
-            ("other:cap_add", other_file),
+            ("other:cap_add:SYS_ADMIN", other_file),
         ]
 
     @pytest.mark.parametrize(
