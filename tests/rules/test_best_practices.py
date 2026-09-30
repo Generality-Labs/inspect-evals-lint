@@ -498,7 +498,9 @@ class TestSampleIdsFieldSpec:
 
     def test_an_unused_fieldspec_without_id_fails(self, tmp_path: Path):
         results = self.run(tmp_path, "FIELDS = FieldSpec(input='q')\n")
-        assert [r.status for r in results] == ["fail"]
+        assert [(r.status, r.message) for r in results] == [
+            ("fail", "FieldSpec() without id=, and no loader call using it was found")
+        ]
 
     def test_a_function_passed_as_sample_fields_is_left_to_its_sample_calls(self, tmp_path: Path):
         results = self.run(
@@ -685,3 +687,34 @@ class TestSampleIdsFieldSpec:
             tmp_path, "ds = hf_dataset('x', sample_fields=FieldSpec(input='q'), **OPTIONS)\n"
         )
         assert [r.status for r in results] == ["pass"]
+
+    def test_findings_follow_source_order_across_both_kinds(self, tmp_path: Path):
+        results = self.run(
+            tmp_path,
+            "a = hf_dataset('x', sample_fields=FieldSpec(input='q'))\n"
+            "b = Sample(input='x')\n"
+            "c = hf_dataset('y', sample_fields=FieldSpec(input='r'))\n",
+        )
+        assert [(r.line, r.message.split()[0]) for r in results] == [
+            (1, "FieldSpec()"),
+            (2, "Sample()"),
+            (3, "FieldSpec()"),
+        ]
+
+    def test_a_comment_inside_a_multiline_fieldspec_suppresses_it(self, tmp_path: Path):
+        package = tmp_path / "alpha"
+        results = self.run(
+            tmp_path,
+            "ds = hf_dataset(\n"
+            "    'x',\n"
+            "    sample_fields=FieldSpec(\n"
+            "        input='q',  # inspect-evals-lint: ignore[sample_ids] -- no id in the data\n"
+            "    ),\n"
+            ")\n",
+        )
+        for r in results:
+            r.rule = get_rule("sample_ids")
+        apply_suppressions(
+            results, load_suppressions(context_for(package)), PRESETS["multi-eval"], tmp_path
+        )
+        assert [(r.status, r.line, r.end_line) for r in results] == [("suppressed", 3, 5)]
