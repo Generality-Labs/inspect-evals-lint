@@ -883,11 +883,15 @@ def f(stream, os):
     @pytest.mark.parametrize(
         ("call", "status"),
         [
-            ("await subprocess(state.output.completion)", "fail"),
             ('await subprocess(f"ls {state.output.completion}")', "fail"),
+            ('await subprocess("ls " + state.output.completion)', "fail"),
+            ('await subprocess(f"ls " + "-l " + state.output.completion)', "fail"),
+            ('await subprocess("ls %s" % state.output.completion)', "fail"),
+            ('await subprocess("ls {}".format(state.output.completion))', "fail"),
             ('await subprocess("make build")', "warn"),
             ('await subprocess(["git", state.output.completion])', "pass"),
             ('await subprocess([state.output.completion, "-v"])', "fail"),
+            ('await subprocess((state.output.completion, "-v"))', "fail"),
         ],
     )
     def test_inspect_ai_subprocess_runs_strings_through_a_shell(self, tmp_path, call, status):
@@ -898,6 +902,43 @@ def f(stream, os):
         assert statuses(results) == [status]
         if status == "fail":
             assert diagnostics(results)[0].key == "tools.py:inspect_ai.util.subprocess"
+
+    @pytest.mark.parametrize(
+        ("setup", "status"),
+        [
+            ('cmd = ["python", state.output.completion]', "warn"),
+            ("cmd = state.output.completion", "warn"),
+            ('cmd = ["make", "build"]', "pass"),
+        ],
+    )
+    def test_inspect_ai_subprocess_with_an_opaque_payload_is_judged_as_an_argv(
+        self, tmp_path, setup, status
+    ):
+        """A variable may hold a list as easily as a string, so it gets subprocess.run(cmd)'s treatment."""
+        results = run(
+            tmp_path,
+            f"from inspect_ai.util import subprocess\n\nasync def f(state):\n    {setup}\n    await subprocess(cmd)\n",
+        )
+        assert statuses(results) == [status]
+        if status == "warn":
+            assert "program chosen at runtime" in diagnostics(results)[0].message
+
+    @pytest.mark.parametrize(
+        ("argv", "status"),
+        [
+            ("[state.output.completion]", "fail"),
+            ('(state.output.completion, "x")', "fail"),
+            ('["ls", state.output.completion]', "warn"),
+            ("[]", "warn"),
+        ],
+    )
+    def test_shell_with_a_list_runs_only_its_first_element(self, tmp_path, argv, status):
+        """With ``shell=True`` the later elements are the shell's own arguments, not the command."""
+        results = run(
+            tmp_path,
+            f"import subprocess\n\ndef f(state):\n    subprocess.run({argv}, shell=True)\n",
+        )
+        assert statuses(results) == [status]
 
 
 class TestSuppression:

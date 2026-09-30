@@ -799,7 +799,7 @@ class FileAnalysis:
         if sink.kind == "argv":
             shell = _keyword(call, "shell")
             if shell is not None and not _is_false(shell.value):
-                return self._always(call, sink, payload, scope, kind="shell")
+                return self._always(call, sink, _shell_command(payload), scope, kind="shell")
             executable = _keyword(call, "executable")
             if executable is not None:
                 reason = self.taint_of(executable.value, scope)
@@ -807,9 +807,9 @@ class FileAnalysis:
                     return self._fail(call, sink, reason, kind="program")
             return self._program(call, sink, _program_of(payload), scope)
         if sink.kind == "command":
-            if isinstance(payload, (ast.List, ast.Tuple)):
-                return self._program(call, sink, _program_of(payload), scope)
-            return self._always(call, sink, payload, scope, kind="shell")
+            if _is_string(payload):
+                return self._always(call, sink, payload, scope, kind="shell")
+            return self._program(call, sink, _program_of(payload), scope)
         if sink.kind == "program":
             return self._program(call, sink, _program_argument(payload), scope)
         if sink.kind == "import":
@@ -919,6 +919,32 @@ def _is_true(keyword: ast.keyword | None) -> bool:
         and isinstance(keyword.value, ast.Constant)
         and keyword.value.value is True
     )
+
+
+def _is_string(node: ast.expr | None) -> bool:
+    """Whether ``node`` is written as a string: a literal, an f-string, concatenation or ``%`` with one, or ``.format`` on one."""
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str)
+    if isinstance(node, ast.JoinedStr):
+        return True
+    if isinstance(node, ast.BinOp):
+        return _is_string(node.left) or _is_string(node.right)
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "format"
+        and _is_string(node.func.value)
+    )
+
+
+def _shell_command(payload: ast.expr | None) -> ast.expr | None:
+    """What a shell runs: a list's first element (the rest are the shell's arguments), otherwise the payload."""
+    if isinstance(payload, (ast.List, ast.Tuple)):
+        if not payload.elts:
+            return None
+        first = payload.elts[0]
+        return first if not isinstance(first, ast.Starred) else first.value
+    return payload
 
 
 def _program_of(argv: ast.expr | None) -> ast.expr | None | Literal[False]:
