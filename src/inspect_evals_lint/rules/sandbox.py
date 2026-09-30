@@ -152,18 +152,28 @@ def _host_path(source: str) -> bool:
     )
 
 
+_INTERPOLATION = re.compile(r"\$\{[^}]*\}|\$[A-Za-z_]\w*")
+
+
 def _bind_source(volume: Any, named_volumes: dict[str, Any]) -> str | None:
     """Return the host source of a bind mount, including local-driver named binds."""
     if isinstance(volume, str):
+        # Mask interpolations so a ':' or '/' inside ${...} does not split or classify the mount.
+        tokens = iter(_INTERPOLATION.findall(volume))
+        masked = _INTERPOLATION.sub("\0", volume)
         # Keep the drive letter attached to a Windows source path.
-        match = re.match(r"^([A-Za-z]:[\\/][^:]*|[^:]+):(.+)$", volume)
+        match = re.match(r"^([A-Za-z]:[\\/][^:]*|[^:]+):(.+)$", masked)
         if not match:
             return None  # An anonymous volume has only a container target.
-        source, target = match.groups()
-        if not _host_path(target) and not target.startswith("$"):
+        masked_source, masked_target = match.groups()
+        if not _host_path(masked_target) and not masked_target.startswith("\0"):
             return None  # Anonymous volume with an access mode.
-        if _host_path(source):
+        source = re.sub("\0", lambda _: next(tokens), masked_source)
+        # A volume name cannot contain a path separator, so ${HOME}/.ssh is a host path.
+        if _host_path(masked_source) or re.search(r"[\\/]", masked_source):
             return source
+        if "\0" in masked_source:
+            return None  # ${VOLUME} may name a volume or a path; the caller warns.
     else:
         mount = _mapping(volume)
         if mount.get("type") in ("bind", "npipe"):
@@ -242,7 +252,16 @@ def _service_privileges(
         ("device_cgroup_rules", "adds device access rule"),
     ):
         for value, line in _values(service, field):
-            yield _Privilege(field, value, f"{detail} '{value}'", line)
+            if "$" in value:
+                yield _Privilege(
+                    field,
+                    value,
+                    "contains an interpolation whose access cannot be checked",
+                    line,
+                    "warning",
+                )
+            else:
+                yield _Privilege(field, value, f"{detail} '{value}'", line)
 
     for option, line in _values(service, "security_opt"):
         parts = re.split(r"[:=]", option, maxsplit=1)
@@ -433,7 +452,9 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
     - Host bind mounts in either short or long ``volumes`` syntax expose a host
       path. Writable mounts can let sandbox code change host files; read-only
       mounts still expose their contents, potentially including credentials or
-      evaluation answers. Relative paths and Windows host paths are checked too.
+      evaluation answers. Relative paths and Windows host paths are checked too,
+      as is a short-syntax source with a path separator outside its
+      interpolations, such as ``${HOME}/.ssh``: a volume name cannot contain one.
       [Docker bind mounts](https://docs.docker.com/engine/storage/bind-mounts/).
     - Named volumes whose local ``driver_opts.o`` contains ``bind`` or ``rbind``
       also expose the host path in ``driver_opts.device``. Review them as host
@@ -502,8 +523,8 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
     This is a static check of declared Compose settings. It does not run Docker,
     read environment files, inspect images, combine overrides, follow ``include``
     or ``extends`` files, or inspect Kubernetes settings. Interpolated privilege,
-    namespace, security-option, and mount values that cannot be checked produce
-    warnings because [Compose interpolation](https://docs.docker.com/reference/compose-file/interpolation/)
+    namespace, capability, device, security-option, and mount values that cannot
+    be checked produce warnings because [Compose interpolation](https://docs.docker.com/reference/compose-file/interpolation/)
     can change the effective settings at runtime. A pass means no listed
     settings were found in the files checked.
 
