@@ -1,9 +1,9 @@
-"""Best-practice rules: late model resolution, deliberate model roles, stable sample IDs, overridable task parameters."""
+"""Best-practice rules: late model resolution, deliberate model roles, stable sample IDs, overridable task parameters, acknowledged dataset workarounds, seeded shuffles."""
 
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
@@ -1149,3 +1149,355 @@ def known_broken_reported(ctx: LintContext) -> Iterable[Finding]:
         yield Outcome("skip", "No drop_known_broken() calls found")
     else:
         yield Outcome("pass", f"All {total} drop_known_broken() call(s) link a report per entry")
+
+
+SHUFFLE_POSITION_OFFSETS = {"shuffle": 2, "seed": 3}
+"""Where ``shuffle`` and ``seed`` follow ``sample_fields`` in every known loader (see ``SAMPLE_FIELDS_POSITION``)."""
+
+
+@dataclass(frozen=True)
+class _Function:
+    """A function enclosing a call: its parameter defaults and the names its body assigns."""
+
+    defaults: dict[str, ast.expr | None]
+    """Each parameter, with its default expression or None when it has none."""
+    assigned: frozenset[str]
+
+
+def _function_of(node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda) -> _Function:
+    arguments = node.args
+    positional = [*arguments.posonlyargs, *arguments.args]
+    defaults: dict[str, ast.expr | None] = dict.fromkeys(a.arg for a in positional)
+    for parameter, default in zip(
+        positional[len(positional) - len(arguments.defaults) :], arguments.defaults, strict=True
+    ):
+        defaults[parameter.arg] = default
+    for parameter, kw_default in zip(arguments.kwonlyargs, arguments.kw_defaults, strict=True):
+        defaults[parameter.arg] = kw_default
+    for variadic in (arguments.vararg, arguments.kwarg):
+        if variadic is not None:
+            defaults[variadic.arg] = None
+    body = [node.body] if isinstance(node, ast.Lambda) else node.body
+    assigned = frozenset(
+        n.id
+        for part in body
+        for n in ast.walk(part)
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+    )
+    return _Function(defaults, assigned)
+
+
+def _module_constants(tree: ast.AST) -> dict[str, ast.expr]:
+    """Names bound once in the whole file, by a module-level assignment, with the value bound."""
+    stores = [
+        n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+    ]
+    constants: dict[str, ast.expr] = {}
+    for statement in tree.body if isinstance(tree, ast.Module) else []:
+        if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+            target, value = statement.targets[0], statement.value
+        elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
+            target, value = statement.target, statement.value
+        else:
+            continue
+        if isinstance(target, ast.Name) and stores.count(target.id) == 1:
+            constants[target.id] = value
+    return constants
+
+
+@dataclass(frozen=True)
+class _Resolved:
+    """The literal an argument stands for, and the parameter default it comes from, if any."""
+
+    value: object
+    default: ast.expr | None
+
+
+def _resolve(
+    expr: ast.expr,
+    functions: list[_Function],
+    constants: dict[str, ast.expr],
+    seen: frozenset[str] = frozenset(),
+) -> _Resolved | None:
+    """The literal ``expr`` stands for, through parameter defaults and module constants; None when unknown.
+
+    A name is looked up in the enclosing functions, innermost first, then the
+    module's constants. A name an enclosing function's body assigns is unknown,
+    since the assignment may replace the default (``if seed is None: seed = 42``).
+    """
+    if isinstance(expr, ast.Constant):
+        return _Resolved(expr.value, None)
+    if not isinstance(expr, ast.Name):
+        return None
+    for index in range(len(functions) - 1, -1, -1):
+        function = functions[index]
+        if expr.id in function.assigned:
+            return None
+        if expr.id in function.defaults:
+            default = function.defaults[expr.id]
+            if default is None:
+                return None
+            # A default is evaluated in the scope enclosing its function.
+            found = _resolve(default, functions[:index], constants, seen)
+            return _Resolved(found.value, found.default or default) if found else None
+    value = constants.get(expr.id)
+    if value is None or expr.id in seen:
+        return None
+    found = _resolve(value, [], constants, seen | {expr.id})
+    return _Resolved(found.value, None) if found else None
+
+
+@dataclass
+class _ShuffleCall:
+    """A call that may shuffle a dataset, with the functions enclosing it, outermost first."""
+
+    call: ast.Call
+    functions: list[_Function]
+
+
+class _ShuffleCallVisitor(ast.NodeVisitor):
+    """Record known loader calls, and any call passing ``shuffle=`` or ``shuffle_choices=``."""
+
+    def __init__(self) -> None:
+        self.calls: list[_ShuffleCall] = []
+        self._functions: list[_Function] = []
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda) -> None:
+        # Decorators and defaults run in the enclosing scope.
+        decorators = [] if isinstance(node, ast.Lambda) else node.decorator_list
+        for expr in [*decorators, *node.args.defaults, *node.args.kw_defaults]:
+            if expr is not None:
+                self.visit(expr)
+        self._functions.append(_function_of(node))
+        for part in [node.body] if isinstance(node, ast.Lambda) else node.body:
+            self.visit(part)
+        self._functions.pop()
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # noqa: N815
+    visit_Lambda = visit_FunctionDef  # noqa: N815
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if (
+            get_call_name(node) in SAMPLE_FIELDS_POSITION
+            or _keyword(node, "shuffle") is not None
+            or _keyword(node, "shuffle_choices") is not None
+        ):
+            self.calls.append(_ShuffleCall(node, list(self._functions)))
+        self.generic_visit(node)
+
+
+def _shuffle_argument(call: ast.Call, name: str) -> ast.expr | None:
+    """``name=``, or for ``shuffle`` and ``seed`` a known loader's positional argument."""
+    if name in SHUFFLE_POSITION_OFFSETS:
+        return _loader_argument(call, name, SHUFFLE_POSITION_OFFSETS[name])
+    keyword = _keyword(call, name)
+    return keyword.value if keyword is not None else None
+
+
+def _report_shuffles(
+    ctx: LintContext,
+    argument: str,
+    unseeded: Callable[[_ShuffleCall, _Resolved, dict[str, ast.expr]], bool],
+    shuffles: str,
+    severity: Literal["error", "warning"],
+    hint: str,
+) -> Iterable[Finding]:
+    """Report each call whose ``argument`` resolves to a value ``unseeded`` rejects, then the outcome.
+
+    The diagnostic points at the parameter default the value comes from, so a
+    suppression can sit beside it, else at the call. Calls reading one default
+    report it once.
+    """
+    parsed_files = parse_python_files(ctx)
+    yield from parse_failures(parsed_files)
+
+    total = 0
+    issues: dict[tuple[str, int], Diagnostic] = {}
+    for parsed in parsed_files.parsed:
+        constants = _module_constants(parsed.tree)
+        visitor = _ShuffleCallVisitor()
+        visitor.visit(parsed.tree)
+        for site in visitor.calls:
+            value = _shuffle_argument(site.call, argument)
+            if value is None:
+                continue
+            total += 1
+            resolved = _resolve(value, site.functions, constants)
+            if resolved is None or not unseeded(site, resolved, constants):
+                continue
+            name = get_call_name(site.call) or "call"
+            if resolved.default is not None:
+                node: ast.expr = resolved.default
+                message = (
+                    f"{argument} defaults to {resolved.value!r}, and {name}() on line "
+                    f"{site.call.lineno} {shuffles} without a seed"
+                )
+            else:
+                node = site.call
+                message = f"{name}({argument}={resolved.value!r}) {shuffles} without a seed"
+            issues.setdefault(
+                (str(parsed.path), id(node)),
+                Diagnostic(
+                    message,
+                    file=parsed.path,
+                    line=node.lineno,
+                    column=column_of(node),
+                    end_line=end_line_of(node),
+                    severity=severity,
+                    hint=hint,
+                ),
+            )
+
+    yield from sorted(issues.values(), key=lambda d: (str(d.file), d.line or 0, d.column or 0))
+    if issues:
+        return
+    if total == 0:
+        yield Outcome("skip", f"No call passes {argument}=")
+    else:
+        yield Outcome("pass", f"All {total} call(s) passing {argument}= are seeded or off")
+
+
+_SHUFFLE_CHOICES_HINT = (
+    "default to a seed, as in `shuffle_choices: bool | int = DEFAULT_SHUFFLE_SEED`, where an "
+    "int is the seed, True is unseeded and False is off; the fix changes the presented choices, "
+    "so bump the task version's comparability"
+)
+
+
+@rule(
+    code="IEBP010",
+    name="shuffle_choices_seeded",
+    category="best_practices",
+    scopes=("eval", "helper"),
+    summary="shuffle_choices is a seed or off, never an unseeded True",
+    references=(inspect_docs("datasets", "Datasets: Choice Shuffling", "choice-shuffling"),),
+)
+def shuffle_choices_seeded(ctx: LintContext) -> Iterable[Finding]:
+    """``shuffle_choices`` is a seed or off, never an unseeded ``True``.
+
+    ## What it does
+    Flags each ``shuffle_choices=`` argument that resolves to ``True``. The
+    value is read literally, through the enclosing function's parameter
+    default, or through a module-level constant the file binds once. A value
+    the rule can't resolve, such as one a function body reassigns, is taken at
+    face value and not flagged. An int is a seed and ``False`` or ``None`` turns
+    shuffling off, so neither is flagged.
+
+    Any call passing ``shuffle_choices=`` by keyword is read, so a task passing
+    ``True`` to its own dataset helper is caught at the call. When the value
+    comes from a parameter default, the diagnostic points at the default, so a
+    suppression can sit beside it, and every call reading that default reports
+    once.
+
+    Fixing a finding changes the order the choices are presented in, and so
+    each sample's target letter. That breaks comparability with earlier runs, so
+    it needs a comparability bump to the task version.
+
+    ## Why is this bad?
+    An unseeded choice shuffle changes the sample itself between builds: the
+    options appear in a different order and the correct letter moves. Two runs
+    of the same task on the same model then answer different questions, so
+    their scores can't be compared sample by sample. Before GPQA was seeded,
+    193 of its 198 samples had a different option order between two builds.
+
+    ## Example
+    ```python
+    @task
+    def my_eval(shuffle_choices: bool = True):
+        return Task(dataset=hf_dataset("org/data", split="test", shuffle_choices=shuffle_choices))
+    ```
+    Use instead:
+    ```python
+    DEFAULT_SHUFFLE_SEED = 42
+
+    @task
+    def my_eval(shuffle_choices: bool | int = DEFAULT_SHUFFLE_SEED):
+        return Task(dataset=hf_dataset("org/data", split="test", shuffle_choices=shuffle_choices))
+    ```
+    """
+
+    def unseeded(_site: _ShuffleCall, resolved: _Resolved, _constants: dict[str, ast.expr]) -> bool:
+        return resolved.value is True
+
+    yield from _report_shuffles(
+        ctx, "shuffle_choices", unseeded, "shuffles the choices", "error", _SHUFFLE_CHOICES_HINT
+    )
+
+
+_SHUFFLE_HINT = (
+    "drop the shuffle and leave sample order to `inspect eval --sample-shuffle <seed>`, which "
+    "the log records, or default to a seed with seed=; removing a task parameter needs a task "
+    "version bump"
+)
+
+
+@rule(
+    code="IEBP011",
+    name="shuffle_seeded",
+    category="best_practices",
+    scopes=("eval", "helper"),
+    summary="A dataset loader that shuffles samples is given a seed",
+    references=(
+        inspect_docs("datasets", "Datasets: Shuffling", "shuffling"),
+        inspect_docs("eval-logs", "Log Files: IDs and Shuffling", "ids-and-shuffling"),
+    ),
+)
+def shuffle_seeded(ctx: LintContext) -> Iterable[Finding]:
+    """A dataset loader that shuffles samples is given a seed.
+
+    ## What it does
+    Warns on each ``shuffle=`` argument that resolves to true when the call
+    passes no ``seed=``, or a ``seed=`` that resolves to ``None``. Values are
+    resolved as ``shuffle_choices_seeded`` resolves them, and a value the rule
+    can't resolve is taken at face value. A call with ``**kwargs`` and no
+    ``seed=`` is taken to pass one.
+
+    Any call passing ``shuffle=`` by keyword is read, and ``shuffle`` and
+    ``seed`` may be passed positionally to Inspect's ``hf_dataset``,
+    ``csv_dataset``, ``json_dataset`` and ``file_dataset`` and inspect_evals'
+    ``load_csv_dataset`` and ``load_json_dataset``. A dataset helper that takes
+    ``shuffle=`` but seeds internally is flagged where it is called without a
+    seed; suppress that finding with the reason. When the value comes from a
+    parameter default, the diagnostic points at the default.
+
+    Seeding changes which samples a ``--limit`` run selects. Removing a
+    ``shuffle`` task parameter breaks ``-T shuffle=...`` invocations, so it
+    needs a task version bump.
+
+    This is a warning rather than an error: an unseeded shuffle changes only the
+    order of the samples, not the samples themselves.
+
+    ## Why is this bad?
+    Sample order decides which samples ``--limit`` picks, so two runs with the
+    same limit evaluate different samples, and neither log records the order
+    used. ``inspect eval --sample-shuffle <seed>`` shuffles at run time and
+    records the seed in the log's eval config, which is why leaving order to it
+    is usually the better fix.
+
+    ## Example
+    ```python
+    @task
+    def my_eval(shuffle: bool = True):
+        return Task(dataset=hf_dataset("org/data", split="test", shuffle=shuffle))
+    ```
+    Use instead:
+    ```python
+    @task
+    def my_eval():
+        return Task(dataset=hf_dataset("org/data", split="test"))
+    ```
+    and run with `inspect eval my_eval --sample-shuffle 42` when the order should vary.
+    """
+
+    def unseeded(site: _ShuffleCall, resolved: _Resolved, constants: dict[str, ast.expr]) -> bool:
+        if not resolved.value:
+            return False
+        seed = _shuffle_argument(site.call, "seed")
+        if seed is None:
+            return not _has_star_kwargs(site.call)
+        found = _resolve(seed, site.functions, constants)
+        return found is not None and found.value is None
+
+    yield from _report_shuffles(
+        ctx, "shuffle", unseeded, "shuffles the samples", "warning", _SHUFFLE_HINT
+    )

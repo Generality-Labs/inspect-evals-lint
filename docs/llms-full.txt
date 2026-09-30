@@ -215,6 +215,8 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the c
 | [IEBP007](rules/IEBP007.md) | `dockerfile_locking`            | eval         | Dockerfile builds consume locked inputs: committed locks, digest-pinned images, fixed sources       |
 | [IEBP008](rules/IEBP008.md) | `duplicate_filter_acknowledged` | eval, helper | Every filter_duplicate_ids() call states how many duplicates it drops and links the upstream report |
 | [IEBP009](rules/IEBP009.md) | `known_broken_reported`         | eval, helper | Every drop_known_broken() entry maps a sample id to the URL of its upstream report                  |
+| [IEBP010](rules/IEBP010.md) | `shuffle_choices_seeded`        | eval, helper | shuffle_choices is a seed or off, never an unseeded True                                            |
+| [IEBP011](rules/IEBP011.md) | `shuffle_seeded`                | eval, helper | A dataset loader that shuffles samples is given a seed                                              |
 
 ## Security
 
@@ -225,7 +227,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the c
 
 ## Helper packages
 
-Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`, `sandbox_privileges`, `host_code_execution`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
+Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`, `shuffle_choices_seeded`, `shuffle_seeded`, `sandbox_privileges`, `host_code_execution`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
 
 ## Categories
 
@@ -1298,6 +1300,99 @@ KNOWN_BROKEN = {"ruin_names_100": "https://github.com/org/repo/issues/19"}
 - [Datasets: Dataset Samples](https://inspect.aisi.org.uk/datasets.html#dataset-samples)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP009] -- <reason>` or `ignore[known_broken_reported] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+
+
+---
+
+# IEBP010: shuffle_choices_seeded
+
+shuffle_choices is a seed or off, never an unseeded True.
+
+**Category:** best_practices · **Applies to:** eval, helper
+
+## What it does
+
+Flags each `shuffle_choices=` argument that resolves to `True`. The value is read literally, through the enclosing function's parameter default, or through a module-level constant the file binds once. A value the rule can't resolve, such as one a function body reassigns, is taken at face value and not flagged. An int is a seed and `False` or `None` turns shuffling off, so neither is flagged.
+
+Any call passing `shuffle_choices=` by keyword is read, so a task passing `True` to its own dataset helper is caught at the call. When the value comes from a parameter default, the diagnostic points at the default, so a suppression can sit beside it, and every call reading that default reports once.
+
+Fixing a finding changes the order the choices are presented in, and so each sample's target letter. That breaks comparability with earlier runs, so it needs a comparability bump to the task version.
+
+## Why is this bad?
+
+An unseeded choice shuffle changes the sample itself between builds: the options appear in a different order and the correct letter moves. Two runs of the same task on the same model then answer different questions, so their scores can't be compared sample by sample. Before GPQA was seeded, 193 of its 198 samples had a different option order between two builds.
+
+## Example
+
+```python
+@task
+def my_eval(shuffle_choices: bool = True):
+    return Task(dataset=hf_dataset("org/data", split="test", shuffle_choices=shuffle_choices))
+```
+
+Use instead:
+
+```python
+DEFAULT_SHUFFLE_SEED = 42
+
+@task
+def my_eval(shuffle_choices: bool | int = DEFAULT_SHUFFLE_SEED):
+    return Task(dataset=hf_dataset("org/data", split="test", shuffle_choices=shuffle_choices))
+```
+
+## See also
+
+- [Datasets: Choice Shuffling](https://inspect.aisi.org.uk/datasets.html#choice-shuffling)
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP010] -- <reason>` or `ignore[shuffle_choices_seeded] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+
+
+---
+
+# IEBP011: shuffle_seeded
+
+A dataset loader that shuffles samples is given a seed.
+
+**Category:** best_practices · **Applies to:** eval, helper
+
+## What it does
+
+Warns on each `shuffle=` argument that resolves to true when the call passes no `seed=`, or a `seed=` that resolves to `None`. Values are resolved as `shuffle_choices_seeded` resolves them, and a value the rule can't resolve is taken at face value. A call with `**kwargs` and no `seed=` is taken to pass one.
+
+Any call passing `shuffle=` by keyword is read, and `shuffle` and `seed` may be passed positionally to Inspect's `hf_dataset`, `csv_dataset`, `json_dataset` and `file_dataset` and inspect_evals' `load_csv_dataset` and `load_json_dataset`. A dataset helper that takes `shuffle=` but seeds internally is flagged where it is called without a seed; suppress that finding with the reason. When the value comes from a parameter default, the diagnostic points at the default.
+
+Seeding changes which samples a `--limit` run selects. Removing a `shuffle` task parameter breaks `-T shuffle=...` invocations, so it needs a task version bump.
+
+This is a warning rather than an error: an unseeded shuffle changes only the order of the samples, not the samples themselves.
+
+## Why is this bad?
+
+Sample order decides which samples `--limit` picks, so two runs with the same limit evaluate different samples, and neither log records the order used. `inspect eval --sample-shuffle <seed>` shuffles at run time and records the seed in the log's eval config, which is why leaving order to it is usually the better fix.
+
+## Example
+
+```python
+@task
+def my_eval(shuffle: bool = True):
+    return Task(dataset=hf_dataset("org/data", split="test", shuffle=shuffle))
+```
+
+Use instead:
+
+```python
+@task
+def my_eval():
+    return Task(dataset=hf_dataset("org/data", split="test"))
+```
+
+and run with `inspect eval my_eval --sample-shuffle 42` when the order should vary.
+
+## See also
+
+- [Datasets: Shuffling](https://inspect.aisi.org.uk/datasets.html#shuffling)
+- [Log Files: IDs and Shuffling](https://inspect.aisi.org.uk/eval-logs.html#ids-and-shuffling)
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP011] -- <reason>` or `ignore[shuffle_seeded] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
 
 ---
