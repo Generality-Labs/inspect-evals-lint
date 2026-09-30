@@ -33,4 +33,4 @@ metadata:
 - [Daytona sandbox: Docker Compose (GPU reservations)](https://meridianlabs-ai.github.io/inspect_sandboxes/daytona.html#docker-compose)
 - [Kubernetes sandbox: Targeting kubeconfig contexts (GPU nodes)](https://k8s-sandbox.aisi.org.uk/tips/configuration/#targeting-specific-or-multiple-kubeconfig-contexts)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP006]` or `ignore[gpu_sandbox_check]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP006] -- <reason>` or `ignore[gpu_sandbox_check] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.

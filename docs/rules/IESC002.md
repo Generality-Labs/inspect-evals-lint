@@ -85,4 +85,4 @@ def calculate():
 
 - [Sandboxing](https://inspect.aisi.org.uk/sandboxing.html)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IESC002]` or `ignore[host_code_execution]`; select or ignore it in configuration by either, or by the prefix `IESC`.
+Suppress on a line with `# inspect-evals-lint: ignore[IESC002] -- <reason>` or `ignore[host_code_execution] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IESC`.

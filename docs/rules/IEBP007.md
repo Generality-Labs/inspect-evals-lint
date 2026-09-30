@@ -48,4 +48,4 @@ RUN uv sync --locked --no-dev --no-install-project
 - [Sandboxing: Task Configuration](https://inspect.aisi.org.uk/sandboxing.html#task-configuration)
 - [Sandboxing: Prebuilt Images](https://inspect.aisi.org.uk/sandboxing.html#prebuilt-images)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP007]` or `ignore[dockerfile_locking]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP007] -- <reason>` or `ignore[dockerfile_locking] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.

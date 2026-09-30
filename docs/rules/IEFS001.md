@@ -26,4 +26,4 @@ src/inspect_evals/gpqa/__init__.py               # linted
 - [Tasks: Packaging](https://inspect.aisi.org.uk/tasks.html#packaging)
 - [Extensions: Components: Registration](https://inspect.aisi.org.uk/extensions-components.html#registration)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEFS001]` or `ignore[package_location]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS001] -- <reason>` or `ignore[package_location] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEFS`.

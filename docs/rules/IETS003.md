@@ -28,4 +28,4 @@ def test_e2e():
 
 - [Reference: eval()](https://inspect.aisi.org.uk/reference/inspect_ai.html#eval)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IETS003]` or `ignore[e2e_test]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IETS003] -- <reason>` or `ignore[e2e_test] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IETS`.

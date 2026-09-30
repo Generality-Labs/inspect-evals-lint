@@ -2,7 +2,7 @@
 
 > Static checks for Inspect AI evaluations: file structure, code quality, test coverage conventions, best practices, and security. Every check is a rule with a code (IEFS, IECQ, IETS, IEBP, IESC prefixes for the categories) and a name.
 
-Every HTML page on this site is also available as raw Markdown at the same path with a `.md` suffix (for example `rules/IEBP002.md`). The full documentation is concatenated in `llms-full.txt`. `rules.json` lists every rule with its code, name, category, scopes and page URLs. Suppress a finding with `# inspect-evals-lint: ignore[<code or name>]` on the offending line; configure the linter under `[tool.inspect-evals-lint]` in `pyproject.toml`. Locally, `inspect-evals-lint --explain <code>` prints a rule's page and `inspect-evals-lint --list-rules --output-format json` lists them.
+Every HTML page on this site is also available as raw Markdown at the same path with a `.md` suffix (for example `rules/IEBP002.md`). The full documentation is concatenated in `llms-full.txt`. `rules.json` lists every rule with its code, name, category, scopes and page URLs. Suppress a finding with `# inspect-evals-lint: ignore[<code or name>] -- <reason>` on the offending line; configure the linter under `[tool.inspect-evals-lint]` in `pyproject.toml`. Locally, `inspect-evals-lint --explain <code>` prints a rule's page and `inspect-evals-lint --list-rules --output-format json` lists them.
 
 ## Reference
 
@@ -26,7 +26,7 @@ Every HTML page on this site is also available as raw Markdown at the same path 
 - [IECQ002 score_constants](https://inspect-evals-lint.generality.org/rules/IECQ002.md): Score() values use the CORRECT/INCORRECT constants, not string literals
 - [IECQ003 unscored_reason](https://inspect-evals-lint.generality.org/rules/IECQ003.md): Score.unscored() passes a reason= and the legacy unscored_reason metadata key is gone
 - [IECQ004 external_dependencies](https://inspect-evals-lint.generality.org/rules/IECQ004.md): Third-party imports are declared in pyproject.toml
-- [IECQ005 suppression_syntax](https://inspect-evals-lint.generality.org/rules/IECQ005.md): Every suppression marker is one the linter reads
+- [IECQ005 suppression_syntax](https://inspect-evals-lint.generality.org/rules/IECQ005.md): Every suppression marker is one the linter reads, and says why
 
 ## Tests
 

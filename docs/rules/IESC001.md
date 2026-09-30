@@ -99,4 +99,4 @@ Service `environment` and `env_file` values are not checked, though they can als
 
 - [Sandboxing](https://inspect.aisi.org.uk/sandboxing.html)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IESC001]` or `ignore[sandbox_privileges]`; select or ignore it in configuration by either, or by the prefix `IESC`.
+Suppress on a line with `# inspect-evals-lint: ignore[IESC001] -- <reason>` or `ignore[sandbox_privileges] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IESC`.

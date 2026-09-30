@@ -42,4 +42,4 @@ def graded(model: str | Model | None = None):
 - [Custom Scorers: Models in Scorers](https://inspect.aisi.org.uk/custom-scorers.html#models-in-scorers)
 - [Custom Agents: Parameters](https://inspect.aisi.org.uk/agent-custom.html#parameters)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP001]` or `ignore[get_model_location]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP001] -- <reason>` or `ignore[get_model_location] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.

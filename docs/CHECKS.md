@@ -23,7 +23,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the c
 | [IECQ002](rules/IECQ002.md) | `score_constants`       | eval, helper | Score() values use the CORRECT/INCORRECT constants, not string literals               |
 | [IECQ003](rules/IECQ003.md) | `unscored_reason`       | eval, helper | Score.unscored() passes a reason= and the legacy unscored_reason metadata key is gone |
 | [IECQ004](rules/IECQ004.md) | `external_dependencies` | eval, helper | Third-party imports are declared in pyproject.toml                                    |
-| [IECQ005](rules/IECQ005.md) | `suppression_syntax`    | eval, helper | Every suppression marker is one the linter reads                                      |
+| [IECQ005](rules/IECQ005.md) | `suppression_syntax`    | eval, helper | Every suppression marker is one the linter reads, and says why                        |
 
 ## Tests
 
@@ -74,9 +74,9 @@ Each rule belongs to one category. The JSON output and `registry.CATEGORIES` exp
 
 ## Suppression
 
-- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. In a Dockerfile, on the line above the instruction. In a Compose file, on the setting's line or the list item's line.
-- File: `# inspect-evals-lint: ignore-file[<rule>]` within the first ten lines.
+- Line: `# inspect-evals-lint: ignore[<rule>] -- <reason>` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. In a Dockerfile, on the line above the instruction. In a Compose file, on the setting's line or the list item's line.
+- File: `# inspect-evals-lint: ignore-file[<rule>] -- <reason>` within the first ten lines.
 - Paths: `per-file-ignores = { "<glob>" = ["<rule>"] }` in `[tool.inspect-evals-lint]`.
 - Never read: `exclude = ["<glob>"]` keeps files out of the AST-based rules entirely, for code shipped into a sandbox.
 
-Suppressed findings still appear in reports, marked `[suppressed]`, and count as passing. A marker the linter does not read (the former `noautolint` comments and `.noautolint` files, `ignore` without a rule list, a selector naming no rule) suppresses nothing and is reported by `suppression_syntax` with the replacement in its hint.
+Every comment gives a reason after `--`, saying why the finding is acceptable; `suppression_syntax` warns about a comment without one, and the suppression still applies. Suppressed findings still appear in reports, marked `[suppressed]`, and count as passing. A marker the linter does not read (the former `noautolint` comments and `.noautolint` files, `ignore` without a rule list, a selector naming no rule) suppresses nothing and is reported by `suppression_syntax` with the replacement in its hint.

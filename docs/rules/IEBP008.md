@@ -35,4 +35,4 @@ dataset = filter_duplicate_ids(
 - [Datasets: Dataset Samples](https://inspect.aisi.org.uk/datasets.html#dataset-samples)
 - [Log Files: IDs and Shuffling](https://inspect.aisi.org.uk/eval-logs.html#ids-and-shuffling)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP008]` or `ignore[duplicate_filter_acknowledged]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP008] -- <reason>` or `ignore[duplicate_filter_acknowledged] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.
