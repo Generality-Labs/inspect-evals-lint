@@ -6,10 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-30
+
+Compose files are now checked for sandbox privileges and host access. The new `security` category holds `sandbox_privileges` (IESC001), which fails a package whose Compose services grant extra privileges or host access unless each exception is allowlisted. Upgrading can fail a package that passed on 0.8.0: IESC001 reports errors by default, and IEBP005 now also reads `docker-compose*.y*ml` files. JSON reports move to `schema_version: 2`. Consumers that validate categories or rule codes must accept `security` and `IESC` before upgrading.
+
 ### Added
 
 - `sandbox_privileges` (IESC001) checks Compose services for elevated privileges, added capabilities, disabled security restrictions, host or external-container namespaces, host mounts, device access, host-sourced secrets and configs, and privileged lifecycle commands. It includes container engine socket access and named volumes backed by host bind mounts. Compose files in `exclude`d directories are checked, since Compose reads them on the host. Findings use `service:field:value` allowlist keys, so allowing one capability, host path or security option does not allow another; unresolved interpolations produce warnings. GPU reservations and ordinary named volumes are accepted ([#46](https://github.com/Generality-Labs/inspect-evals-lint/issues/46)).
 - The `security` category uses the `IESC` rule prefix and covers isolation and access to the host, other containers, or execution capabilities.
+- JSON reports list each rule that ran under `packages[].rules`, at the worst status it reported, with indexes into that package's `diagnostics`. Consumers no longer need to rebuild per-rule statuses from outcomes and diagnostics ([#45](https://github.com/Generality-Labs/inspect-evals-lint/pull/45)).
 
 ### Changed
 
