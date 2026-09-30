@@ -200,7 +200,7 @@
         "helper"
       ],
       "allowlist": false,
-      "summary": "Every suppression marker is one the linter reads",
+      "summary": "Every suppression marker is one the linter reads, and says why",
       "url": "https://inspect-evals-lint.generality.org/rules/IECQ005/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IECQ005.md",
       "references": []

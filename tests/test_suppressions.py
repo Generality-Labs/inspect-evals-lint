@@ -214,3 +214,66 @@ def test_comment_inside_a_function_body_does_not_cover_its_definition(
     )
     report = lint_package(root, "alpha", config, check="task_overridable_defaults")
     assert report.statuses()["task_overridable_defaults"] == ["fail"]
+
+
+@pytest.mark.parametrize(
+    ("comment", "level"),
+    [
+        ("x = 1  # inspect-evals-lint: ignore[readme] -- the README lives upstream", "line"),
+        ("x = 1  # inspect-evals-lint: ignore[readme]--terse", "line"),
+        ("# inspect-evals-lint: ignore-file[readme] -- generated file", "file"),
+    ],
+)
+def test_reason_after_a_double_dash_is_read(tmp_path: Path, comment: str, level: str) -> None:
+    pkg = tmp_path / "e"
+    write(pkg / "x.py", comment + "\n")
+    s = load_suppressions(context_for(pkg))
+    assert s.missing_reasons == []
+    assert s.problems == []
+    if level == "line":
+        assert s.line_level[pkg / "x.py"] == {1: {"readme"}}
+    else:
+        assert s.file_level[pkg / "x.py"] == {"readme"}
+
+
+@pytest.mark.parametrize(
+    "comment",
+    [
+        "x = 1  # inspect-evals-lint: ignore[readme, IEBP003]",
+        "x = 1  # inspect-evals-lint: ignore[readme, IEBP003] because upstream",
+        "x = 1  # inspect-evals-lint: ignore[readme, IEBP003] --   ",
+        "# inspect-evals-lint: ignore-file[readme, IEBP003]",
+    ],
+)
+def test_suppression_without_a_reason_still_applies_and_is_recorded(
+    tmp_path: Path, comment: str
+) -> None:
+    pkg = tmp_path / "e"
+    write(pkg / "x.py", comment + "\n")
+    s = load_suppressions(context_for(pkg))
+    selectors = s.file_level.get(pkg / "x.py") or s.line_level[pkg / "x.py"][1]
+    assert selectors == {"readme", "IEBP003"}
+    (missing,) = s.missing_reasons
+    assert (missing.file.name, missing.line) == ("x.py", 1)
+    assert "gives no reason" in missing.message
+    assert "[readme, IEBP003] -- <why" in missing.hint
+
+
+def test_a_comment_that_suppresses_nothing_needs_no_reason(tmp_path: Path) -> None:
+    pkg = tmp_path / "e"
+    write(pkg / "x.py", "x = 1  # inspect-evals-lint: ignore[NOPE]\n")
+    s = load_suppressions(context_for(pkg))
+    assert s.missing_reasons == []
+    assert len(s.problems) == 1
+
+
+def test_dockerfile_comment_with_a_reason(tmp_path: Path) -> None:
+    pkg = tmp_path / "e"
+    write(
+        pkg / "Dockerfile",
+        "# inspect-evals-lint: ignore[dockerfile_locking] -- base image pins its own lock\n"
+        "FROM python:3.12\n",
+    )
+    s = load_suppressions(context_for(pkg))
+    assert s.line_level[pkg / "Dockerfile"] == {2: {"dockerfile_locking"}}
+    assert s.missing_reasons == []

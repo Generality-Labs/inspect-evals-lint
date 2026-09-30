@@ -24,8 +24,10 @@ from inspect_evals_lint.rules._ast import (
 )
 from inspect_evals_lint.rules._compose import iter_compose_files
 
-LINE_PATTERN = re.compile(r"#\s*inspect-evals-lint:\s*ignore\[([^\]]*)\]")
-FILE_PATTERN = re.compile(r"#\s*inspect-evals-lint:\s*ignore-file\[([^\]]*)\]")
+LINE_PATTERN = re.compile(r"#\s*inspect-evals-lint:\s*ignore\[([^\]]*)\](.*)")
+FILE_PATTERN = re.compile(r"#\s*inspect-evals-lint:\s*ignore-file\[([^\]]*)\](.*)")
+REASON_PATTERN = re.compile(r"\s*--\s*(.*\S)")
+"""The reason after a comment's rule list: ``ignore[IEBP003] -- ids are row numbers``."""
 MALFORMED_PATTERN = re.compile(r"#\s*inspect-evals-lint:\s*ignore(?:-file)?(?!\[)")
 LEGACY_PATTERN = re.compile(r"#\s*noautolint(?:-file)?:")
 
@@ -63,6 +65,8 @@ class Suppressions:
     file_level: dict[Path, set[str]] = field(default_factory=dict)
     line_level: dict[Path, dict[int, set[str]]] = field(default_factory=dict)
     problems: list[SuppressionProblem] = field(default_factory=list)
+    missing_reasons: list[SuppressionProblem] = field(default_factory=list)
+    """Comments that suppress something but do not say why. Reported by ``suppression_syntax``."""
     comments: int = 0
     """How many well-formed ignore comments were read."""
 
@@ -104,6 +108,24 @@ def _selectors(raw: str, path: Path, line: int, suppressions: Suppressions) -> s
             )
         )
     return known
+
+
+def _check_reason(
+    kind: str, match: re.Match[str], path: Path, line: int, suppressions: Suppressions
+) -> None:
+    """Record a comment that applies but gives no reason after ``--``."""
+    if REASON_PATTERN.match(match.group(2)):
+        return
+    written = f"{kind}[{match.group(1).strip()}]"
+    suppressions.missing_reasons.append(
+        SuppressionProblem(
+            path,
+            line,
+            f"{written} gives no reason",
+            "write why the finding is acceptable after ' -- ', e.g. "
+            f"`# inspect-evals-lint: {written} -- <why this is acceptable>`",
+        )
+    )
 
 
 def _next_instruction_line(lines: list[str], index: int) -> int | None:
@@ -163,6 +185,7 @@ def _read_comments(path: Path, suppressions: Suppressions) -> None:
             known = _selectors(file_match.group(1), path, i, suppressions)
             if known:
                 suppressions.file_level.setdefault(path, set()).update(known)
+                _check_reason("ignore-file", file_match, path, i, suppressions)
             continue
         line_match = LINE_PATTERN.search(source_line)
         if line_match:
@@ -171,6 +194,7 @@ def _read_comments(path: Path, suppressions: Suppressions) -> None:
             if known:
                 target = _dockerfile_target(lines, index) if dockerfile else i
                 suppressions.line_level.setdefault(path, {}).setdefault(target, set()).update(known)
+                _check_reason("ignore", line_match, path, i, suppressions)
             continue
         if MALFORMED_PATTERN.search(source_line):
             suppressions.problems.append(
@@ -194,8 +218,9 @@ def load_suppressions(ctx: LintContext) -> Suppressions:
 
     Markers the linter does not read (the removed ``noautolint`` syntax, an
     ``ignore`` without a rule list, an ``ignore-file`` past the header, a selector
-    naming no rule) are collected as ``problems`` for the ``suppression_syntax``
-    rule to report; they never stop the package from being linted.
+    naming no rule) are collected as ``problems``, and comments that apply without
+    a reason as ``missing_reasons``, for the ``suppression_syntax`` rule to report;
+    neither stops the package from being linted.
     """
     suppressions = Suppressions()
     for legacy_file in iter_package_files(ctx, ".noautolint"):
