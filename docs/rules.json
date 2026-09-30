@@ -572,6 +572,25 @@
           "url": "https://inspect.aisi.org.uk/sandboxing.html"
         }
       ]
+    },
+    {
+      "code": "IESC002",
+      "name": "host_code_execution",
+      "category": "security",
+      "scopes": [
+        "eval",
+        "helper"
+      ],
+      "allowlist": true,
+      "summary": "Model output, tool arguments and sandbox content are not executed or deserialised on the host",
+      "url": "https://inspect-evals-lint.generality.org/rules/IESC002/",
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IESC002.md",
+      "references": [
+        {
+          "title": "Sandboxing",
+          "url": "https://inspect.aisi.org.uk/sandboxing.html"
+        }
+      ]
     }
   ]
 }

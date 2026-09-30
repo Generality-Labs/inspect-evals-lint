@@ -170,7 +170,7 @@ class LintConfig:
     exclude: tuple[str, ...] = field(
         default=(),
         metadata={
-            "doc": "Glob patterns, relative to the repository root, of files the AST-based rules never read. For code that is shipped into a sandbox rather than run on the host, such as challenge sources that are not even valid Python 3."
+            "doc": "Glob patterns, relative to the repository root, of files the AST-based rules never read. For code that is shipped into a sandbox rather than run on the host, such as challenge sources that are not even valid Python 3. Python files outside these globs are host code, which `host_code_execution` checks for model-controlled input reaching `exec`, `eval` and `subprocess`."
         },
     )
 

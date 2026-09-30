@@ -53,3 +53,4 @@ Every HTML page on this site is also available as raw Markdown at the same path 
 ## Security
 
 - [IESC001 sandbox_privileges](https://inspect-evals-lint.generality.org/rules/IESC001.md): Compose services do not grant additional sandbox privileges or host access
+- [IESC002 host_code_execution](https://inspect-evals-lint.generality.org/rules/IESC002.md): Model output, tool arguments and sandbox content are not executed or deserialised on the host
