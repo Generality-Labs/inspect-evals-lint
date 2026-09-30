@@ -14,7 +14,7 @@ import ast
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome, Severity
@@ -168,53 +168,125 @@ def _import_bindings(node: ast.Import | ast.ImportFrom) -> Iterator[tuple[str, s
             yield alias.asname or alias.name, f"{node.module}.{alias.name}"
 
 
-def import_aliases(tree: ast.AST) -> dict[str, str]:
-    """Local name to the module or object an import binds it to: ``sp`` to ``subprocess``, ``run`` to ``subprocess.run``.
+Names = dict[str, str | None]
+"""Local name to what an import in force binds it to (``sp`` to ``subprocess``); None where a local binding hides the import."""
 
-    Taken from every import in the file, wherever it sits. Imports that rebind
-    a builtin sink name are left to :func:`builtin_rebindings`, which applies
-    them only where they are in force.
-    """
-    aliases: dict[str, str] = {}
-    for node in ast.walk(tree):
+
+def _imports_in(nodes: Iterable[ast.AST]) -> dict[str, str]:
+    bound: dict[str, str] = {}
+    for node in nodes:
         if isinstance(node, (ast.Import, ast.ImportFrom)):
-            for local, qualified in _import_bindings(node):
-                if local not in _BUILTIN_SINKS:
-                    aliases[local] = qualified
-    return aliases
+            bound.update(_import_bindings(node))
+    return bound
 
 
-def builtin_rebindings(statements: Iterable[ast.AST]) -> dict[str, str]:
-    """Builtin sink names the given import statements rebind: ``{"eval": "inspect_ai.eval"}``."""
-    rebound: dict[str, str] = {}
-    for node in statements:
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            for local, qualified in _import_bindings(node):
-                if local in _BUILTIN_SINKS:
-                    rebound[local] = qualified
-    return rebound
+def _try_blocks(statement: ast.Try | ast.TryStar) -> list[list[ast.stmt]]:
+    return [
+        statement.body,
+        *(handler.body for handler in statement.handlers),
+        statement.orelse,
+        statement.finalbody,
+    ]
 
 
 def _unconditional_statements(body: list[ast.stmt]) -> Iterator[ast.stmt]:
-    """Statements that run whenever the module is imported: the top level and its ``try`` blocks."""
+    """Statements that run whenever the body does: the body itself and its ``try`` blocks."""
     for statement in body:
         yield statement
         if isinstance(statement, (ast.Try, ast.TryStar)):
-            for block in (
-                statement.body,
-                *(handler.body for handler in statement.handlers),
-                statement.orelse,
-                statement.finalbody,
-            ):
+            for block in _try_blocks(statement):
                 yield from _unconditional_statements(block)
 
 
-def qualified_name(func: ast.expr, aliases: dict[str, str], rebound: dict[str, str]) -> str | None:
-    """``subprocess.run`` for ``sp.run`` after ``import subprocess as sp``; None when no import binds the name.
+BlockStatement = ast.If | ast.For | ast.AsyncFor | ast.While | ast.With | ast.AsyncWith | ast.Match
 
-    A bare builtin sink name resolves to ``builtins.<name>`` unless ``rebound``
-    (the rebinding imports in force at the call) says otherwise, so
-    ``from inspect_ai import eval`` exempts ``eval`` and nothing else.
+
+def _blocks(body: list[ast.stmt]) -> Iterator[BlockStatement]:
+    """The compound statements in a module-level body, looking through ``try``, whose imports hold only inside them."""
+    for statement in body:
+        if isinstance(statement, (ast.Try, ast.TryStar)):
+            for block in _try_blocks(statement):
+                yield from _blocks(block)
+        elif isinstance(
+            statement,
+            (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith, ast.Match),
+        ):
+            yield statement
+
+
+def _block_body(statement: BlockStatement) -> list[ast.stmt]:
+    if isinstance(statement, ast.Match):
+        return [s for case in statement.cases for s in case.body]
+    if isinstance(statement, (ast.With, ast.AsyncWith)):
+        return statement.body
+    return [*statement.body, *statement.orelse]
+
+
+def module_names(tree: ast.Module) -> Names:
+    """What names resolve to across a file.
+
+    The module's unconditional imports (the top level and top-level ``try``)
+    apply everywhere. A module-level block's import of anything but a builtin
+    sink name applies too where nothing unconditional binds the name, since the
+    module global it sets is visible once the block has run. A block's
+    rebinding of a builtin applies only inside the block.
+    """
+    conditional = {
+        local: qualified
+        for local, qualified in _imports_in(scope_nodes(tree.body)).items()
+        if local not in _BUILTIN_SINKS
+    }
+    return {**conditional, **_imports_in(_unconditional_statements(tree.body))}
+
+
+def _locally_bound(body: list[ast.stmt], parameters: Iterable[str]) -> set[str]:
+    """Names a function or class body binds other than by import, less its ``global`` and ``nonlocal`` names."""
+    bound = set(parameters)
+    declared: set[str] = set()
+    for node in scope_nodes(body):
+        if isinstance(node, (ast.Global, ast.Nonlocal)):
+            declared.update(node.names)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            bound.add(node.id)
+        elif (
+            isinstance(
+                node,
+                (
+                    ast.FunctionDef,
+                    ast.AsyncFunctionDef,
+                    ast.ClassDef,
+                    ast.ExceptHandler,
+                    ast.MatchAs,
+                    ast.MatchStar,
+                ),
+            )
+            and node.name
+        ):
+            bound.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            bound.add(node.rest)
+    return bound - declared - _BUILTIN_SINKS
+
+
+def local_names(body: list[ast.stmt], outer: Names, parameters: Iterable[str] = ()) -> Names:
+    """What names resolve to in a function or class body.
+
+    The enclosing scope's names, hidden by anything the body binds other than
+    by import (a parameter or ``yaml = YAML()``), then the body's own imports
+    wherever they sit in it. A builtin sink name is only ever rebound by an
+    import.
+    """
+    imports = _imports_in(scope_nodes(body))
+    hidden = dict.fromkeys(_locally_bound(body, parameters) - imports.keys())
+    return {**outer, **hidden, **imports}
+
+
+def qualified_name(func: ast.expr, names: Names) -> str | None:
+    """``subprocess.run`` for ``sp.run`` after ``import subprocess as sp``; None when no import in force binds the name.
+
+    A bare builtin sink name resolves to ``builtins.<name>`` unless an import in
+    force rebinds it, so ``from inspect_ai import eval`` exempts ``eval`` and
+    nothing else.
     """
     parts: list[str] = []
     node = func
@@ -224,8 +296,8 @@ def qualified_name(func: ast.expr, aliases: dict[str, str], rebound: dict[str, s
     if not isinstance(node, ast.Name):
         return None
     if not parts and node.id in _BUILTIN_SINKS:
-        return rebound.get(node.id, f"builtins.{node.id}")
-    base = aliases.get(node.id)
+        return names.get(node.id) or f"builtins.{node.id}"
+    base = names.get(node.id)
     if base is None:
         return None
     return ".".join([base, *reversed(parts)])
@@ -249,14 +321,16 @@ def _evaluated_in_enclosing_scope(node: FunctionNode | ast.ClassDef) -> list[ast
     return [*node.decorator_list, *node.args.defaults, *defaults]
 
 
-def scope_nodes(body: list[ast.stmt]) -> Iterator[ast.AST]:
-    """Every node a function, class or module body runs, without entering nested bodies.
+def scope_nodes(body: list[ast.stmt], skip: frozenset[int] = frozenset()) -> Iterator[ast.AST]:
+    """Every node a function, class or module body runs, without entering nested bodies or the statements in ``skip``.
 
     A nested definition's decorators, defaults and class bases run here, so they are included.
     """
     stack: list[ast.AST] = list(reversed(body))
     while stack:
         node = stack.pop()
+        if id(node) in skip:
+            continue
         yield node
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             stack.extend(reversed(_evaluated_in_enclosing_scope(node)))
@@ -264,10 +338,12 @@ def scope_nodes(body: list[ast.stmt]) -> Iterator[ast.AST]:
         stack.extend(reversed(list(ast.iter_child_nodes(node))))
 
 
-def _nested_definitions(body: list[ast.stmt]) -> list[FunctionNode | ast.ClassDef]:
+def _nested_definitions(
+    body: list[ast.stmt], skip: frozenset[int] = frozenset()
+) -> list[FunctionNode | ast.ClassDef]:
     return [
         node
-        for node in scope_nodes(body)
+        for node in scope_nodes(body, skip)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
     ]
 
@@ -326,6 +402,9 @@ def _attribute_source(node: ast.Attribute) -> str | None:
     return None
 
 
+ScopeKind = Literal["module", "block", "class", "function"]
+
+
 @dataclass
 class Scope:
     """One function, class or module body being analysed, and what it can see."""
@@ -339,10 +418,10 @@ class Scope:
     """Methods of the enclosing class, callable as ``self.<name>`` or ``cls.<name>``."""
     depth: int
     """0 when the body is analysed on its own; 1 when entered through a call, which is not followed further."""
-    rebound: dict[str, str]
-    """Builtin sink names rebound by imports in force here."""
-    inherited_rebound: dict[str, str]
-    """What a function defined here starts from: a module's unconditional imports, a function's own."""
+    names: Names
+    """What names resolve to here; see :func:`module_names` and :func:`local_names`."""
+    kind: ScopeKind = "function"
+    """A ``block`` is a module-level compound statement holding an import: it shares the module's taint and sandbox bindings, and has its own names."""
     via: str = ""
     sandboxes: set[str] = field(default_factory=set)
     """Dotted names bound to a sandbox environment."""
@@ -355,52 +434,93 @@ class Scope:
         return self.enclosing or self
 
 
+CalleeKey = tuple[int, frozenset[tuple[str, str]], int, int]
+
+
 class FileAnalysis:
     """The taint analysis of one parsed file; ``hits`` holds each sink site at its worst."""
 
     def __init__(self, tree: ast.Module) -> None:
         self.tree = tree
-        self.aliases = import_aliases(tree)
-        self.global_rebound = builtin_rebindings(_unconditional_statements(tree.body))
         self.safe_loaders = safe_yaml_loaders(tree)
         self.hits: dict[tuple[int, int], Hit] = {}
-        self._returns: dict[int, str | None] = {}
-
-    def run(self) -> list[Hit]:
-        module_functions = {
-            node.name: node
-            for node in self.tree.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        }
-        module = Scope(
-            self.tree.body,
+        self.module = Scope(
+            tree.body,
             {},
-            module_functions,
+            {
+                node.name: node
+                for node in tree.body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            },
             {},
             depth=0,
-            rebound={**self.global_rebound, **builtin_rebindings(scope_nodes(self.tree.body))},
-            inherited_rebound=self.global_rebound,
+            names=module_names(tree),
+            kind="module",
         )
-        self._analyse_body(module)
+        self._defining: dict[int, Scope] = {}
+        """The scope each definition closes over, by ``id`` of its node."""
+        self._names: dict[int, Names] = {}
+        self._returns: dict[tuple[int, int, int], str | None] = {}
+        self._followed: set[CalleeKey] = set()
+
+    def run(self) -> list[Hit]:
+        self._analyse_body(self.module)
         return sorted(self.hits.values(), key=lambda hit: hit.site)
 
     # Scopes
 
     def _analyse_body(self, scope: Scope, *, tool_factory: bool = False) -> Scope:
         """Taint every name in ``scope``, record its sinks, then descend into what it defines."""
-        nested = _nested_definitions(scope.body)
-        local_functions = {
-            node.name: node
-            for node in nested
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        blocks = self._import_blocks(scope)
+        skip = frozenset(id(block) for block in blocks)
+        nested = _nested_definitions(scope.body, skip)
+        scope.functions = {
+            **scope.functions,
+            **{
+                node.name: node
+                for node in _nested_definitions(scope.body)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            },
         }
-        scope.functions = {**scope.functions, **local_functions}
-        self._propagate(scope)
-        self._check_calls(scope)
+        if scope.depth == 0:
+            for node in nested:
+                self._defining[id(node)] = scope.visible
+        if scope.kind != "block":
+            self._propagate(scope)
+        self._check_calls(scope, skip)
         if scope.depth > 0:
             return scope
+        for block in blocks:
+            imports = _imports_in(_unconditional_statements(_block_body(block)))
+            self._analyse_body(
+                Scope(
+                    [block],
+                    scope.taint,
+                    scope.functions,
+                    scope.methods,
+                    depth=0,
+                    names={**scope.names, **imports},
+                    kind="block",
+                    sandboxes=scope.sandboxes,
+                )
+            )
         self._analyse_nested(nested, scope, tool_factory=tool_factory)
         return scope
+
+    def _import_blocks(self, scope: Scope) -> list[BlockStatement]:
+        """The module-level blocks directly in ``scope`` that hold an import, each analysed as its own block scope."""
+        if scope.kind == "module":
+            candidates = _blocks(scope.body)
+        elif scope.kind == "block":
+            (statement,) = scope.body
+            candidates = _blocks(_block_body(cast(BlockStatement, statement)))
+        else:
+            return []
+        return [
+            block
+            for block in candidates
+            if any(isinstance(n, (ast.Import, ast.ImportFrom)) for n in scope_nodes([block]))
+        ]
 
     def _analyse_nested(
         self, nested: list[FunctionNode | ast.ClassDef], scope: Scope, *, tool_factory: bool
@@ -413,10 +533,9 @@ class FileAnalysis:
 
     def _analyse_class(self, node: ast.ClassDef, outer: Scope) -> None:
         visible = outer.visible
-        nested = _nested_definitions(node.body)
         methods = {
             item.name: item
-            for item in nested
+            for item in _nested_definitions(node.body)
             if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
         scope = Scope(
@@ -425,37 +544,54 @@ class FileAnalysis:
             visible.functions,
             methods,
             depth=0,
-            rebound={**visible.inherited_rebound, **builtin_rebindings(scope_nodes(node.body))},
-            inherited_rebound=visible.inherited_rebound,
+            names=local_names(node.body, visible.names),
+            kind="class",
             sandboxes=set(visible.sandboxes),
             enclosing=visible,
         )
-        self._propagate(scope)
-        self._check_calls(scope)
-        self._analyse_nested(nested, scope, tool_factory=False)
+        self._analyse_body(scope)
 
     def _analyse_function(
         self, fn: FunctionNode, outer: Scope, *, tool_argument: bool = False
     ) -> None:
-        visible = outer.visible
-        names = {param.arg for param in _parameters(fn)}
-        taint = {k: v for k, v in visible.taint.items() if k.split(".")[0] not in names}
+        scope = self._function_scope(fn, outer.visible, outer.methods, depth=0)
         if tool_argument:
-            taint.update({n: f"tool argument {n!r}" for n in names if n != "self"})
-        rebound = {**visible.inherited_rebound, **builtin_rebindings(scope_nodes(fn.body))}
-        scope = Scope(
-            fn.body,
-            taint,
-            visible.functions,
-            outer.methods,
-            depth=0,
-            rebound=rebound,
-            inherited_rebound=rebound,
-            sandboxes={s for s in visible.sandboxes if s.split(".")[0] not in names},
-        )
-        self._seed_parameters(fn, scope)
+            scope.taint.update(
+                {p.arg: f"tool argument {p.arg!r}" for p in _parameters(fn) if p.arg != "self"}
+            )
         is_tool = any(get_decorator_name(d) == "tool" for d in fn.decorator_list)
         self._analyse_body(scope, tool_factory=is_tool)
+
+    def _function_scope(
+        self,
+        fn: FunctionNode,
+        defining: Scope,
+        methods: dict[str, FunctionNode],
+        *,
+        depth: int,
+        via: str = "",
+    ) -> Scope:
+        """A scope for ``fn``'s body that closes over ``defining``: its taint, sandbox bindings and names."""
+        parameters = {param.arg for param in _parameters(fn)}
+
+        def closes_over(name: str) -> bool:
+            return name.split(".")[0] not in parameters
+
+        names = self._names.get(id(fn))
+        if names is None:
+            names = self._names[id(fn)] = local_names(fn.body, defining.names, parameters)
+        scope = Scope(
+            fn.body,
+            {k: v for k, v in defining.taint.items() if closes_over(k)},
+            defining.functions,
+            methods,
+            depth=depth,
+            names=names,
+            via=via,
+            sandboxes={s for s in defining.sandboxes if closes_over(s)},
+        )
+        self._seed_parameters(fn, scope)
+        return scope
 
     def _seed_parameters(self, fn: FunctionNode, scope: Scope) -> None:
         for param in _parameters(fn):
@@ -465,25 +601,15 @@ class FileAnalysis:
             if "SandboxEnvironment" in names:
                 scope.sandboxes.add(param.arg)
 
-    def _enter_callee(
-        self, fn: FunctionNode, seeds: dict[str, str], scope: Scope, via: str, *, record: bool
-    ) -> Scope:
-        rebound = {**self.global_rebound, **builtin_rebindings(scope_nodes(fn.body))}
-        callee = Scope(
-            fn.body,
-            dict(seeds),
-            scope.visible.functions,
-            scope.methods,
-            depth=1,
-            rebound=rebound,
-            inherited_rebound=rebound,
-            via=via,
-        )
-        self._seed_parameters(fn, callee)
-        if not record:
-            self._propagate(callee)
-            return callee
-        return self._analyse_body(callee)
+    def _defining_scope(self, fn: FunctionNode) -> Scope:
+        return self._defining.get(id(fn), self.module)
+
+    def _enter_callee(self, fn: FunctionNode, seeds: dict[str, str], via: str) -> Scope:
+        """``fn``'s body entered through a call, in the context of the scope that defines it, with ``seeds`` tainting its parameters."""
+        defining = self._defining_scope(fn)
+        callee = self._function_scope(fn, defining, defining.methods, depth=1, via=via)
+        callee.taint.update(seeds)
+        return callee
 
     # Propagation
 
@@ -493,7 +619,7 @@ class FileAnalysis:
             return False
         if get_call_name(node) == "sandbox":
             return True
-        qualified = qualified_name(node.func, self.aliases, scope.rebound)
+        qualified = qualified_name(node.func, scope.names)
         return qualified is not None and qualified.endswith(".sandbox")
 
     def _propagate(self, scope: Scope) -> None:
@@ -566,19 +692,23 @@ class FileAnalysis:
         if resolved is None:
             return None
         name, fn, _bound = resolved
-        return self._return_taint(fn, name, scope)
+        return self._return_taint(fn, name)
 
-    def _return_taint(self, fn: FunctionNode, name: str, scope: Scope) -> str | None:
-        if id(fn) not in self._returns:
-            self._returns[id(fn)] = None
-            callee = self._enter_callee(fn, {}, scope, "", record=False)
+    def _return_taint(self, fn: FunctionNode, name: str) -> str | None:
+        """What a call to ``fn`` returns that is model-controlled; recomputed as its defining scope gains taint."""
+        defining = self._defining_scope(fn)
+        key = (id(fn), len(defining.taint), len(defining.sandboxes))
+        if key not in self._returns:
+            self._returns[key] = None
+            callee = self._enter_callee(fn, {}, "")
+            self._propagate(callee)
             for node in scope_nodes(fn.body):
                 if isinstance(node, ast.Return) and node.value is not None:
                     reason = self.taint_of(node.value, callee)
                     if reason is not None:
-                        self._returns[id(fn)] = f"{reason}, returned by {name}()"
+                        self._returns[key] = f"{reason}, returned by {name}()"
                         break
-        return self._returns[id(fn)]
+        return self._returns[key]
 
     # Sinks
 
@@ -597,11 +727,11 @@ class FileAnalysis:
             return func.attr, method, not _is_staticmethod(method)
         return None
 
-    def _check_calls(self, scope: Scope) -> None:
-        for node in scope_nodes(scope.body):
+    def _check_calls(self, scope: Scope, skip: frozenset[int] = frozenset()) -> None:
+        for node in scope_nodes(scope.body, skip):
             if not isinstance(node, ast.Call):
                 continue
-            qualified = qualified_name(node.func, self.aliases, scope.rebound)
+            qualified = qualified_name(node.func, scope.names)
             sink = SINKS.get(qualified) if qualified else None
             if sink is not None:
                 hit = self._sink_hit(node, sink, scope)
@@ -614,15 +744,20 @@ class FileAnalysis:
                 self._follow_call(node, scope)
 
     def _follow_call(self, call: ast.Call, scope: Scope) -> None:
+        """Analyse a same-file callee with the call's tainted arguments, once per distinct set of them."""
         resolved = self._callee(call, scope)
         if resolved is None:
             return
         name, fn, bound = resolved
         seeds = self._argument_seeds(fn, call, scope, bound=bound)
-        if seeds:
-            self._enter_callee(
-                fn, seeds, scope, f", via {name}() from line {call.lineno}", record=True
-            )
+        if not seeds:
+            return
+        defining = self._defining_scope(fn)
+        key = (id(fn), frozenset(seeds.items()), len(defining.taint), len(defining.sandboxes))
+        if key in self._followed:
+            return
+        self._followed.add(key)
+        self._analyse_body(self._enter_callee(fn, seeds, f", via {name}() from line {call.lineno}"))
 
     def _argument_seeds(
         self, fn: FunctionNode, call: ast.Call, scope: Scope, *, bound: bool

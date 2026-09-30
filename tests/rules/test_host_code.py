@@ -913,3 +913,194 @@ class TestSuppression:
         d.rule = get_rule("host_code_execution")
         apply_suppressions([d], load_suppressions(ctx), ctx.config, tmp_path)
         assert d.status == "suppressed"
+
+
+class TestPerScopeNames:
+    """A name resolves to a module only through an import in force in the scope that uses it."""
+
+    def test_function_local_inspect_ai_subprocess_leaves_stdlib_subprocess_checked(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+import subprocess
+
+def sandboxed(cmd):
+    from inspect_ai.util import subprocess
+    return subprocess(["ls"])
+
+def score(state):
+    subprocess.run(state.output.completion, shell=True)
+""",
+        )
+        assert [(d.status, d.key) for d in diagnostics(results)] == [
+            ("fail", "tools.py:subprocess.run")
+        ]
+
+    def test_function_local_stdlib_subprocess_leaves_inspect_ai_subprocess_checked(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+from inspect_ai.util import subprocess
+
+def local():
+    import subprocess
+    subprocess.run(["ls"])
+
+async def score(state):
+    await subprocess(f"echo {state.output.completion}")
+""",
+        )
+        assert [(d.status, d.key) for d in diagnostics(results)] == [
+            ("fail", "tools.py:inspect_ai.util.subprocess")
+        ]
+
+    def test_local_assignment_shadows_an_imported_module(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+import yaml
+from ruamel.yaml import YAML
+
+def f(stream):
+    yaml = YAML(typ="safe")
+    return yaml.load(stream)
+""",
+        )
+        assert statuses(results) == ["pass"]
+
+    def test_a_parameter_shadows_an_imported_module(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+import os
+
+def f(state, os):
+    os.system(state.output.completion)
+""",
+        )
+        assert statuses(results) == ["pass"]
+
+    def test_the_module_is_still_seen_where_nothing_shadows_it(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+import os
+
+def g(os):
+    os.system("ls")
+
+def f(state):
+    os.system(state.output.completion)
+""",
+        )
+        assert [(d.status, d.line) for d in diagnostics(results)] == [("fail", 8)]
+
+
+class TestModuleLevelBlocks:
+    """A rebinding in a module-level block applies to that block and what it defines, nothing else."""
+
+    GUARD = """
+if __name__ == "__main__":
+    from inspect_ai import eval
+    eval("task.py", model="mockllm/model")
+"""
+
+    def test_tainted_module_level_eval_outside_the_guard_fails(self, tmp_path):
+        results = run(
+            tmp_path,
+            "from inspect_ai.util import sandbox\n\n"
+            'CODE = sandbox().read_file("x.py")\neval(CODE)\n' + self.GUARD,
+        )
+        assert [(d.status, d.line) for d in diagnostics(results)] == [("fail", 4)]
+
+    def test_untainted_module_level_eval_outside_the_guard_warns(self, tmp_path):
+        results = run(tmp_path, 'eval("1 + 1")\n' + self.GUARD)
+        assert [(d.status, d.line) for d in diagnostics(results)] == [("warn", 1)]
+
+    def test_function_defined_inside_the_guard_gets_the_rebinding(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+if __name__ == "__main__":
+    from inspect_ai import eval
+
+    def main(state):
+        eval(state.output.completion)
+
+    main(None)
+""",
+        )
+        assert statuses(results) == ["pass"]
+
+
+class TestCalleeContext:
+    """A followed call or traced return value is analysed in the scope where the callee was defined."""
+
+    def test_returned_read_through_an_enclosing_sandbox_binding(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+from inspect_ai.util import sandbox
+
+async def score(state, target):
+    sb = sandbox()
+    async def read():
+        return await sb.read_file("a")
+    exec(await read())
+""",
+        )
+        (d,) = diagnostics(results)
+        assert (d.status, d.line) == ("fail", 8)
+        assert "sandbox read_file(), returned by read()" in d.message
+
+    def test_returned_closure_over_a_tool_argument(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+@tool
+def run_code():
+    async def execute(x: str) -> str:
+        def get():
+            return x
+        exec(get())
+        return ""
+    return execute
+""",
+        )
+        assert [(d.status, d.line) for d in diagnostics(results)] == [("fail", 7)]
+
+    def test_followed_helper_keeps_its_enclosing_rebinding(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+@tool
+def run_task():
+    from inspect_ai import eval
+
+    def helper(task):
+        eval(task, model="mockllm/model")
+
+    async def execute(task: str) -> str:
+        helper(task)
+        return ""
+
+    return execute
+""",
+        )
+        assert statuses(results) == ["pass"]
+
+
+class TestPerformance:
+    def test_many_calls_to_one_tainted_helper_are_analysed_once(self, tmp_path):
+        import time
+
+        body = "\n".join(f"    v{i} = code + str({i})" for i in range(200))
+        calls = "\n".join("    helper(state.output.completion)" for _ in range(300))
+        code = f"def helper(code):\n{body}\n    exec(v199)\n\n\ndef score(state):\n{calls}\n"
+        start = time.perf_counter()
+        results = run(tmp_path, code)
+        elapsed = time.perf_counter() - start
+        (d,) = diagnostics(results)
+        assert d.status == "fail"
+        assert "via helper() from line 206" in d.message
+        assert elapsed < 0.5
