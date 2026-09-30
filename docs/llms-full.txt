@@ -1419,7 +1419,7 @@ Only the argument that is run counts: the code of `exec`, not the namespace pass
 **Statuses:**
 
 - error when a source reaches a sink. The allowlist key is `<path within the package>:<sink>`, for example `common/tools.py:eval` or `solver.py:subprocess.run`;
-- warning for every other shell, code or deserialisation sink in host code, so a reviewer sees each one. Mark a reviewed site with `# inspect-evals-lint: ignore[host_code_execution]` on any line of the call;
+- warning for every other shell, code or deserialisation sink in host code, so a reviewer sees each one. Mark a reviewed site with `# inspect-evals-lint: ignore[host_code_execution] -- <why it is safe>` on any line of the call;
 - warning when a process runs from an argv that is not a list literal and carries model-controlled input, since the program cannot be told.
 
 **Known limits.** An interpreter given code on its command line, such as `["bash", "-c", tool_argument]`, is a constant program with a tainted argument and is not reported. A same-file `def eval` or a relative import of `eval` is still taken for the builtin.

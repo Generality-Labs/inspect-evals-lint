@@ -126,7 +126,7 @@ FAIL_HINT = (
 )
 WARN_HINT = (
     "check that no model output, tool argument or sandbox content can reach it, then mark the "
-    f"site reviewed with `# inspect-evals-lint: ignore[{RULE_NAME}]`"
+    f"site reviewed with `# inspect-evals-lint: ignore[{RULE_NAME}] -- <why it is safe>`"
 )
 ARGV_HINT = (
     "build the argv as a list literal with a constant program, so only its arguments can come "
@@ -926,8 +926,8 @@ def host_code_execution(ctx: LintContext) -> Iterable[Finding]:
       ``common/tools.py:eval`` or ``solver.py:subprocess.run``;
     - warning for every other shell, code or deserialisation sink in host
       code, so a reviewer sees each one. Mark a reviewed site with
-      ``# inspect-evals-lint: ignore[host_code_execution]`` on any line of the
-      call;
+      ``# inspect-evals-lint: ignore[host_code_execution] -- <why it is safe>``
+      on any line of the call;
     - warning when a process runs from an argv that is not a list literal and
       carries model-controlled input, since the program cannot be told.
 
