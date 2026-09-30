@@ -44,7 +44,7 @@ HELPER_RULES = {r.name for r in rules() if "helper" in r.scopes}
 
 def test_all_check_names_are_registered() -> None:
     assert rule_names() == sorted(r.name for r in rules())
-    assert len(rule_names()) == 28
+    assert len(rule_names()) == 29
 
 
 def test_every_check_has_a_category() -> None:
@@ -501,6 +501,25 @@ def test_sandbox_privileges_allowlist_is_scoped_to_service_field_and_value(
     ]
     assert report.diagnostics[0].message.startswith("Allowlisted:")
     assert "'default:cap_add:ALL'" in (report.diagnostics[2].hint or "")
+
+
+def test_host_code_execution_allowlist_is_keyed_by_file_and_sink(
+    monorepo: tuple[Path, LintConfig],
+) -> None:
+    root, config = monorepo
+    write(
+        config.package_dir(root, "alpha") / "common" / "tools.py",
+        "def run(state):\n    eval(state.output.completion)\n    exec(state.output.completion)\n",
+    )
+    with (root / "pyproject.toml").open("a") as f:
+        f.write(
+            '\n[tool.inspect-evals-lint.allowlists.host_code_execution]\nalpha = ["common/tools.py:eval"]\n'
+        )
+    report = lint_package(root, "alpha", check="IESC002")
+    assert [(d.key, d.status) for d in report.diagnostics] == [
+        ("common/tools.py:eval", "warn"),
+        ("common/tools.py:exec", "fail"),
+    ]
 
 
 def test_stale_allowlist_entry_warns_at_pyproject(monorepo: tuple[Path, LintConfig]) -> None:
