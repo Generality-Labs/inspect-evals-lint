@@ -31,4 +31,4 @@ return Score.unscored(reason="grader_failed", explanation="grader returned nothi
 - [Custom Scorers: Unscored Samples](https://inspect.aisi.org.uk/custom-scorers.html#unscored-samples)
 - [Scoring Policy: Recording the reason](https://inspect.aisi.org.uk/scoring-policy.html#recording-the-reason)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IECQ003]` or `ignore[unscored_reason]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
+Suppress on a line with `# inspect-evals-lint: ignore[IECQ003] -- <reason>` or `ignore[unscored_reason] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IECQ`.

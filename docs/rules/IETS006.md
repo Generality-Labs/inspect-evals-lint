@@ -18,4 +18,4 @@ A custom scorer is the evaluation's own logic, the part no upstream test covers.
 
 - [Custom Scorers](https://inspect.aisi.org.uk/custom-scorers.html)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IETS006]` or `ignore[custom_scorer_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IETS006] -- <reason>` or `ignore[custom_scorer_tests] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IETS`.

@@ -130,7 +130,7 @@ def print_report(
     console.print()
     console.print("[dim]To suppress a finding, add one of:[/]")
     for name in dict.fromkeys(failed_rules):
-        comment = escape(f"# inspect-evals-lint: ignore[{name}]")
+        comment = escape(f"# inspect-evals-lint: ignore[{name}] -- <reason>")
         console.print(f"  [cyan]{comment}[/]  [dim](on the line)[/]")
     table_entry = escape(f'per-file-ignores = {{ "{source_root}/{report.name}/**" = ["<rule>"] }}')
     console.print(f"  [cyan]{table_entry}[/]  [dim](in {escape('[tool.inspect-evals-lint]')})[/]")

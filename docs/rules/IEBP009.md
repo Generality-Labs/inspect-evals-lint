@@ -30,4 +30,4 @@ KNOWN_BROKEN = {"ruin_names_100": "https://github.com/org/repo/issues/19"}
 
 - [Datasets: Dataset Samples](https://inspect.aisi.org.uk/datasets.html#dataset-samples)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP009]` or `ignore[known_broken_reported]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP009] -- <reason>` or `ignore[known_broken_reported] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.

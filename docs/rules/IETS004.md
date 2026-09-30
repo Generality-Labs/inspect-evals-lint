@@ -18,4 +18,4 @@ When any file in the package mentions `record_to_sample`, some test file must me
 
 - [Datasets: Field Mapping](https://inspect.aisi.org.uk/datasets.html#field-mapping)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IETS004]` or `ignore[record_to_sample_test]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IETS004] -- <reason>` or `ignore[record_to_sample_test] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IETS`.

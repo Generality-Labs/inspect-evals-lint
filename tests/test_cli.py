@@ -82,7 +82,7 @@ def test_single_package_fail_prints_hints(
     assert run("alpha", "--root", str(root)) == 1
     out = capsys.readouterr().out
     assert "IEFS006 readme" in out
-    assert "# inspect-evals-lint: ignore[readme]" in out
+    assert "# inspect-evals-lint: ignore[readme] -- <reason>" in out
     assert 'per-file-ignores = { "src/inspect_evals/alpha/**"' in out
 
 

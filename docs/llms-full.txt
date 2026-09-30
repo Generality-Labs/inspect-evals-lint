@@ -118,10 +118,12 @@ The documentation site is built to be read by machines as well as people:
 
 Every finding has a file and, where it is in a file's contents, a line, so one comment syntax covers every rule:
 
-- Line: `# inspect-evals-lint: ignore[IEBP003]` on the offending line, or on any line of a multi-line statement (formatters move trailing comments inside parenthesised imports). Names, codes and code prefixes are accepted, comma-separated. In a Dockerfile, whose instructions take no trailing comment, put it on the line above the instruction.
-- File: `# inspect-evals-lint: ignore-file[IEBP003]` within the first ten lines of the file.
+- Line: `# inspect-evals-lint: ignore[IEBP003] -- ids are row numbers` on the offending line, or on any line of a multi-line statement (formatters move trailing comments inside parenthesised imports). Names, codes and code prefixes are accepted, comma-separated. In a Dockerfile, whose instructions take no trailing comment, put it on the line above the instruction.
+- File: `# inspect-evals-lint: ignore-file[IEBP003] -- <reason>` within the first ten lines of the file.
 - Paths: `per-file-ignores` in the configuration table, for whole directories.
 - Not linted at all: `exclude`, for code that is shipped into a sandbox rather than run on the host.
+
+Every comment gives a reason after `--`: why the finding is acceptable here, so the next reader can tell whether the decision still holds. A comment without one still suppresses the finding, and `suppression_syntax` (IECQ005) reports it as a warning.
 
 The comment is namespaced with the tool's name rather than reusing ruff's `# noqa`: ruff reads every `# noqa` comment and warns about codes it does not know, so a shared spelling would turn each suppression into a ruff warning. Suppressed findings still appear in reports, marked `[suppressed]`, and count as passing. A marker the linter does not read suppresses nothing and is reported as a warning by `suppression_syntax` (IECQ005) with the replacement in its hint: the former `noautolint` comments and `.noautolint` files, a bare `ignore` or `ignore[]`, an `ignore-file` past the header, or a selector that names no rule.
 
@@ -186,7 +188,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the c
 | [IECQ002](rules/IECQ002.md) | `score_constants`       | eval, helper | Score() values use the CORRECT/INCORRECT constants, not string literals               |
 | [IECQ003](rules/IECQ003.md) | `unscored_reason`       | eval, helper | Score.unscored() passes a reason= and the legacy unscored_reason metadata key is gone |
 | [IECQ004](rules/IECQ004.md) | `external_dependencies` | eval, helper | Third-party imports are declared in pyproject.toml                                    |
-| [IECQ005](rules/IECQ005.md) | `suppression_syntax`    | eval, helper | Every suppression marker is one the linter reads                                      |
+| [IECQ005](rules/IECQ005.md) | `suppression_syntax`    | eval, helper | Every suppression marker is one the linter reads, and says why                        |
 
 ## Tests
 
@@ -236,12 +238,12 @@ Each rule belongs to one category. The JSON output and `registry.CATEGORIES` exp
 
 ## Suppression
 
-- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. In a Dockerfile, on the line above the instruction. In a Compose file, on the setting's line or the list item's line.
-- File: `# inspect-evals-lint: ignore-file[<rule>]` within the first ten lines.
+- Line: `# inspect-evals-lint: ignore[<rule>] -- <reason>` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. In a Dockerfile, on the line above the instruction. In a Compose file, on the setting's line or the list item's line.
+- File: `# inspect-evals-lint: ignore-file[<rule>] -- <reason>` within the first ten lines.
 - Paths: `per-file-ignores = { "<glob>" = ["<rule>"] }` in `[tool.inspect-evals-lint]`.
 - Never read: `exclude = ["<glob>"]` keeps files out of the AST-based rules entirely, for code shipped into a sandbox.
 
-Suppressed findings still appear in reports, marked `[suppressed]`, and count as passing. A marker the linter does not read (the former `noautolint` comments and `.noautolint` files, `ignore` without a rule list, a selector naming no rule) suppresses nothing and is reported by `suppression_syntax` with the replacement in its hint.
+Every comment gives a reason after `--`, saying why the finding is acceptable; `suppression_syntax` warns about a comment without one, and the suppression still applies. Suppressed findings still appear in reports, marked `[suppressed]`, and count as passing. A marker the linter does not read (the former `noautolint` comments and `.noautolint` files, `ignore` without a rule list, a selector naming no rule) suppresses nothing and is reported by `suppression_syntax` with the replacement in its hint.
 
 
 ---
@@ -383,7 +385,7 @@ src/inspect_evals/gpqa/__init__.py               # linted
 - [Tasks: Packaging](https://inspect.aisi.org.uk/tasks.html#packaging)
 - [Extensions: Components: Registration](https://inspect.aisi.org.uk/extensions-components.html#registration)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEFS001]` or `ignore[package_location]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS001] -- <reason>` or `ignore[package_location] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEFS`.
 
 
 ---
@@ -415,7 +417,7 @@ src/my_eval/v8.py          # defines the tasks: warned, not failed
 - [Tasks: Task Basics](https://inspect.aisi.org.uk/tasks.html#task-basics)
 - [Extensions: Components: Registration](https://inspect.aisi.org.uk/extensions-components.html#registration)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEFS002]` or `ignore[main_file]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS002] -- <reason>` or `ignore[main_file] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEFS`.
 
 
 ---
@@ -447,7 +449,7 @@ __all__ = ["my_eval", "my_eval_hard"]
 
 - [Extensions: Components: Registration](https://inspect.aisi.org.uk/extensions-components.html#registration)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEFS003]` or `ignore[init_exports]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS003] -- <reason>` or `ignore[init_exports] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEFS`.
 
 
 ---
@@ -483,7 +485,7 @@ my_eval = "my_eval"
 - [Extensions: Components: Registration](https://inspect.aisi.org.uk/extensions-components.html#registration)
 - [Extensions: Components: Tasks](https://inspect.aisi.org.uk/extensions-components.html#tasks)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEFS004]` or `ignore[registry]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS004] -- <reason>` or `ignore[registry] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEFS`.
 
 
 ---
@@ -518,7 +520,7 @@ tasks:
 - `eval-yaml-required`
 - `eval-yaml-required-fields`
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEFS005]` or `ignore[eval_yaml]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS005] -- <reason>` or `ignore[eval_yaml] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEFS`.
 
 
 ---
@@ -541,7 +543,7 @@ The README is the evaluation's front door. A missing one leaves users guessing a
 
 - `readme-location`
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEFS006]` or `ignore[readme]`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS006] -- <reason>` or `ignore[readme] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEFS`.
 
 
 ---
@@ -572,7 +574,7 @@ Use instead:
 from inspect_ai.scorer import Score
 ```
 
-Suppress on a line with `# inspect-evals-lint: ignore[IECQ001]` or `ignore[private_api_imports]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
+Suppress on a line with `# inspect-evals-lint: ignore[IECQ001] -- <reason>` or `ignore[private_api_imports] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IECQ`.
 
 
 ---
@@ -610,7 +612,7 @@ return Score(value=CORRECT)
 - [Custom Scorers: Score](https://inspect.aisi.org.uk/custom-scorers.html#score)
 - [Custom Scorers: Score Value](https://inspect.aisi.org.uk/custom-scorers.html#score-value)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IECQ002]` or `ignore[score_constants]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
+Suppress on a line with `# inspect-evals-lint: ignore[IECQ002] -- <reason>` or `ignore[score_constants] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IECQ`.
 
 
 ---
@@ -646,7 +648,7 @@ return Score.unscored(reason="grader_failed", explanation="grader returned nothi
 - [Custom Scorers: Unscored Samples](https://inspect.aisi.org.uk/custom-scorers.html#unscored-samples)
 - [Scoring Policy: Recording the reason](https://inspect.aisi.org.uk/scoring-policy.html#recording-the-reason)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IECQ003]` or `ignore[unscored_reason]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
+Suppress on a line with `# inspect-evals-lint: ignore[IECQ003] -- <reason>` or `ignore[unscored_reason] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IECQ`.
 
 
 ---
@@ -698,14 +700,14 @@ my_eval = ["datasets>=4.0", "scikit-learn"]
 
 - [Tasks: Packaging](https://inspect.aisi.org.uk/tasks.html#packaging)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IECQ004]` or `ignore[external_dependencies]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
+Suppress on a line with `# inspect-evals-lint: ignore[IECQ004] -- <reason>` or `ignore[external_dependencies] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IECQ`.
 
 
 ---
 
 # IECQ005: suppression_syntax
 
-Every suppression marker is one the linter reads.
+Every suppression marker is one the linter reads, and says why.
 
 **Category:** code_quality · **Applies to:** eval, helper
 
@@ -713,9 +715,15 @@ Every suppression marker is one the linter reads.
 
 Reads the `# inspect-evals-lint: ignore[...]` comments in the package's Python files and Dockerfiles (`exclude`d files are skipped) and Compose files, and warns about each marker that suppresses nothing: a comment in the removed `# noautolint` syntax or a `.noautolint` file, an `ignore` or `ignore-file` without a bracketed rule list, an `ignore-file` past the first ten lines, and a selector that names no rule. One warning per marker, at its line. The other selectors in the same comment still apply.
 
+Also warns about each comment that suppresses something but gives no reason. The reason follows the rule list after `--`: `# inspect-evals-lint: ignore[sample_ids] -- ids are row numbers`. It runs to the end of the line, and markers quoted in it are not read. Another tool's comment straight after `--`, a second `--` and an unfilled `<reason>` placeholder are not reasons. The suppression applies either way.
+
+A comment cannot suppress this rule's findings, since they are about comments: `ignore[IECQ]` would otherwise hide its own missing reason. Use `per-file-ignores` to suppress them for a path.
+
 ## Why is this bad?
 
 A marker the linter does not read does nothing, silently: the finding it was meant to cover is reported under its own rule while the reader of the code believes it is handled. Earlier releases stopped with a configuration error instead, which lost every other result for the package, so a repository linted by a third party (the register lint service) had no results at all until it migrated.
+
+A suppression without a reason tells the next reader that someone decided the finding was acceptable, but not why, so they cannot tell whether the decision still holds.
 
 ## Example
 
@@ -726,10 +734,10 @@ from inspect_ai.model._model import thing  # noautolint: private_api_imports
 Use instead:
 
 ```python
-from inspect_ai.model._model import thing  # inspect-evals-lint: ignore[private_api_imports]
+from inspect_ai.model._model import thing  # inspect-evals-lint: ignore[private_api_imports] -- no public equivalent yet
 ```
 
-Suppress on a line with `# inspect-evals-lint: ignore[IECQ005]` or `ignore[suppression_syntax]`; select or ignore it in configuration by either, or by the prefix `IECQ`.
+Suppress on a line with `# inspect-evals-lint: ignore[IECQ005] -- <reason>` or `ignore[suppression_syntax] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IECQ`.
 
 
 ---
@@ -753,7 +761,7 @@ An evaluation with no tests at all has never been run against the mock model, so
 - `tests-root`
 - `tests-layout`
 
-Suppress on a line with `# inspect-evals-lint: ignore[IETS001]` or `ignore[tests_exist]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IETS001] -- <reason>` or `ignore[tests_exist] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IETS`.
 
 
 ---
@@ -776,7 +784,7 @@ Per-evaluation test trees with duplicate module basenames (`test_scorer.py` in t
 
 - `tests-layout`
 
-Suppress on a line with `# inspect-evals-lint: ignore[IETS002]` or `ignore[tests_init]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IETS002] -- <reason>` or `ignore[tests_init] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IETS`.
 
 
 ---
@@ -809,7 +817,7 @@ def test_e2e():
 
 - [Reference: eval()](https://inspect.aisi.org.uk/reference/inspect_ai.html#eval)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IETS003]` or `ignore[e2e_test]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IETS003] -- <reason>` or `ignore[e2e_test] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IETS`.
 
 
 ---
@@ -832,7 +840,7 @@ When any file in the package mentions `record_to_sample`, some test file must me
 
 - [Datasets: Field Mapping](https://inspect.aisi.org.uk/datasets.html#field-mapping)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IETS004]` or `ignore[record_to_sample_test]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IETS004] -- <reason>` or `ignore[record_to_sample_test] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IETS`.
 
 
 ---
@@ -856,7 +864,7 @@ A custom solver or agent is the evaluation's own logic, the part no upstream tes
 - [Solvers: Custom Solvers](https://inspect.aisi.org.uk/solvers.html#custom-solvers)
 - [Custom Agents](https://inspect.aisi.org.uk/agent-custom.html)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IETS005]` or `ignore[custom_solver_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IETS005] -- <reason>` or `ignore[custom_solver_tests] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IETS`.
 
 
 ---
@@ -879,7 +887,7 @@ A custom scorer is the evaluation's own logic, the part no upstream test covers.
 
 - [Custom Scorers](https://inspect.aisi.org.uk/custom-scorers.html)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IETS006]` or `ignore[custom_scorer_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IETS006] -- <reason>` or `ignore[custom_scorer_tests] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IETS`.
 
 
 ---
@@ -902,7 +910,7 @@ A custom tool is the evaluation's own logic, the part no upstream test covers. O
 
 - [Tools: Custom Tools](https://inspect.aisi.org.uk/tools.html#custom-tools)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IETS007]` or `ignore[custom_tool_tests]`; select or ignore it in configuration by either, or by the prefix `IETS`.
+Suppress on a line with `# inspect-evals-lint: ignore[IETS007] -- <reason>` or `ignore[custom_tool_tests] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IETS`.
 
 
 ---
@@ -949,7 +957,7 @@ def graded(model: str | Model | None = None):
 - [Custom Scorers: Models in Scorers](https://inspect.aisi.org.uk/custom-scorers.html#models-in-scorers)
 - [Custom Agents: Parameters](https://inspect.aisi.org.uk/agent-custom.html#parameters)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP001]` or `ignore[get_model_location]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP001] -- <reason>` or `ignore[get_model_location] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
 
 ---
@@ -992,7 +1000,7 @@ grader = get_model(role="grader", required=True)
 - [Models: Role Defaults](https://inspect.aisi.org.uk/models.html#role-defaults)
 - [Tasks: Model Roles](https://inspect.aisi.org.uk/tasks.html#model-roles)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP002]` or `ignore[model_role_resolution]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP002] -- <reason>` or `ignore[model_role_resolution] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
 
 ---
@@ -1028,7 +1036,7 @@ Sample(input=record["question"], target=record["answer"], id=record["id"])
 - [Datasets: Dataset Samples](https://inspect.aisi.org.uk/datasets.html#dataset-samples)
 - [Log Files: IDs and Shuffling](https://inspect.aisi.org.uk/eval-logs.html#ids-and-shuffling)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP003]` or `ignore[sample_ids]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP003] -- <reason>` or `ignore[sample_ids] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
 
 ---
@@ -1070,7 +1078,7 @@ def my_eval(solver: Solver | None = None, grader_model: str | None = None):
 - [Tasks: Scorer Override](https://inspect.aisi.org.uk/tasks.html#scorer-override)
 - [Extensions: Components: Tasks](https://inspect.aisi.org.uk/extensions-components.html#tasks)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP004]` or `ignore[task_overridable_defaults]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP004] -- <reason>` or `ignore[task_overridable_defaults] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
 
 ---
@@ -1114,7 +1122,7 @@ services:
 
 - [Sandboxing: Task Configuration](https://inspect.aisi.org.uk/sandboxing.html#task-configuration)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP005]` or `ignore[sandbox_image_pinning]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP005] -- <reason>` or `ignore[sandbox_image_pinning] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
 
 ---
@@ -1152,7 +1160,7 @@ metadata:
 - [Daytona sandbox: Docker Compose (GPU reservations)](https://meridianlabs-ai.github.io/inspect_sandboxes/daytona.html#docker-compose)
 - [Kubernetes sandbox: Targeting kubeconfig contexts (GPU nodes)](https://k8s-sandbox.aisi.org.uk/tips/configuration/#targeting-specific-or-multiple-kubeconfig-contexts)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP006]` or `ignore[gpu_sandbox_check]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP006] -- <reason>` or `ignore[gpu_sandbox_check] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
 
 ---
@@ -1205,7 +1213,7 @@ RUN uv sync --locked --no-dev --no-install-project
 - [Sandboxing: Task Configuration](https://inspect.aisi.org.uk/sandboxing.html#task-configuration)
 - [Sandboxing: Prebuilt Images](https://inspect.aisi.org.uk/sandboxing.html#prebuilt-images)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP007]` or `ignore[dockerfile_locking]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP007] -- <reason>` or `ignore[dockerfile_locking] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
 
 ---
@@ -1245,7 +1253,7 @@ dataset = filter_duplicate_ids(
 - [Datasets: Dataset Samples](https://inspect.aisi.org.uk/datasets.html#dataset-samples)
 - [Log Files: IDs and Shuffling](https://inspect.aisi.org.uk/eval-logs.html#ids-and-shuffling)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP008]` or `ignore[duplicate_filter_acknowledged]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP008] -- <reason>` or `ignore[duplicate_filter_acknowledged] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
 
 ---
@@ -1280,7 +1288,7 @@ KNOWN_BROKEN = {"ruin_names_100": "https://github.com/org/repo/issues/19"}
 
 - [Datasets: Dataset Samples](https://inspect.aisi.org.uk/datasets.html#dataset-samples)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IEBP009]` or `ignore[known_broken_reported]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+Suppress on a line with `# inspect-evals-lint: ignore[IEBP009] -- <reason>` or `ignore[known_broken_reported] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.
 
 
 ---
@@ -1384,4 +1392,4 @@ Service `environment` and `env_file` values are not checked, though they can als
 
 - [Sandboxing](https://inspect.aisi.org.uk/sandboxing.html)
 
-Suppress on a line with `# inspect-evals-lint: ignore[IESC001]` or `ignore[sandbox_privileges]`; select or ignore it in configuration by either, or by the prefix `IESC`.
+Suppress on a line with `# inspect-evals-lint: ignore[IESC001] -- <reason>` or `ignore[sandbox_privileges] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IESC`.

@@ -253,10 +253,10 @@ def unscored_reason(ctx: LintContext) -> Iterable[Finding]:
     name="suppression_syntax",
     category="code_quality",
     scopes=("eval", "helper"),
-    summary="Every suppression marker is one the linter reads",
+    summary="Every suppression marker is one the linter reads, and says why",
 )
 def suppression_syntax(ctx: LintContext) -> Iterable[Finding]:
-    """Every suppression marker is one the linter reads.
+    """Every suppression marker is one the linter reads, and says why.
 
     ## What it does
     Reads the ``# inspect-evals-lint: ignore[...]`` comments in the package's
@@ -267,6 +267,17 @@ def suppression_syntax(ctx: LintContext) -> Iterable[Finding]:
     that names no rule. One warning per marker, at its line. The other selectors in
     the same comment still apply.
 
+    Also warns about each comment that suppresses something but gives no reason.
+    The reason follows the rule list after ``--``:
+    ``# inspect-evals-lint: ignore[sample_ids] -- ids are row numbers``. It runs
+    to the end of the line, and markers quoted in it are not read. Another
+    tool's comment straight after ``--``, a second ``--`` and an unfilled
+    ``<reason>`` placeholder are not reasons. The suppression applies either way.
+
+    A comment cannot suppress this rule's findings, since they are about
+    comments: ``ignore[IECQ]`` would otherwise hide its own missing reason. Use
+    ``per-file-ignores`` to suppress them for a path.
+
     ## Why is this bad?
     A marker the linter does not read does nothing, silently: the finding it was
     meant to cover is reported under its own rule while the reader of the code
@@ -275,19 +286,23 @@ def suppression_syntax(ctx: LintContext) -> Iterable[Finding]:
     linted by a third party (the register lint service) had no results at all
     until it migrated.
 
+    A suppression without a reason tells the next reader that someone decided
+    the finding was acceptable, but not why, so they cannot tell whether the
+    decision still holds.
+
     ## Example
     ```python
     from inspect_ai.model._model import thing  # noautolint: private_api_imports
     ```
     Use instead:
     ```python
-    from inspect_ai.model._model import thing  # inspect-evals-lint: ignore[private_api_imports]
+    from inspect_ai.model._model import thing  # inspect-evals-lint: ignore[private_api_imports] -- no public equivalent yet
     ```
     """
     from inspect_evals_lint.suppressions import load_suppressions  # avoids an import cycle
 
     suppressions = load_suppressions(ctx)
-    for problem in suppressions.problems:
+    for problem in (*suppressions.problems, *suppressions.missing_reasons):
         yield Diagnostic(
             problem.message,
             file=problem.file,
@@ -295,10 +310,10 @@ def suppression_syntax(ctx: LintContext) -> Iterable[Finding]:
             severity="warning",
             hint=problem.hint,
         )
-    if not suppressions.problems:
+    if not suppressions.problems and not suppressions.missing_reasons:
         yield Outcome(
             "pass",
-            f"{suppressions.comments} suppression comment(s) read"
+            f"{suppressions.comments} suppression comment(s) read, each with a reason"
             if suppressions.comments
             else "No suppression comments",
         )
