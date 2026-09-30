@@ -9,7 +9,7 @@ One document per run. `RunReport.to_dict()` produces the same mapping from the P
 ```json
 {
   "schema_version": 3,
-  "version": "0.3.0",
+  "version": "0.10.0",
   "root": "/abs/path/to/repo",
   "passed": false,
   "summary": {"pass": 40, "fail": 2, "warn": 1, "skip": 6, "suppressed": 0},
@@ -51,7 +51,7 @@ One document per run. `RunReport.to_dict()` produces the same mapping from the P
 
 | Field                      | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema_version`           | Integer, bumped for incompatible output changes, including the category set. Check it first.                                                                                                                                                                                                                                                                                                                                                                                |
+| `schema_version`           | Integer, bumped for incompatible output changes, including the category set and what `score` counts. Check it first.                                                                                                                                                                                                                                                                                                                                                        |
 | `version`                  | The inspect-evals-lint version that produced the document.                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `root`                     | Absolute repository root the run used. Every `file` below is relative to it when it falls under it.                                                                                                                                                                                                                                                                                                                                                                         |
 | `passed`                   | `true` when no diagnostic in any package has status `fail`. Mirrors the exit code.                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -66,7 +66,7 @@ One document per run. `RunReport.to_dict()` produces the same mapping from the P
 
 `category` is one of `file_structure`, `code_quality`, `tests`, `best_practices`, and `security`. Schema version 2 adds `security` and the `IESC` rule prefix. Existing codes, categories, fields, and score calculations are unchanged. Consumers must accept both versions during migration, add the category to validation and displays, and accept `IESC` codes. Adding or changing categories requires a schema version update.
 
-Schema version 3 counts `suppressed` rules as passing: `passing` is `pass` + `warn` + `suppressed`, where version 2 had `pass` + `warn`. The fields and statuses are unchanged; only what `passing` and `score` add up changes. A suppression is a decision recorded in the repository, with its reason, so it counts as met, and `suppressed` beside the score says how many rules were met that way. A consumer that recomputes the score must branch on the version.
+Schema version 3 counts `suppressed` rules as passing: `passing` is `pass` + `warn` + `suppressed`, where version 2 had `pass` + `warn`. The fields and statuses are unchanged; only what `passing` and `score` add up changes. A suppression is a decision recorded in the repository, so it counts as met, and `suppressed` beside the score says how many rules were met that way. A consumer that recomputes the score must branch on the version.
 
 Update the register publisher and documentation dashboard before deploying a linter release that emits a new version. The register service wraps lint reports in its own result and summary formats; their schema versions are independent of the nested lint report version.
 
@@ -91,13 +91,15 @@ A summary shaped for a pull request comment or a job summary. Per package: a hea
 ```markdown
 ### `gpqa`
 
-**19/20 checks met** · Structure 6/6 · Code quality 4/4 · Tests 6/6 · Best practices 3/4
+**19/20 checks met** (1 by suppression) · Structure 6/6 · Code quality 4/4 · Tests 6/6 · Best practices 3/4 · Security —
 
 <details>
-<summary>1 rule(s) not met, with warnings, or met by suppression</summary>
+<summary>1 not met · 1 met by suppression</summary>
 
 - **Not met** [`sample_ids`](https://inspect-evals-lint.generality.org/rules/IEBP003/)
   - `src/inspect_evals/gpqa/gpqa.py:42` Sample() call without id=<br>  Hint: pass a stable id= so the sample survives shuffles and reruns
+- **Suppressed** [`e2e_test`](https://inspect-evals-lint.generality.org/rules/IETS003/)
+  - `tests/gpqa` No end-to-end test
 
 </details>
 ```

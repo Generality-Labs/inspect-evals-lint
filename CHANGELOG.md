@@ -9,7 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - Suppressed findings count as met. A suppression is a decision recorded in the repository, and pylint, ruff, mypy, Biome and ESLint all leave suppressed findings out of their counts. In `Score`, `passing` is now `pass` + `warn` + `suppressed`. The `suppressed` count is shown beside the score, e.g. `**16/17 checks met** (2 by suppression)` in the Markdown headline. A package whose only unmet rules were suppressed now scores 100%, where it scored less on 0.9.0.
-- JSON reports use `schema_version: 3`, because `passing` and `score` add up differently. Fields and statuses are unchanged. A consumer that recomputes the score, such as the register publisher, must count `suppressed` as passing for version 3. It must be updated before any pin moves to this release.
+- JSON reports use `schema_version: 3`, because `passing` and `score` add up differently. Fields and statuses are unchanged. A consumer that recomputes or checks the score must count `suppressed` as passing for version 3, and must be updated before any pin moves to this release. There are two: the register publisher in inspect-evals-actions, and the inspect_evals docs dashboard (`docs/_scripts/register-lint.mjs`), which checks `passing` against its parts.
+- The Markdown list's summary line counts the rules it holds by kind, e.g. `1 not met · 1 with warnings · 2 met by suppression`. `by_suppression(score)` is exported for consumers that build their own headline.
 
 ## [0.9.0] - 2026-09-30
 

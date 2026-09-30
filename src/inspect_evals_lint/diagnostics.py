@@ -31,7 +31,7 @@ RULE_STATUS_ORDER: tuple[Status, ...] = ("fail", "warn", "suppressed", "pass", "
 
 Suppressed ranks above pass so that a rule met only because a finding was
 suppressed is reported as suppressed, not passed. It counts as met: a
-suppression is a decision someone made and recorded, with its reason, and the
+suppression is a decision someone made and recorded in the repository, and the
 reports say how many rules were met that way.
 """
 

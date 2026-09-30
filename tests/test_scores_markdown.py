@@ -9,7 +9,7 @@ from inspect_evals_lint import LintConfig, RunReport, lint_package
 from inspect_evals_lint.diagnostics import Diagnostic, Outcome, PackageReport
 from inspect_evals_lint.registry import get_rule
 from inspect_evals_lint.render import package_markdown, render_json, render_markdown
-from inspect_evals_lint.render.markdown import code, plain
+from inspect_evals_lint.render.markdown import by_suppression, code, plain
 from tests.conftest import write
 
 
@@ -147,7 +147,7 @@ def test_markdown_headline_lists_categories_and_folds_actionable_rules(tmp_path:
         "**2/3 checks met** · Structure 1/1 · Code quality — · Tests 0/1 · Best practices 1/1"
         in text
     )
-    assert "<summary>2 rule(s) not met, with warnings, or met by suppression</summary>" in text
+    assert "<summary>1 not met · 1 with warnings</summary>" in text
     assert (
         "- **Not met** [`e2e_test`](https://inspect-evals-lint.generality.org/rules/IETS003/)"
         in text
@@ -165,13 +165,44 @@ def test_markdown_headline_says_how_many_rules_are_met_by_suppression() -> None:
         ("sample_ids", "suppressed", "Sample() call without id="),
     )
     text = "\n".join(package_markdown(report, Path("/repo")))
-    assert "**3/3 checks met** (2 by suppression) · Structure 1/1" in text
+    assert (
+        "**3/3 checks met** (2 by suppression) · Structure 1/1 · Code quality — · Tests 1/1 "
+        "· Best practices 1/1 · Security —"
+    ) in text
+    assert "<summary>2 met by suppression</summary>" in text
     assert "- **Suppressed** [`e2e_test`]" in text
+
+
+def test_a_warning_with_a_suppressed_finding_is_not_met_by_suppression() -> None:
+    report = report_with(
+        ("sample_ids", "warn", "Sample() call without id="),
+        ("sample_ids", "suppressed", "Sample() call without id="),
+    )
+    assert report.score().suppressed == 0
+    text = "\n".join(package_markdown(report, Path("/repo")))
+    assert "**1/1 checks met** · " in text
+    assert "by suppression" not in text.split("<details>")[0]
+
+
+def test_by_suppression_suffix() -> None:
+    assert by_suppression(report_with(("readme", "pass", None)).score()) == ""
+    assert (
+        by_suppression(report_with(("readme", "suppressed", None)).score()) == " (1 by suppression)"
+    )
+    assert by_suppression(None) == ""
 
 
 def test_markdown_footer_says_suppressed_findings_count_as_met(tmp_path: Path) -> None:
     run = RunReport(root=tmp_path, packages=[report_with(("readme", "pass", None))])
-    assert "suppressed findings count as met" in render_markdown(run)
+    assert (
+        render_markdown(run)
+        .rstrip()
+        .endswith(
+            "Counts are rules met out of applicable rules: warnings count as met, and so do rules "
+            "whose only findings are suppressed; the headline says how many rules were met that "
+            "way. Rules that do not apply are excluded. Rule names link to their documentation."
+        )
+    )
 
 
 def test_markdown_links_locations_when_asked(tmp_path: Path) -> None:
