@@ -1,8 +1,9 @@
 """A Markdown summary of a run: per package, a headline count and the rules that need attention.
 
 This is the shape a pull-request comment or a job summary wants: one line
-saying how many rules are met, the per-category split, and a collapsible
-list of the rules not met, with warnings or suppressed, each finding on its
+saying how many rules are met (and how many by suppression), the per-category
+split, and a collapsible list of the rules not met, with warnings, or met by
+suppression (counted by kind in its summary line), each finding on its
 own line with the hint under it. Rules that passed or did not apply are
 counted but not listed. Every piece of text is escaped so that a message or
 path from the linted repository cannot inject markup or break a table.
@@ -56,8 +57,17 @@ def plain(text: str) -> str:
     return " ".join(text.split()).replace("|", "\\|")
 
 
+_SUMMARY_LABELS = {"fail": "not met", "warn": "with warnings", "suppressed": "met by suppression"}
+"""How the collapsed list summarises the rules it holds, worst first."""
+
+
 def counts(score: Score | None) -> str:
     return f"{score.passing}/{score.applicable}" if score and score.applicable else "—"
+
+
+def by_suppression(score: Score | None) -> str:
+    """`` (2 by suppression)`` when rules were met only by suppression, else empty; follows a count."""
+    return f" ({score.suppressed} by suppression)" if score and score.suppressed else ""
 
 
 def rule_link(code_: str, name: str, docs_base: str = RULE_DOCS_BASE) -> str:
@@ -73,9 +83,9 @@ def location(diagnostic: Diagnostic, root: Path | None, source_link: SourceLink 
 
 
 def headline(package: PackageReport) -> str:
-    """``**14/17 checks met** · Structure 6/6 · ...`` for one package."""
+    """``**14/17 checks met** (2 by suppression) · Structure 6/6 · ...`` for one package."""
     score = package.score()
-    parts = [f"**{counts(score)} checks met**"]
+    parts = [f"**{counts(score)} checks met**{by_suppression(score)}"]
     for category in CATEGORIES:
         parts.append(f"{CATEGORY_LABELS[category]} {counts(score.by_category.get(category))}")
     return " · ".join(parts)
@@ -100,9 +110,11 @@ def package_markdown(
     lines += [headline(package), ""]
 
     actionable: list[str] = []
+    listed: dict[str, int] = {}
     for rule_status in package.rule_statuses():
         if rule_status.status not in ACTIONABLE_STATUSES:
             continue
+        listed[rule_status.status] = listed.get(rule_status.status, 0) + 1
         rule = rule_status.rule
         actionable.append(
             f"- **{STATUS_LABELS[rule_status.status]}** {rule_link(rule.code, rule.name, docs_base)}"
@@ -121,11 +133,15 @@ def package_markdown(
             actionable.append(text)
     if not actionable:
         return [*lines, "Every applicable check is met.", ""]
-    rules_listed = sum(1 for line in actionable if line.startswith("- **"))
+    summary = " · ".join(
+        f"{listed[status]} {label}"
+        for status, label in _SUMMARY_LABELS.items()
+        if listed.get(status)
+    )
     return [
         *lines,
         "<details>",
-        f"<summary>{rules_listed} rule(s) not met, with warnings or suppressed</summary>",
+        f"<summary>{summary}</summary>",
         "",
         *actionable,
         "",
@@ -156,8 +172,8 @@ def render_markdown(
         )
     if footer:
         lines.append(
-            "Counts are rules met out of applicable rules: warnings count as met, suppressed "
-            "findings count against the total, and rules that do not apply are excluded. "
-            "Rule names link to their documentation."
+            "Counts are rules met out of applicable rules: warnings count as met, and so do rules "
+            "whose only findings are suppressed; the headline says how many rules were met that "
+            "way. Rules that do not apply are excluded. Rule names link to their documentation."
         )
     return "\n".join(lines).rstrip("\n") + "\n"

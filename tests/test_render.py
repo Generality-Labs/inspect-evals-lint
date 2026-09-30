@@ -309,7 +309,7 @@ def test_package_rules_count_reproduces_score():
     assert (
         score["applicable"] == score["pass"] + score["fail"] + score["warn"] + score["suppressed"]
     )
-    assert score["passing"] == score["pass"] + score["warn"]
+    assert score["passing"] == score["pass"] + score["warn"] + score["suppressed"]
     assert (score["pass"], score["fail"], score["warn"], score["skip"], score["suppressed"]) == (
         1,
         2,

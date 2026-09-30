@@ -8,10 +8,11 @@ from inspect_evals_lint.render.console import (
 )
 from inspect_evals_lint.render.github import render_github
 from inspect_evals_lint.render.json import SCHEMA_VERSION, package_to_dict, render_json, run_to_dict
-from inspect_evals_lint.render.markdown import package_markdown, render_markdown
+from inspect_evals_lint.render.markdown import by_suppression, package_markdown, render_markdown
 
 __all__ = [
     "SCHEMA_VERSION",
+    "by_suppression",
     "package_markdown",
     "package_to_dict",
     "print_check_summary",

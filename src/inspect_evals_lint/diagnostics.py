@@ -29,8 +29,10 @@ STATUSES: tuple[Status, ...] = ("pass", "fail", "warn", "skip", "suppressed")
 RULE_STATUS_ORDER: tuple[Status, ...] = ("fail", "warn", "suppressed", "pass", "skip")
 """Worst first. A rule that reported several things is scored once, at the worst of them.
 
-Suppressed ranks above pass because a suppressed finding counts against the
-total: the code still has the problem, the repository has chosen to live with it.
+Suppressed ranks above pass so that a rule met only because a finding was
+suppressed is reported as suppressed, not passed. It counts as met: a
+suppression is a decision someone made and recorded in the repository, and the
+reports say how many rules were met that way.
 """
 
 ACTIONABLE_STATUSES: frozenset[Status] = frozenset({"fail", "warn", "suppressed"})
@@ -109,10 +111,11 @@ class RuleStatus:
 class Score:
     """Rules met out of rules applicable, in the terms the register badges use.
 
-    Every rule that ran counts once at its worst status. ``passing`` is ``pass``
-    plus ``warn``; ``applicable`` also includes ``fail`` and ``suppressed``;
-    ``skip`` is not applicable. ``score`` is ``passing / applicable``, or None when
-    nothing applied.
+    Every rule that ran counts once at its worst status. ``passing`` is ``pass``,
+    ``warn`` and ``suppressed``; ``applicable`` also includes ``fail``; ``skip`` is
+    not applicable. ``score`` is ``passing / applicable``, or None when nothing
+    applied. ``suppressed`` says how many of the passing rules were met by
+    suppression, which the reports show beside the score.
     """
 
     pass_: int = 0
@@ -134,7 +137,7 @@ class Score:
 
     @property
     def passing(self) -> int:
-        return self.pass_ + self.warn
+        return self.pass_ + self.warn + self.suppressed
 
     @property
     def score(self) -> float | None:
