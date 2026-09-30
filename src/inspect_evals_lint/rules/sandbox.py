@@ -285,20 +285,7 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
 
     Reads parsed YAML from every ``compose*.y*ml`` and ``docker-compose*.y*ml``
     under the package, including nested files and overrides. Reports one error
-    per service and field for:
-
-    - ``privileged: true`` and ``use_api_socket: true``.
-    - Nonempty ``cap_add``, ``devices``, and ``device_cgroup_rules``.
-    - ``security_opt`` disabling seccomp, AppArmor, SELinux labels, or protected
-      system paths. Both ``option:value`` and ``option=value`` are checked.
-    - ``host`` in ``network_mode``, ``pid``, ``ipc``, ``userns_mode``, ``uts``, or
-      ``cgroup``, and ``container:`` namespaces in ``network_mode``, ``pid``, or ``ipc``.
-    - Host bind mounts in either volume syntax, Windows named pipe mounts, and
-      named volumes using the local driver's ``bind`` or ``rbind`` options.
-      Docker daemon socket sources are identified in the message. Read-only
-      host mounts are also reported because they still expose host data.
-    - ``volumes_from`` referring to external containers.
-    - Privileged ``pre_start``, ``post_start``, and ``pre_stop`` commands.
+    per service and field for the settings described below.
 
     GPU reservations under ``deploy.resources.reservations.devices``, ordinary
     named or anonymous volumes, and namespaces shared by ``service:`` reference
@@ -310,6 +297,127 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
     devices, namespaces, or the container engine, or remove runtime restrictions.
     Some evaluations need them. Each exception needs review and an allowlist
     entry; a finding does not establish that a setting is exploitable.
+
+    The effects depend on the host platform, daemon configuration, and remaining
+    permissions. In particular, sharing a namespace does not automatically
+    authorize every operation on the resources it exposes.
+
+    ### Privileges and device access
+
+    - ``privileged: true`` grants all Linux capabilities, exposes host devices,
+      and relaxes security profiles. This can allow sandbox processes to alter
+      host resources and take control of the host.
+      [Docker runtime privileges](https://docs.docker.com/engine/containers/run/#runtime-privilege-and-linux-capabilities).
+    - Any nonempty ``cap_add`` requests additional Linux capabilities. Each
+      capability authorizes particular operations: for example, ``SYS_ADMIN``
+      includes mounting filesystems, while ``SYS_PTRACE`` permits process
+      inspection subject to other restrictions. The implications depend on the
+      capabilities requested and the namespaces in which they apply.
+      [Linux capabilities](https://man7.org/linux/man-pages/man7/capabilities.7.html).
+    - Any nonempty ``devices`` exposes selected devices and their drivers to the
+      container. For example, access to a disk device can expose data beyond the
+      container's mounted directories. The effect depends on the device and its
+      allowed operations.
+      [Docker device access](https://docs.docker.com/reference/cli/docker/container/run/#device).
+    - Any nonempty ``device_cgroup_rules`` adds device permissions by type and
+      major/minor number. Rules can allow reading, writing, and creating device
+      nodes; wildcards can cover whole classes of devices. These permissions
+      can apply when a device node becomes available later.
+      [Linux device access rules](https://docs.kernel.org/admin-guide/cgroup-v1/devices.html).
+
+    ### Disabled security restrictions
+
+    The following values in ``security_opt`` are reported with either ``:`` or
+    ``=`` as the separator. Each disables a different restriction.
+
+    - ``seccomp=unconfined`` removes the container's system-call filter. Code can
+      attempt kernel operations that the default profile would reject, subject
+      to remaining permission checks.
+      [Docker seccomp profiles](https://docs.docker.com/engine/security/seccomp/).
+    - ``apparmor=unconfined`` removes AppArmor profile enforcement where AppArmor
+      is enabled. File access, mounts, and other operations lose the additional
+      restrictions imposed by that profile.
+      [Docker AppArmor profiles](https://docs.docker.com/engine/security/apparmor/).
+    - ``label=disable`` disables SELinux labeling for the container. On an
+      SELinux-enabled host, this removes label-based confinement that helps
+      separate container processes and resources.
+      [Docker security options](https://docs.docker.com/reference/cli/docker/container/run/#security-opt).
+    - ``systempaths=unconfined`` removes the runtime's masking and read-only
+      protection of system paths. Kernel information and controls at those
+      paths become accessible subject to remaining permissions.
+      [Docker system-path security option](https://docs.docker.com/reference/cli/docker/container/run/#security-opt).
+
+    ### Shared namespaces
+
+    | Setting | Implication |
+    | --- | --- |
+    | ``network_mode: host`` | Shares host networking. Processes can reach services on host loopback and listen on host ports without a port mapping. [Docker host networking](https://docs.docker.com/engine/network/drivers/host/). |
+    | ``pid: host`` | Makes host processes visible. Signaling or inspecting them then depends on credentials, capabilities, and other controls. [Linux PID namespaces](https://man7.org/linux/man-pages/man7/pid_namespaces.7.html). |
+    | ``ipc: host`` | Shares host IPC resources, including System V shared memory, semaphores, and message queues. Processes may read data or interfere with applications when IPC permissions allow it. [Linux IPC namespaces](https://man7.org/linux/man-pages/man7/ipc_namespaces.7.html). |
+    | ``userns_mode: host`` | Disables per-container user-namespace remapping where the Docker daemon enables it. Container user IDs lose that remapping's separation from host IDs. [Docker user-namespace remapping](https://docs.docker.com/engine/security/userns-remap/#disable-namespace-remapping-for-a-container). |
+    | ``uts: host`` | Shares the host's hostname and NIS domain name. A process with the required capability can change these identifiers for other processes in that namespace. [Linux UTS namespaces](https://man7.org/linux/man-pages/man7/uts_namespaces.7.html). |
+    | ``cgroup: host`` | Exposes the host view of cgroup paths and hierarchy. This reveals information outside the container's private view; it does not itself remove resource limits or grant write access. [Linux cgroup namespaces](https://man7.org/linux/man-pages/man7/cgroup_namespaces.7.html). |
+    | ``network_mode: container:...`` | Joins another container's networking, including its loopback services and listening ports. [Docker container networking mode](https://docs.docker.com/engine/network/#container-networks). |
+    | ``pid: container:...`` | Shares another container's process namespace, allowing process visibility and operations subject to permissions. [Docker PID settings](https://docs.docker.com/reference/cli/docker/container/run/#pid). |
+    | ``ipc: container:...`` | Shares another container's IPC resources, allowing data access or interference subject to permissions. [Docker IPC settings](https://docs.docker.com/reference/cli/docker/container/run/#ipc). |
+
+    ``container:`` references depend on containers outside the declared Compose
+    service relationships. The rule cannot establish their configuration.
+    References using ``service:`` remain within those declared relationships
+    and are outside this check.
+
+    ### Host files and engine access
+
+    - Host bind mounts in either short or long ``volumes`` syntax expose a host
+      path. Writable mounts can let sandbox code change host files; read-only
+      mounts still expose their contents, potentially including credentials or
+      evaluation answers. Relative paths and Windows host paths are checked too.
+      [Docker bind mounts](https://docs.docker.com/engine/storage/bind-mounts/).
+    - Named volumes whose local ``driver_opts.o`` contains ``bind`` or ``rbind``
+      also expose the host path in ``driver_opts.device``. Review them as host
+      bind mounts even though the service refers to a volume name.
+      [Compose local-driver bind example](https://docs.docker.com/reference/compose-file/volumes/#driver_opts).
+      The ``rbind`` option also includes existing mounts below the source path,
+      potentially exposing additional filesystems.
+      [Linux recursive bind mounts](https://man7.org/linux/man-pages/man8/mount.8.html).
+    - Windows named pipe mounts (``type: npipe``) expose a host communication
+      endpoint. The implications depend on the service listening on that pipe
+      and the caller's permissions.
+      [Compose mount types](https://docs.docker.com/reference/compose-file/services/#volumes).
+    - Docker daemon sockets receive an additional callout when the source
+      contains ``docker.sock`` or ``docker_engine``. Access to the engine API
+      can allow creation of containers with host mounts or elevated privileges.
+      [Docker daemon access](https://docs.docker.com/engine/security/#docker-daemon-attack-surface).
+      A read-only socket mount does not restrict which API operations a
+      connected client can request. Review must therefore account for
+      [Docker's API authorization policy](https://docs.docker.com/engine/extend/plugins_authorization/),
+      which allows all operations by default.
+    - ``use_api_socket: true`` provides the engine socket and the user's
+      credentials. In addition to engine access, this can permit registry
+      operations using those credentials.
+      [Compose API socket access](https://docs.docker.com/reference/compose-file/services/#use_api_socket).
+    - ``volumes_from: [container:...]`` imports another container's mounts,
+      potentially exposing files or sockets whose sources are not declared in
+      this Compose file. A read-only import still exposes readable data.
+      [Compose imported volumes](https://docs.docker.com/reference/compose-file/services/#volumes_from).
+
+    ### Privileged lifecycle commands
+
+    The rule also reports ``privileged: true`` within each lifecycle hook:
+
+    - ``pre_start`` runs an initialization step with extra privileges in a
+      temporary container before the service starts.
+      [Compose pre-start hooks](https://docs.docker.com/reference/compose-file/services/#pre_start).
+    - ``post_start`` runs a command with extra privileges in the running service
+      container after startup.
+      [Compose post-start hooks](https://docs.docker.com/reference/compose-file/services/#post_start).
+    - ``pre_stop`` runs a command with extra privileges before the service
+      container stops.
+      [Compose pre-stop hooks](https://docs.docker.com/reference/compose-file/services/#pre_stop).
+
+    These hooks need review even when the service itself has no ``privileged``
+    setting. Check what the command does and whether sandbox code can modify
+    any scripts or inputs it will use with those privileges.
 
     ## Example
 
@@ -332,19 +440,13 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
     read environment files, inspect images, combine overrides, follow ``include``
     or ``extends`` files, or inspect Kubernetes settings. Interpolated privilege,
     namespace, security-option, and mount values that cannot be checked produce
-    warnings. A pass means no listed settings were found in the files checked.
+    warnings because [Compose interpolation](https://docs.docker.com/reference/compose-file/interpolation/)
+    can change the effective settings at runtime. A pass means no listed
+    settings were found in the files checked.
 
-    Dockerfile ``USER`` and Compose ``user`` belong in a separate runtime-user
-    rule: root within a container does not itself grant host access. That rule
-    would need to account for the selected build stage, inherited image user,
-    Compose overrides, and Inspect's per-command user selection. Flagging every
-    ``USER root`` would also flag temporary root use during image builds.
-
-    Build privileges (``build.privileged``, ``build.entitlements``, and Dockerfile
-    ``RUN --security=insecure`` or ``RUN --network=host``) belong in a separate
-    build-isolation rule. Published ports, external networks, and host-gateway
-    mappings need a network-exposure policy. Missing hardening settings such as
-    ``read_only`` or ``no-new-privileges`` are outside this rule's checks.
+    Published ports, external networks, and host-gateway mappings need a
+    network-exposure policy. Missing hardening settings such as ``read_only`` or
+    ``no-new-privileges`` are outside this rule's checks.
 
     ## Options
 
