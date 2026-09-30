@@ -216,9 +216,32 @@ def _values(container: dict[str, Any], field: str) -> list[tuple[str, int | None
     return [(str(value), line_of(container, field))] if value else []
 
 
-def _service_privileges(
-    service: dict[str, Any], named_volumes: dict[str, Any]
+def _host_sourced(
+    service: dict[str, Any], compose: dict[str, Any], field: str
 ) -> Iterable[_Privilege]:
+    """Secrets or configs the service uses whose definition reads a host file or variable."""
+    definitions = _mapping(compose.get(field))
+    references = service.get(field)
+    for index, reference in enumerate(_sequence(references)):
+        name = reference if isinstance(reference, str) else _mapping(reference).get("source")
+        if not isinstance(name, str):
+            continue
+        definition = _mapping(definitions.get(name))
+        line = line_of(references, index)
+        path, variable = definition.get("file"), definition.get("environment")
+        if isinstance(path, str):
+            yield _Privilege(field, path, f"exposes host file '{path}' as '{name}'", line)
+        elif isinstance(variable, str):
+            yield _Privilege(
+                field,
+                f"env:{variable}",
+                f"exposes host environment variable '{variable}' as '{name}'",
+                line,
+            )
+
+
+def _service_privileges(service: dict[str, Any], compose: dict[str, Any]) -> Iterable[_Privilege]:
+    named_volumes = _mapping(compose.get("volumes"))
     for field in ("privileged", "use_api_socket", *_HOST_NAMESPACES):
         value = service.get(field)
         line = line_of(service, field)
@@ -323,6 +346,9 @@ def _service_privileges(
                 line,
                 "warning",
             )
+
+    yield from _host_sourced(service, compose, "secrets")
+    yield from _host_sourced(service, compose, "configs")
 
     for source, line in _values(service, "volumes_from"):
         if source.startswith("container:"):
@@ -475,6 +501,13 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
       connected client can request. Review must therefore account for
       [Docker's API authorization policy](https://docs.docker.com/engine/extend/plugins_authorization/),
       which allows all operations by default.
+    - ``secrets`` and ``configs`` whose top-level definition has a ``file`` or
+      ``environment`` source copy a host file or environment variable into the
+      container, at ``/run/secrets/<name>`` for a secret. Review them as you
+      would a read-only bind mount of that file. ``content`` and ``external``
+      sources are accepted. Keys name the file, or ``env:<variable>``.
+      [Compose secrets](https://docs.docker.com/reference/compose-file/secrets/),
+      [Compose configs](https://docs.docker.com/reference/compose-file/configs/).
     - ``use_api_socket: true`` provides the engine socket and the user's
       credentials. In addition to engine access, this can permit registry
       operations using those credentials.
@@ -528,8 +561,9 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
     can change the effective settings at runtime. A pass means no listed
     settings were found in the files checked.
 
-    Published ports, external networks, and host-gateway mappings need a
-    network-exposure policy. Missing hardening settings such as ``read_only`` or
+    Service ``environment`` and ``env_file`` values are not checked, though
+    they can also carry host values into the container. Published ports,
+    external networks, and host-gateway mappings need a network-exposure policy. Missing hardening settings such as ``read_only`` or
     ``no-new-privileges`` are outside this rule's checks.
 
     ## Options
@@ -537,7 +571,7 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
     - ``allowlists.sandbox_privileges``: ``{ package = ["service:field:value"] }``
       entries report warnings while present. Each finding names its key in the
       hint. The value is the capability, device, rule, namespace mode,
-      security option, host path or container, so allowing
+      security option, host path, secret or config source, or container, so allowing
       ``default:cap_add:SYS_PTRACE`` does not allow ``ALL``, and allowing one
       host path does not allow another. Settings without a value use
       ``service:field``, such as ``default:privileged`` and
@@ -580,9 +614,7 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
                 )
                 continue
             checked_services += 1
-            for privilege in _service_privileges(
-                _mapping(service), _mapping(_mapping(compose).get("volumes"))
-            ):
+            for privilege in _service_privileges(_mapping(service), _mapping(compose)):
                 issues += 1
                 key = privilege.key(service_name)
                 yield Diagnostic(

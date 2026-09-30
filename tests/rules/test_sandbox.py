@@ -250,6 +250,35 @@ class TestSandboxPrivileges:
         assert result.key == "default:volumes:/host"
         assert "/host" in result.message
 
+    @pytest.mark.parametrize("field", ["secrets", "configs"])
+    @pytest.mark.parametrize(
+        ("reference", "definition", "key"),
+        [
+            ("aws", {"file": "~/.aws/credentials"}, "~/.aws/credentials"),
+            ({"source": "aws", "target": "creds"}, {"file": "./creds"}, "./creds"),
+            ("aws", {"environment": "AWS_SECRET_ACCESS_KEY"}, "env:AWS_SECRET_ACCESS_KEY"),
+        ],
+    )
+    def test_host_sourced_secrets_and_configs(self, tmp_path, field, reference, definition, key):
+        compose = {"services": {"default": {field: [reference]}}, field: {"aws": definition}}
+        (tmp_path / "compose.yaml").write_text(yaml.safe_dump(compose))
+        (result,) = list(sandbox_privileges(context_for(tmp_path)))
+        assert result.status == "fail"
+        assert result.key == f"default:{field}:{key}"
+
+    @pytest.mark.parametrize("definition", [{"content": "x"}, {"external": True}, None])
+    def test_inline_external_and_undefined_configs_pass(self, tmp_path, definition):
+        compose = {"services": {"default": {"configs": ["app"]}}, "configs": {"app": definition}}
+        (tmp_path / "compose.yaml").write_text(yaml.safe_dump(compose))
+        (result,) = list(sandbox_privileges(context_for(tmp_path)))
+        assert result.status == "pass"
+
+    def test_unused_host_sourced_secret_passes(self, tmp_path):
+        compose = {"services": {"default": {}}, "secrets": {"aws": {"file": "~/.aws/credentials"}}}
+        (tmp_path / "compose.yaml").write_text(yaml.safe_dump(compose))
+        (result,) = list(sandbox_privileges(context_for(tmp_path)))
+        assert result.status == "pass"
+
     def test_ordinary_settings_and_gpu_reservations_pass(self, tmp_path):
         (result,) = self.run_check(
             tmp_path,
