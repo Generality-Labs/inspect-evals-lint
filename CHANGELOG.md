@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `host_code_execution` (IESC002) reports model-controlled input that reaches code execution on the host instead of in the sandbox. The sources are tool arguments, model output (`.completion`, `.messages`, `.tool_calls`, `.arguments`, `state.output`, `.generate(...)` results, `ModelOutput` parameters) and `sandbox()` `read_file()`/`exec()` results. The sinks are `exec`, `eval`, `compile`, `__import__`, shell commands (including `inspect_ai.util.subprocess` with a string), `subprocess` with a tainted program, `pickle.load(s)`, unsafe `yaml` loads, `torch.load` without `weights_only=True` and a tainted `importlib.import_module`. Taint is traced within a file, through one level of same-file calls. A traced flow is an error, allowlisted as `path/within/package.py:sink`. Every other shell, code or deserialisation sink in host code is a warning, so a reviewer sees each one once. Importing `eval` from `inspect_ai` exempts only `eval`, and only where the import is in force. Files matched by `exclude` count as sandbox code and are not read ([#12](https://github.com/Generality-Labs/inspect-evals-lint/issues/12)).
 - The `exclude` documentation now defines host code: every Python file outside its globs.
 
+### Fixed
+
+- The console's "Failures by check" and "Warnings by check" tables no longer read messages, hints and locations as Rich markup, which dropped bracketed text such as `ignore[<rule>]` in a hint.
+
 ## [0.9.0] - 2026-09-30
 
 Compose files are now checked for sandbox privileges and host access. The new `security` category holds `sandbox_privileges` (IESC001), which fails a package whose Compose services grant extra privileges or host access unless each exception is allowlisted. Upgrading can fail a package that passed on 0.8.0: IESC001 reports errors by default, and IEBP005 now also reads `docker-compose*.y*ml` files. JSON reports move to `schema_version: 2`. Consumers that validate categories or rule codes must accept `security` and `IESC` before upgrading.
