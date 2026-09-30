@@ -160,7 +160,8 @@ FAIL_HINT = (
 )
 WARN_HINT = (
     "check that no model output, tool argument or sandbox content can reach it, then mark the "
-    f"site reviewed with `# inspect-evals-lint: ignore[{RULE_NAME}] -- <why it is safe>`"
+    f"site reviewed with `# inspect-evals-lint: ignore[{RULE_NAME}] -- <reason>`, saying where "
+    "its input comes from"
 )
 ARGV_HINT = (
     "build the argv as a list literal with a constant program, so only its arguments can come "
@@ -1220,8 +1221,9 @@ def host_code_execution(ctx: LintContext) -> Iterable[Finding]:
       ``common/tools.py:eval`` or ``solver.py:subprocess.run``;
     - warning for every other shell, code or deserialisation sink in host
       code, so a reviewer sees each one. Mark a reviewed site with
-      ``# inspect-evals-lint: ignore[host_code_execution] -- <why it is safe>``
-      on any line of the call;
+      ``# inspect-evals-lint: ignore[host_code_execution] -- <reason>`` on any
+      line of the call, where the reason says where its input comes from,
+      e.g. ``-- constant query code; the model's SQL is passed as data``;
     - warning when a process runs from an argv that is not a literal and
       carries model-controlled input, since the program cannot be told. This
       includes ``inspect_ai.util.subprocess`` given a variable, which may
