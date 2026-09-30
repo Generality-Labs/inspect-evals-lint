@@ -7,7 +7,9 @@ import pytest
 
 from inspect_evals_lint.config import PRESETS, LintConfig
 from inspect_evals_lint.diagnostics import Diagnostic, Outcome
+from inspect_evals_lint.registry import get_rule
 from inspect_evals_lint.rules.host_code import host_code_execution
+from inspect_evals_lint.suppressions import apply_suppressions, load_suppressions
 from tests.conftest import context_for, write
 
 
@@ -68,6 +70,7 @@ def runner(program: str):
             "state.messages[-1].text",
             "state.output.message.tool_calls[0].arguments['code']",
             "call.arguments['code']",
+            "state.output.choices[0].message.text",
         ],
     )
     def test_model_output_reaching_exec_fails(self, tmp_path, expression):
@@ -613,3 +616,300 @@ def earlier():
 """,
         )
         assert [d.line for d in diagnostics(results)] == [3, 6]
+
+
+class TestBuiltinRebinding:
+    """Only an import that is in force where the call runs rebinds a builtin name."""
+
+    def test_main_guarded_inspect_ai_eval_leaves_functions_checked(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+@tool
+def calculate():
+    async def execute(expression: str) -> str:
+        return str(eval(expression))
+    return execute
+
+
+if __name__ == "__main__":
+    from inspect_ai import eval
+    eval(calculate())
+""",
+        )
+        assert [(d.status, d.line) for d in diagnostics(results)] == [("fail", 5)]
+
+    def test_function_local_inspect_ai_eval_applies_only_in_that_function(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+def main():
+    from inspect_ai import eval
+    eval("task.py", model="mockllm/model")
+
+
+def score(state):
+    eval(state.output.completion)
+""",
+        )
+        assert [(d.status, d.line) for d in diagnostics(results)] == [("fail", 8)]
+
+    def test_module_level_import_in_a_try_block_rebinds(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+try:
+    from inspect_ai import eval
+except ImportError:
+    pass
+
+
+def main():
+    eval("task.py")
+""",
+        )
+        assert statuses(results) == ["pass"]
+
+
+class TestScopeCoverage:
+    def test_staticmethod_called_through_self(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+class Runner:
+    @staticmethod
+    def run_code(code):
+        exec(code)
+
+    def score(self, state):
+        self.run_code(state.output.completion)
+""",
+        )
+        assert [(d.status, d.line) for d in diagnostics(results)] == [("fail", 5)]
+
+    def test_class_body_statements_are_host_code(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+import pickle
+
+class Config:
+    DATA = pickle.load(open("x.pkl", "rb"))
+""",
+        )
+        assert statuses(results) == ["warn"]
+
+    def test_methods_under_a_conditional_in_a_class_body(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+import os
+import sys
+
+class Tools:
+    if sys.platform == "linux":
+        def listing(self):
+            os.system("ls")
+""",
+        )
+        assert statuses(results) == ["warn"]
+
+    def test_decorators_defaults_and_class_headers(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+import pickle
+
+def register(value):
+    return lambda fn: fn
+
+@register(eval("1"))
+def f(x=pickle.loads(b"")):
+    return x
+
+class K(base=exec("pass")):
+    pass
+""",
+        )
+        assert [d.line for d in diagnostics(results)] == [7, 8, 11]
+
+    def test_nested_functions_see_the_enclosing_sandbox(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+async def score(state, target):
+    sb = sandbox()
+    async def go():
+        exec(await sb.read_file("x.py"))
+    await go()
+""",
+        )
+        assert statuses(results) == ["fail"]
+
+    @pytest.mark.parametrize(
+        "binding",
+        [
+            "sb: SandboxEnvironment = sandbox()",
+            "sb = get_sandbox()",
+            "self.sb = sandbox('victim')",
+        ],
+    )
+    def test_sandbox_bindings(self, tmp_path, binding):
+        target = "self.sb" if binding.startswith("self.") else "sb"
+        results = run(
+            tmp_path,
+            f"""
+from inspect_ai.util import SandboxEnvironment, sandbox
+from inspect_ai.util import sandbox as get_sandbox
+
+class Scorer:
+    async def score(self, state):
+        {binding}
+        exec(await {target}.read_file("x.py"))
+""",
+        )
+        assert statuses(results) == ["fail"]
+
+    def test_starred_and_vararg_arguments_seed_the_callee(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+def run_all(*snippets):
+    exec(snippets[0])
+
+
+def check(code, namespace):
+    exec(code, namespace)
+
+
+def score(state):
+    run_all("x", state.output.completion)
+    check(*[state.output.completion, {}])
+""",
+        )
+        assert statuses(results) == ["fail", "fail"]
+
+
+class TestMoreSources:
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            "(await get_model().generate(prompt)).message.text",
+            "response.message.text",
+            "response.choices[0].message.text",
+        ],
+    )
+    def test_generate_results_are_model_output(self, tmp_path, expression):
+        results = run(
+            tmp_path,
+            f"""
+from inspect_ai.model import get_model
+
+async def solve(state, prompt):
+    response = await get_model().generate(prompt)
+    exec({expression})
+""",
+        )
+        (d,) = diagnostics(results)
+        assert d.status == "fail"
+        assert "model output" in d.message
+
+    def test_solver_generate_function_does_not_taint_the_state(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+async def solve(state, generate):
+    state = await generate(state)
+    exec(state.metadata["setup"])
+""",
+        )
+        assert statuses(results) == ["warn"]
+
+    @pytest.mark.parametrize(
+        "annotation", ["ModelOutput | None", "Optional[ModelOutput]", '"ModelOutput | None"']
+    )
+    def test_optional_model_output_annotation(self, tmp_path, annotation):
+        results = run(
+            tmp_path,
+            f"def process(output: {annotation}) -> None:\n    exec(output.message.text)\n",
+        )
+        assert statuses(results) == ["fail"]
+
+
+class TestMoreSinks:
+    def test_names_no_import_binds_are_not_modules(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+from ruamel.yaml import YAML
+
+def f(stream, os):
+    yaml = YAML(typ="safe")
+    yaml.load(stream)
+    os.system("ls")
+""",
+        )
+        assert statuses(results) == ["pass"]
+
+    @pytest.mark.parametrize(
+        ("call", "key", "status"),
+        [
+            (
+                "subprocess.getstatusoutput(state.output.completion)",
+                "subprocess.getstatusoutput",
+                "fail",
+            ),
+            ("subprocess.call([state.output.completion])", "subprocess.call", "fail"),
+            ("subprocess.check_call([state.output.completion])", "subprocess.check_call", "fail"),
+            ("subprocess.run('ls', shell=use_shell)", None, "warn"),
+            ("pickle.load(file=handle)", None, "warn"),
+            ("yaml.full_load(state.output.completion)", "yaml.full_load", "fail"),
+            ("yaml.unsafe_load_all(handle)", None, "warn"),
+            ("yaml.load_all(handle, Loader=yaml.BaseLoader)", None, "pass"),
+            ("torch.load(state.output.completion)", "torch.load", "fail"),
+            ("torch.load(handle, weights_only=False)", None, "warn"),
+            ("torch.load(handle, weights_only=True)", None, "pass"),
+        ],
+    )
+    def test_more_sinks(self, tmp_path, call, key, status):
+        results = run(
+            tmp_path,
+            f"import pickle\nimport subprocess\nimport torch\nimport yaml\n\ndef f(state, handle, use_shell):\n    {call}\n",
+        )
+        assert statuses(results) == [status]
+        if key is not None:
+            assert diagnostics(results)[0].key == f"tools.py:{key}"
+
+    @pytest.mark.parametrize(
+        ("call", "status"),
+        [
+            ("await subprocess(state.output.completion)", "fail"),
+            ('await subprocess(f"ls {state.output.completion}")', "fail"),
+            ('await subprocess("make build")', "warn"),
+            ('await subprocess(["git", state.output.completion])', "pass"),
+            ('await subprocess([state.output.completion, "-v"])', "fail"),
+        ],
+    )
+    def test_inspect_ai_subprocess_runs_strings_through_a_shell(self, tmp_path, call, status):
+        results = run(
+            tmp_path,
+            f"from inspect_ai.util import subprocess\n\nasync def f(state):\n    {call}\n",
+        )
+        assert statuses(results) == [status]
+        if status == "fail":
+            assert diagnostics(results)[0].key == "tools.py:inspect_ai.util.subprocess"
+
+
+class TestSuppression:
+    def test_ignore_comment_on_any_line_of_the_call_suppresses_a_warning(self, tmp_path):
+        package = tmp_path / "my_eval"
+        write(package / "__init__.py", "")
+        write(
+            package / "tools.py",
+            'import os\n\ndef f():\n    os.system(\n        "make"  # inspect-evals-lint: ignore[host_code_execution]\n    )\n',
+        )
+        ctx = context_for(package)
+        (d,) = diagnostics(host_code_execution(ctx))
+        d.rule = get_rule("host_code_execution")
+        apply_suppressions([d], load_suppressions(ctx), ctx.config, tmp_path)
+        assert d.status == "suppressed"

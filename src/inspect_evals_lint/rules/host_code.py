@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -32,7 +32,14 @@ RULE_NAME = "host_code_execution"
 
 FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
 
-SinkKind = Literal["code", "data", "shell", "argv", "program", "import"]
+SinkKind = Literal["code", "data", "shell", "argv", "command", "program", "import"]
+"""How a sink's payload is judged.
+
+``code``, ``data`` and ``shell`` always report; ``argv`` is a ``subprocess``
+call that is a shell sink with ``shell=`` and a program sink without;
+``command`` takes a string (run by a shell) or a list; ``program`` and
+``import`` report only when tainted.
+"""
 
 
 @dataclass(frozen=True)
@@ -50,16 +57,28 @@ def _sinks(kind: SinkKind, names: Iterable[str], *keywords: str) -> dict[str, _S
     return {name: _Sink(name, kind, keywords) for name in names}
 
 
-_BUILTIN_SINKS = ("exec", "eval", "compile", "__import__")
+_BUILTIN_SINKS = frozenset({"exec", "eval", "compile", "__import__"})
+
+_YAML_LOADS_WITH_LOADER = frozenset({"yaml.load", "yaml.load_all"})
 
 SINKS: dict[str, _Sink] = {
     **{f"builtins.{name}": _Sink(name, "code", ("source", "name")) for name in _BUILTIN_SINKS},
     **_sinks(
         "data",
-        ("pickle.loads", "pickle.load", "yaml.load", "yaml.unsafe_load"),
+        (
+            "pickle.loads",
+            "pickle.load",
+            *_YAML_LOADS_WITH_LOADER,
+            "yaml.unsafe_load",
+            "yaml.unsafe_load_all",
+            "yaml.full_load",
+            "yaml.full_load_all",
+            "torch.load",
+        ),
         "data",
         "file",
         "stream",
+        "f",
     ),
     **_sinks(
         "shell",
@@ -79,23 +98,23 @@ SINKS: dict[str, _Sink] = {
         ),
         "args",
     ),
+    **_sinks("command", ("inspect_ai.util.subprocess",), "args"),
     **_sinks("program", ("asyncio.create_subprocess_exec",), "program"),
     **_sinks("import", ("importlib.import_module",), "name"),
 }
-"""Sinks by qualified name. Bare builtins resolve to ``builtins.<name>`` unless an import rebinds the name."""
+"""Sinks by qualified name. Bare builtins resolve to ``builtins.<name>`` unless an import in force rebinds the name."""
 
 _SAFE_YAML_LOADERS = frozenset({"SafeLoader", "CSafeLoader", "BaseLoader"})
 
-_FAIL_TEXT: dict[SinkKind, str] = {
+_FAIL_TEXT: dict[str, str] = {
     "code": "executes model-controlled code on the host",
     "data": "deserialises model-controlled data on the host",
     "shell": "runs a model-controlled shell command on the host",
-    "argv": "runs a model-controlled program on the host",
     "program": "runs a model-controlled program on the host",
     "import": "imports a model-controlled module on the host",
 }
 
-_WARN_TEXT: dict[SinkKind, str] = {
+_WARN_TEXT: dict[str, str] = {
     "code": "executes code on the host",
     "data": "deserialises data on the host",
     "shell": "runs a shell command on the host",
@@ -135,28 +154,67 @@ class Hit:
         return (self.node.lineno, self.node.col_offset)
 
 
+def _import_bindings(node: ast.Import | ast.ImportFrom) -> Iterator[tuple[str, str]]:
+    """``(local name, qualified name)`` for each name an import statement binds."""
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            if alias.asname:
+                yield alias.asname, alias.name
+            else:
+                top = alias.name.split(".")[0]
+                yield top, top
+    elif node.module and node.level == 0:
+        for alias in node.names:
+            yield alias.asname or alias.name, f"{node.module}.{alias.name}"
+
+
 def import_aliases(tree: ast.AST) -> dict[str, str]:
-    """Local name to the qualified name an import binds it to: ``sp`` to ``subprocess``, ``run`` to ``subprocess.run``."""
+    """Local name to the module or object an import binds it to: ``sp`` to ``subprocess``, ``run`` to ``subprocess.run``.
+
+    Taken from every import in the file, wherever it sits. Imports that rebind
+    a builtin sink name are left to :func:`builtin_rebindings`, which applies
+    them only where they are in force.
+    """
     aliases: dict[str, str] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.asname:
-                    aliases[alias.asname] = alias.name
-                else:
-                    top = alias.name.split(".")[0]
-                    aliases[top] = top
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            for alias in node.names:
-                aliases[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for local, qualified in _import_bindings(node):
+                if local not in _BUILTIN_SINKS:
+                    aliases[local] = qualified
     return aliases
 
 
-def qualified_name(func: ast.expr, aliases: dict[str, str]) -> str | None:
-    """``subprocess.run`` for ``sp.run`` after ``import subprocess as sp``; None for a call on a call or subscript.
+def builtin_rebindings(statements: Iterable[ast.AST]) -> dict[str, str]:
+    """Builtin sink names the given import statements rebind: ``{"eval": "inspect_ai.eval"}``."""
+    rebound: dict[str, str] = {}
+    for node in statements:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for local, qualified in _import_bindings(node):
+                if local in _BUILTIN_SINKS:
+                    rebound[local] = qualified
+    return rebound
 
-    A bare builtin sink name resolves to ``builtins.<name>`` unless an import
-    rebinds it, so ``from inspect_ai import eval`` exempts ``eval`` and nothing else.
+
+def _unconditional_statements(body: list[ast.stmt]) -> Iterator[ast.stmt]:
+    """Statements that run whenever the module is imported: the top level and its ``try`` blocks."""
+    for statement in body:
+        yield statement
+        if isinstance(statement, (ast.Try, ast.TryStar)):
+            for block in (
+                statement.body,
+                *(handler.body for handler in statement.handlers),
+                statement.orelse,
+                statement.finalbody,
+            ):
+                yield from _unconditional_statements(block)
+
+
+def qualified_name(func: ast.expr, aliases: dict[str, str], rebound: dict[str, str]) -> str | None:
+    """``subprocess.run`` for ``sp.run`` after ``import subprocess as sp``; None when no import binds the name.
+
+    A bare builtin sink name resolves to ``builtins.<name>`` unless ``rebound``
+    (the rebinding imports in force at the call) says otherwise, so
+    ``from inspect_ai import eval`` exempts ``eval`` and nothing else.
     """
     parts: list[str] = []
     node = func
@@ -165,9 +223,11 @@ def qualified_name(func: ast.expr, aliases: dict[str, str]) -> str | None:
         node = node.value
     if not isinstance(node, ast.Name):
         return None
+    if not parts and node.id in _BUILTIN_SINKS:
+        return rebound.get(node.id, f"builtins.{node.id}")
     base = aliases.get(node.id)
     if base is None:
-        base = f"builtins.{node.id}" if not parts and node.id in _BUILTIN_SINKS else node.id
+        return None
     return ".".join([base, *reversed(parts)])
 
 
@@ -181,13 +241,25 @@ def dotted(node: ast.expr) -> str | None:
     return None
 
 
+def _evaluated_in_enclosing_scope(node: FunctionNode | ast.ClassDef) -> list[ast.expr]:
+    """The parts of a definition that run where it is defined: decorators, defaults, class bases."""
+    if isinstance(node, ast.ClassDef):
+        return [*node.decorator_list, *node.bases, *(k.value for k in node.keywords)]
+    defaults = [d for d in node.args.kw_defaults if d is not None]
+    return [*node.decorator_list, *node.args.defaults, *defaults]
+
+
 def scope_nodes(body: list[ast.stmt]) -> Iterator[ast.AST]:
-    """Every node in a function or module body, without entering nested functions and classes."""
+    """Every node a function, class or module body runs, without entering nested bodies.
+
+    A nested definition's decorators, defaults and class bases run here, so they are included.
+    """
     stack: list[ast.AST] = list(reversed(body))
     while stack:
         node = stack.pop()
         yield node
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            stack.extend(reversed(_evaluated_in_enclosing_scope(node)))
             continue
         stack.extend(reversed(list(ast.iter_child_nodes(node))))
 
@@ -206,18 +278,33 @@ def _parameters(fn: FunctionNode) -> list[ast.arg]:
     return [*args.posonlyargs, *args.args, *args.kwonlyargs, *extra]
 
 
-def _annotation_name(annotation: ast.expr | None) -> str | None:
+def annotation_names(annotation: ast.expr | None) -> set[str]:
+    """The type names an annotation mentions: ``ModelOutput | None`` and ``Optional[ModelOutput]`` both give ``ModelOutput``."""
+    if annotation is None:
+        return set()
     if isinstance(annotation, ast.Name):
-        return annotation.id
+        return {annotation.id}
     if isinstance(annotation, ast.Attribute):
-        return annotation.attr
+        return {annotation.attr}
     if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
-        return annotation.value.rsplit(".", 1)[-1]
-    return None
+        try:
+            return annotation_names(ast.parse(annotation.value, mode="eval").body)
+        except SyntaxError:
+            return set()
+    if isinstance(annotation, ast.BinOp):
+        return annotation_names(annotation.left) | annotation_names(annotation.right)
+    if isinstance(annotation, ast.Subscript):
+        inner = annotation.slice
+        elements = inner.elts if isinstance(inner, ast.Tuple) else [inner]
+        names: set[str] = set()
+        for element in elements:
+            names |= annotation_names(element)
+        return names
+    return set()
 
 
-def _is_sandbox_call(node: ast.expr) -> bool:
-    return isinstance(node, ast.Call) and get_call_name(node) == "sandbox"
+def _is_staticmethod(fn: FunctionNode) -> bool:
+    return any(get_decorator_name(d) == "staticmethod" for d in fn.decorator_list)
 
 
 def _attribute_source(node: ast.Attribute) -> str | None:
@@ -241,7 +328,7 @@ def _attribute_source(node: ast.Attribute) -> str | None:
 
 @dataclass
 class Scope:
-    """One function (or module) body being analysed, and what it can see."""
+    """One function, class or module body being analysed, and what it can see."""
 
     body: list[ast.stmt]
     taint: dict[str, str]
@@ -252,8 +339,20 @@ class Scope:
     """Methods of the enclosing class, callable as ``self.<name>`` or ``cls.<name>``."""
     depth: int
     """0 when the body is analysed on its own; 1 when entered through a call, which is not followed further."""
+    rebound: dict[str, str]
+    """Builtin sink names rebound by imports in force here."""
+    inherited_rebound: dict[str, str]
+    """What a function defined here starts from: a module's unconditional imports, a function's own."""
     via: str = ""
     sandboxes: set[str] = field(default_factory=set)
+    """Dotted names bound to a sandbox environment."""
+    enclosing: Scope | None = None
+    """For a class body, the scope its methods close over; class-level names are not visible in methods."""
+
+    @property
+    def visible(self) -> Scope:
+        """The scope a definition nested here closes over."""
+        return self.enclosing or self
 
 
 class FileAnalysis:
@@ -262,9 +361,10 @@ class FileAnalysis:
     def __init__(self, tree: ast.Module) -> None:
         self.tree = tree
         self.aliases = import_aliases(tree)
+        self.global_rebound = builtin_rebindings(_unconditional_statements(tree.body))
+        self.safe_loaders = safe_yaml_loaders(tree)
         self.hits: dict[tuple[int, int], Hit] = {}
         self._returns: dict[int, str | None] = {}
-        self.safe_loaders = safe_yaml_loaders(tree)
 
     def run(self) -> list[Hit]:
         module_functions = {
@@ -272,7 +372,16 @@ class FileAnalysis:
             for node in self.tree.body
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
-        self._analyse_body(Scope(self.tree.body, {}, module_functions, {}, depth=0))
+        module = Scope(
+            self.tree.body,
+            {},
+            module_functions,
+            {},
+            depth=0,
+            rebound={**self.global_rebound, **builtin_rebindings(scope_nodes(self.tree.body))},
+            inherited_rebound=self.global_rebound,
+        )
+        self._analyse_body(module)
         return sorted(self.hits.values(), key=lambda hit: hit.site)
 
     # Scopes
@@ -290,50 +399,86 @@ class FileAnalysis:
         self._check_calls(scope)
         if scope.depth > 0:
             return scope
+        self._analyse_nested(nested, scope, tool_factory=tool_factory)
+        return scope
+
+    def _analyse_nested(
+        self, nested: list[FunctionNode | ast.ClassDef], scope: Scope, *, tool_factory: bool
+    ) -> None:
         for node in nested:
             if isinstance(node, ast.ClassDef):
                 self._analyse_class(node, scope)
             else:
                 self._analyse_function(node, scope, tool_argument=tool_factory)
-        return scope
 
     def _analyse_class(self, node: ast.ClassDef, outer: Scope) -> None:
+        visible = outer.visible
+        nested = _nested_definitions(node.body)
         methods = {
             item.name: item
-            for item in node.body
+            for item in nested
             if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
-        for method in methods.values():
-            self._analyse_function(method, replace(outer, methods=methods))
-        for item in node.body:
-            if isinstance(item, ast.ClassDef):
-                self._analyse_class(item, outer)
+        scope = Scope(
+            node.body,
+            dict(visible.taint),
+            visible.functions,
+            methods,
+            depth=0,
+            rebound={**visible.inherited_rebound, **builtin_rebindings(scope_nodes(node.body))},
+            inherited_rebound=visible.inherited_rebound,
+            sandboxes=set(visible.sandboxes),
+            enclosing=visible,
+        )
+        self._propagate(scope)
+        self._check_calls(scope)
+        self._analyse_nested(nested, scope, tool_factory=False)
 
     def _analyse_function(
         self, fn: FunctionNode, outer: Scope, *, tool_argument: bool = False
     ) -> None:
-        taint = dict(outer.taint)
-        for param in _parameters(fn):
-            taint.pop(param.arg, None)
-            if tool_argument and param.arg != "self":
-                taint[param.arg] = f"tool argument {param.arg!r}"
-        scope = Scope(fn.body, taint, outer.functions, outer.methods, depth=0)
+        visible = outer.visible
+        names = {param.arg for param in _parameters(fn)}
+        taint = {k: v for k, v in visible.taint.items() if k.split(".")[0] not in names}
+        if tool_argument:
+            taint.update({n: f"tool argument {n!r}" for n in names if n != "self"})
+        rebound = {**visible.inherited_rebound, **builtin_rebindings(scope_nodes(fn.body))}
+        scope = Scope(
+            fn.body,
+            taint,
+            visible.functions,
+            outer.methods,
+            depth=0,
+            rebound=rebound,
+            inherited_rebound=rebound,
+            sandboxes={s for s in visible.sandboxes if s.split(".")[0] not in names},
+        )
         self._seed_parameters(fn, scope)
         is_tool = any(get_decorator_name(d) == "tool" for d in fn.decorator_list)
         self._analyse_body(scope, tool_factory=is_tool)
 
     def _seed_parameters(self, fn: FunctionNode, scope: Scope) -> None:
         for param in _parameters(fn):
-            annotation = _annotation_name(param.annotation)
-            if annotation == "ModelOutput":
+            names = annotation_names(param.annotation)
+            if "ModelOutput" in names:
                 scope.taint.setdefault(param.arg, f"model output (parameter {param.arg!r})")
-            elif annotation == "SandboxEnvironment":
+            if "SandboxEnvironment" in names:
                 scope.sandboxes.add(param.arg)
 
     def _enter_callee(
         self, fn: FunctionNode, seeds: dict[str, str], scope: Scope, via: str, *, record: bool
     ) -> Scope:
-        callee = Scope(fn.body, dict(seeds), scope.functions, scope.methods, depth=1, via=via)
+        rebound = {**self.global_rebound, **builtin_rebindings(scope_nodes(fn.body))}
+        callee = Scope(
+            fn.body,
+            dict(seeds),
+            scope.visible.functions,
+            scope.methods,
+            depth=1,
+            rebound=rebound,
+            inherited_rebound=rebound,
+            via=via,
+        )
         self._seed_parameters(fn, callee)
         if not record:
             self._propagate(callee)
@@ -342,12 +487,28 @@ class FileAnalysis:
 
     # Propagation
 
+    def _is_sandbox_call(self, node: ast.expr, scope: Scope) -> bool:
+        node = _unwrap_await(node)
+        if not isinstance(node, ast.Call):
+            return False
+        if get_call_name(node) == "sandbox":
+            return True
+        qualified = qualified_name(node.func, self.aliases, scope.rebound)
+        return qualified is not None and qualified.endswith(".sandbox")
+
     def _propagate(self, scope: Scope) -> None:
         """Taint assignment targets until nothing changes; flow-insensitive within the body."""
         nodes = list(scope_nodes(scope.body))
         for node in nodes:
-            if isinstance(node, ast.Assign) and _is_sandbox_call(_unwrap_await(node.value)):
-                scope.sandboxes.update(t.id for t in node.targets if isinstance(t, ast.Name))
+            targets: list[ast.expr] = []
+            if isinstance(node, ast.Assign) and self._is_sandbox_call(node.value, scope):
+                targets = node.targets
+            elif isinstance(node, ast.AnnAssign) and (
+                "SandboxEnvironment" in annotation_names(node.annotation)
+                or (node.value is not None and self._is_sandbox_call(node.value, scope))
+            ):
+                targets = [node.target]
+            scope.sandboxes.update(name for t in targets if (name := dotted(t)) is not None)
         changed = True
         while changed:
             changed = False
@@ -390,10 +551,11 @@ class FileAnalysis:
 
     def _call_source(self, call: ast.Call, scope: Scope) -> str | None:
         func = call.func
-        if isinstance(func, ast.Attribute) and func.attr in ("read_file", "exec"):
-            target = func.value
-            if _is_sandbox_call(target) or (
-                isinstance(target, ast.Name) and target.id in scope.sandboxes
+        if isinstance(func, ast.Attribute):
+            if func.attr == "generate":
+                return "model output (generate())"
+            if func.attr in ("read_file", "exec") and (
+                self._is_sandbox_call(func.value, scope) or dotted(func.value) in scope.sandboxes
             ):
                 return (
                     "sandbox read_file()" if func.attr == "read_file" else "sandbox exec() output"
@@ -421,7 +583,7 @@ class FileAnalysis:
     # Sinks
 
     def _callee(self, call: ast.Call, scope: Scope) -> tuple[str, FunctionNode, bool] | None:
-        """The same-file function a call runs, its name, and whether ``self`` is bound."""
+        """The same-file function a call runs, its name, and whether its first parameter is bound."""
         func = call.func
         if isinstance(func, ast.Name) and func.id in scope.functions:
             return func.id, scope.functions[func.id], False
@@ -431,14 +593,15 @@ class FileAnalysis:
             and func.value.id in ("self", "cls")
             and func.attr in scope.methods
         ):
-            return func.attr, scope.methods[func.attr], True
+            method = scope.methods[func.attr]
+            return func.attr, method, not _is_staticmethod(method)
         return None
 
     def _check_calls(self, scope: Scope) -> None:
         for node in scope_nodes(scope.body):
             if not isinstance(node, ast.Call):
                 continue
-            qualified = qualified_name(node.func, self.aliases)
+            qualified = qualified_name(node.func, self.aliases, scope.rebound)
             sink = SINKS.get(qualified) if qualified else None
             if sink is not None:
                 hit = self._sink_hit(node, sink, scope)
@@ -494,7 +657,9 @@ class FileAnalysis:
 
     def _sink_hit(self, call: ast.Call, sink: _Sink, scope: Scope) -> Hit | None:
         payload = _argument(call, 0, sink.keywords)
-        if sink.name == "yaml.load" and _has_safe_loader(call, self.safe_loaders):
+        if sink.name in _YAML_LOADS_WITH_LOADER and _has_safe_loader(call, self.safe_loaders):
+            return None
+        if sink.name == "torch.load" and _is_true(_keyword(call, "weights_only")):
             return None
         if sink.kind == "argv":
             shell = _keyword(call, "shell")
@@ -504,8 +669,12 @@ class FileAnalysis:
             if executable is not None:
                 reason = self.taint_of(executable.value, scope)
                 if reason is not None:
-                    return self._fail(call, sink, reason)
+                    return self._fail(call, sink, reason, kind="program")
             return self._program(call, sink, _program_of(payload), scope)
+        if sink.kind == "command":
+            if isinstance(payload, (ast.List, ast.Tuple)):
+                return self._program(call, sink, _program_of(payload), scope)
+            return self._always(call, sink, payload, scope, kind="shell")
         if sink.kind == "program":
             return self._program(call, sink, _program_argument(payload), scope)
         if sink.kind == "import":
@@ -550,7 +719,7 @@ class FileAnalysis:
                 ARGV_HINT,
             )
         reason = self.taint_of(program, scope)
-        return self._fail(call, sink, reason) if reason is not None else None
+        return self._fail(call, sink, reason, kind="program") if reason is not None else None
 
     def _fail(
         self, call: ast.Call, sink: _Sink, reason: str, *, kind: SinkKind | None = None
@@ -607,6 +776,14 @@ def _argument(call: ast.Call, index: int, keywords: tuple[str, ...]) -> ast.expr
 
 def _is_false(node: ast.expr) -> bool:
     return isinstance(node, ast.Constant) and not node.value
+
+
+def _is_true(keyword: ast.keyword | None) -> bool:
+    return (
+        keyword is not None
+        and isinstance(keyword.value, ast.Constant)
+        and keyword.value.value is True
+    )
 
 
 def _program_of(argv: ast.expr | None) -> ast.expr | None | Literal[False]:
@@ -678,7 +855,9 @@ def host_code_execution(ctx: LintContext) -> Iterable[Finding]:
     Host code is every Python file under the package that ``exclude`` does not
     rule out. Code shipped into a sandbox (challenge sources, container code,
     solution scripts) belongs in ``exclude``; this check and the other AST
-    rules then never read it.
+    rules then never read it. Within a host file, everything that runs is
+    read: module, function and class bodies, decorators, default arguments and
+    class bases.
 
     **Sources**, the values a model controls by construction:
 
@@ -687,41 +866,58 @@ def host_code_execution(ctx: LintContext) -> Iterable[Finding]:
       configuration and are not sources;
     - ``.completion``, ``.messages``, ``.tool_calls`` and ``.arguments``
       anywhere, ``.output.message`` and ``.output.choices``, ``state.output``,
-      and parameters annotated ``ModelOutput``;
-    - ``read_file()`` and ``exec()`` results from ``sandbox(...)``, from a name
-      bound to one, or from a parameter annotated ``SandboxEnvironment``.
+      the result of any ``.generate(...)`` method call such as
+      ``get_model().generate(...)``, and parameters annotated ``ModelOutput``
+      (including ``ModelOutput | None`` and ``Optional[ModelOutput]``). A
+      solver's bare ``generate(state)`` returns the task state, which is not a
+      source as a whole;
+    - ``read_file()`` and ``exec()`` results from ``sandbox(...)`` (however it
+      is imported), from a name or attribute bound to one, or from a parameter
+      or variable annotated ``SandboxEnvironment``.
 
     **Sinks:**
 
     - the builtins ``exec``, ``eval``, ``compile`` and ``__import__``, called
-      bare or through ``builtins``. Importing ``eval`` from ``inspect_ai``
-      rebinds only that name, so the other three stay checked;
-    - ``pickle.load``, ``pickle.loads``, ``yaml.unsafe_load``, and
-      ``yaml.load`` without ``SafeLoader``, ``CSafeLoader``, ``BaseLoader`` or
-      a class in the same file that subclasses one;
+      bare or through ``builtins``. An import such as
+      ``from inspect_ai import eval`` rebinds only the name it imports, and
+      only where it is in force: everywhere in the file when it sits at the
+      top level (or in a top-level ``try``), otherwise only in the function or
+      block that holds it. ``exec``, ``compile`` and ``__import__`` stay
+      checked;
+    - ``pickle.load`` and ``pickle.loads``; ``yaml.unsafe_load``,
+      ``yaml.full_load`` and their ``_all`` forms; ``yaml.load`` and
+      ``yaml.load_all`` without ``SafeLoader``, ``CSafeLoader``, ``BaseLoader``
+      or a class in the same file that subclasses one; ``torch.load`` without
+      ``weights_only=True``;
     - shell commands: ``os.system``, ``os.popen``, ``subprocess.getoutput``,
-      ``subprocess.getstatusoutput``, ``asyncio.create_subprocess_shell``, and
-      ``subprocess.run``, ``Popen``, ``call``, ``check_call`` and
-      ``check_output`` with ``shell=`` anything but a false literal;
-    - the same ``subprocess`` calls without a shell, and
-      ``asyncio.create_subprocess_exec``, only when the program (the first
-      argv element) or ``executable=`` is tainted. A tainted argument to a
-      constant program is not reported;
+      ``subprocess.getstatusoutput``, ``asyncio.create_subprocess_shell``,
+      ``inspect_ai.util.subprocess`` with anything but a list literal (a
+      string runs through a shell), and ``subprocess.run``, ``Popen``,
+      ``call``, ``check_call`` and ``check_output`` with ``shell=`` anything
+      but a false literal;
+    - the same ``subprocess`` calls without a shell, ``inspect_ai.util.subprocess``
+      with a list literal, and ``asyncio.create_subprocess_exec``, only when the
+      program (the first argv element) or ``executable=`` is tainted. A tainted
+      argument to a constant program is not reported;
     - ``importlib.import_module``, only when the module name is tainted.
 
     Only the argument that is run counts: the code of ``exec``, not the
     namespace passed beside it. Model input handed to constant code as data is
-    not traced.
+    not traced. A module sink is recognised only through a name an import
+    binds, so a local variable called ``yaml`` or a parameter called ``os`` is
+    not mistaken for the module.
 
     **Propagation** is within one file. In a function, a name (or an attribute
     such as ``self.code``) is tainted if any assignment, loop target, ``with``
     target, walrus or ``append``/``update``-style call puts a tainted value
     into it, wherever the sink sits. An expression is tainted if anything in
     it is, which covers f-strings, concatenation, ``.format`` and calls such as
-    ``str(x)``. Nested functions see their enclosing function's taint. Calls to
-    functions and ``self`` methods in the same file are followed one level:
-    tainted arguments taint the callee's parameters, and a callee returning a
-    source taints the call. Nothing crosses files.
+    ``str(x)``. Nested functions see their enclosing function's taint and
+    sandbox bindings. Calls to functions and ``self`` or ``cls`` methods
+    (static methods included) in the same file are followed one level:
+    tainted arguments, including unpacked ``*args`` and ``**kwargs``, taint the
+    callee's parameters, and a callee returning a source taints the call.
+    Nothing crosses files.
 
     **Statuses:**
 
@@ -730,9 +926,15 @@ def host_code_execution(ctx: LintContext) -> Iterable[Finding]:
       ``common/tools.py:eval`` or ``solver.py:subprocess.run``;
     - warning for every other shell, code or deserialisation sink in host
       code, so a reviewer sees each one. Mark a reviewed site with
-      ``# inspect-evals-lint: ignore[host_code_execution]``;
+      ``# inspect-evals-lint: ignore[host_code_execution]`` on any line of the
+      call;
     - warning when a process runs from an argv that is not a list literal and
       carries model-controlled input, since the program cannot be told.
+
+    **Known limits.** An interpreter given code on its command line, such as
+    ``["bash", "-c", tool_argument]``, is a constant program with a tainted
+    argument and is not reported. A same-file ``def eval`` or a relative
+    import of ``eval`` is still taken for the builtin.
 
     ## Why is this bad?
 
@@ -741,7 +943,8 @@ def host_code_execution(ctx: LintContext) -> Iterable[Finding]:
     a file the agent wrote, runs model output with the host's permissions,
     credentials and network: a model can read secrets, alter logs or scores,
     or hang the run (``9**9**9`` gets past a digits-and-operators allowlist).
-    Unpickling or ``yaml.load`` of model-controlled bytes is the same thing.
+    Unpickling, ``yaml.load`` or ``torch.load`` of model-controlled bytes is
+    the same thing.
 
     The analysis is deliberately shallow. It misses taint that crosses files
     or passes through more than one call, so an error is strong evidence and
@@ -804,7 +1007,7 @@ def host_code_execution(ctx: LintContext) -> Iterable[Finding]:
     if count == 0:
         yield Outcome("skip", "No host Python files to check")
     else:
-        yield Outcome("pass", f"No code execution sinks in {count} host Python file(s)")
+        yield Outcome("pass", f"No reportable code execution sinks in {count} host Python file(s)")
 
 
 def _package_relative(path: Path, package: Path) -> str:

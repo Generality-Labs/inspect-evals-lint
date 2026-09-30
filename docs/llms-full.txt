@@ -1396,35 +1396,37 @@ Model output, tool arguments and sandbox content are not executed or deserialise
 
 Traces values the model under evaluation controls to calls that run or deserialise them on the machine running the evaluation rather than in the sandbox.
 
-Host code is every Python file under the package that `exclude` does not rule out. Code shipped into a sandbox (challenge sources, container code, solution scripts) belongs in `exclude`; this check and the other AST rules then never read it.
+Host code is every Python file under the package that `exclude` does not rule out. Code shipped into a sandbox (challenge sources, container code, solution scripts) belongs in `exclude`; this check and the other AST rules then never read it. Within a host file, everything that runs is read: module, function and class bodies, decorators, default arguments and class bases.
 
 **Sources**, the values a model controls by construction:
 
 - the parameters of a function defined inside a `@tool` function (the tool's `execute`); the `@tool` function's own parameters are task configuration and are not sources;
-- `.completion`, `.messages`, `.tool_calls` and `.arguments` anywhere, `.output.message` and `.output.choices`, `state.output`, and parameters annotated `ModelOutput`;
-- `read_file()` and `exec()` results from `sandbox(...)`, from a name bound to one, or from a parameter annotated `SandboxEnvironment`.
+- `.completion`, `.messages`, `.tool_calls` and `.arguments` anywhere, `.output.message` and `.output.choices`, `state.output`, the result of any `.generate(...)` method call such as `get_model().generate(...)`, and parameters annotated `ModelOutput` (including `ModelOutput | None` and `Optional[ModelOutput]`). A solver's bare `generate(state)` returns the task state, which is not a source as a whole;
+- `read_file()` and `exec()` results from `sandbox(...)` (however it is imported), from a name or attribute bound to one, or from a parameter or variable annotated `SandboxEnvironment`.
 
 **Sinks:**
 
-- the builtins `exec`, `eval`, `compile` and `__import__`, called bare or through `builtins`. Importing `eval` from `inspect_ai` rebinds only that name, so the other three stay checked;
-- `pickle.load`, `pickle.loads`, `yaml.unsafe_load`, and `yaml.load` without `SafeLoader`, `CSafeLoader`, `BaseLoader` or a class in the same file that subclasses one;
-- shell commands: `os.system`, `os.popen`, `subprocess.getoutput`, `subprocess.getstatusoutput`, `asyncio.create_subprocess_shell`, and `subprocess.run`, `Popen`, `call`, `check_call` and `check_output` with `shell=` anything but a false literal;
-- the same `subprocess` calls without a shell, and `asyncio.create_subprocess_exec`, only when the program (the first argv element) or `executable=` is tainted. A tainted argument to a constant program is not reported;
+- the builtins `exec`, `eval`, `compile` and `__import__`, called bare or through `builtins`. An import such as `from inspect_ai import eval` rebinds only the name it imports, and only where it is in force: everywhere in the file when it sits at the top level (or in a top-level `try`), otherwise only in the function or block that holds it. `exec`, `compile` and `__import__` stay checked;
+- `pickle.load` and `pickle.loads`; `yaml.unsafe_load`, `yaml.full_load` and their `_all` forms; `yaml.load` and `yaml.load_all` without `SafeLoader`, `CSafeLoader`, `BaseLoader` or a class in the same file that subclasses one; `torch.load` without `weights_only=True`;
+- shell commands: `os.system`, `os.popen`, `subprocess.getoutput`, `subprocess.getstatusoutput`, `asyncio.create_subprocess_shell`, `inspect_ai.util.subprocess` with anything but a list literal (a string runs through a shell), and `subprocess.run`, `Popen`, `call`, `check_call` and `check_output` with `shell=` anything but a false literal;
+- the same `subprocess` calls without a shell, `inspect_ai.util.subprocess` with a list literal, and `asyncio.create_subprocess_exec`, only when the program (the first argv element) or `executable=` is tainted. A tainted argument to a constant program is not reported;
 - `importlib.import_module`, only when the module name is tainted.
 
-Only the argument that is run counts: the code of `exec`, not the namespace passed beside it. Model input handed to constant code as data is not traced.
+Only the argument that is run counts: the code of `exec`, not the namespace passed beside it. Model input handed to constant code as data is not traced. A module sink is recognised only through a name an import binds, so a local variable called `yaml` or a parameter called `os` is not mistaken for the module.
 
-**Propagation** is within one file. In a function, a name (or an attribute such as `self.code`) is tainted if any assignment, loop target, `with` target, walrus or `append`/`update`-style call puts a tainted value into it, wherever the sink sits. An expression is tainted if anything in it is, which covers f-strings, concatenation, `.format` and calls such as `str(x)`. Nested functions see their enclosing function's taint. Calls to functions and `self` methods in the same file are followed one level: tainted arguments taint the callee's parameters, and a callee returning a source taints the call. Nothing crosses files.
+**Propagation** is within one file. In a function, a name (or an attribute such as `self.code`) is tainted if any assignment, loop target, `with` target, walrus or `append`/`update`-style call puts a tainted value into it, wherever the sink sits. An expression is tainted if anything in it is, which covers f-strings, concatenation, `.format` and calls such as `str(x)`. Nested functions see their enclosing function's taint and sandbox bindings. Calls to functions and `self` or `cls` methods (static methods included) in the same file are followed one level: tainted arguments, including unpacked `*args` and `**kwargs`, taint the callee's parameters, and a callee returning a source taints the call. Nothing crosses files.
 
 **Statuses:**
 
 - error when a source reaches a sink. The allowlist key is `<path within the package>:<sink>`, for example `common/tools.py:eval` or `solver.py:subprocess.run`;
-- warning for every other shell, code or deserialisation sink in host code, so a reviewer sees each one. Mark a reviewed site with `# inspect-evals-lint: ignore[host_code_execution]`;
+- warning for every other shell, code or deserialisation sink in host code, so a reviewer sees each one. Mark a reviewed site with `# inspect-evals-lint: ignore[host_code_execution]` on any line of the call;
 - warning when a process runs from an argv that is not a list literal and carries model-controlled input, since the program cannot be told.
+
+**Known limits.** An interpreter given code on its command line, such as `["bash", "-c", tool_argument]`, is a constant program with a tainted argument and is not reported. A same-file `def eval` or a relative import of `eval` is still taken for the builtin.
 
 ## Why is this bad?
 
-The sandbox is what stands between the model and the machine running the evaluation. A tool that `eval`s its argument, or a scorer that `exec`s a file the agent wrote, runs model output with the host's permissions, credentials and network: a model can read secrets, alter logs or scores, or hang the run (`9**9**9` gets past a digits-and-operators allowlist). Unpickling or `yaml.load` of model-controlled bytes is the same thing.
+The sandbox is what stands between the model and the machine running the evaluation. A tool that `eval`s its argument, or a scorer that `exec`s a file the agent wrote, runs model output with the host's permissions, credentials and network: a model can read secrets, alter logs or scores, or hang the run (`9**9**9` gets past a digits-and-operators allowlist). Unpickling, `yaml.load` or `torch.load` of model-controlled bytes is the same thing.
 
 The analysis is deliberately shallow. It misses taint that crosses files or passes through more than one call, so an error is strong evidence and the absence of one is not proof. A warning is a sink the check could not connect to a source, not a verdict that the site is safe.
 
