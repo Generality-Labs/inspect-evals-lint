@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- `sandbox_privileges` (IESC001) checks Compose services for elevated privileges, added capabilities, disabled security restrictions, host or external-container namespaces, host mounts, device access, and privileged lifecycle commands. It includes Docker API socket access and named volumes backed by host bind mounts. Findings use `service:field:value` allowlist keys, so allowing one capability, host path or security option does not allow another; unresolved interpolations produce warnings. GPU reservations and ordinary named volumes are accepted ([#46](https://github.com/Generality-Labs/inspect-evals-lint/issues/46)).
+- `sandbox_privileges` (IESC001) checks Compose services for elevated privileges, added capabilities, disabled security restrictions, host or external-container namespaces, host mounts, device access, host-sourced secrets and configs, and privileged lifecycle commands. It includes container engine socket access and named volumes backed by host bind mounts. Compose files in `exclude`d directories are checked, since Compose reads them on the host. Findings use `service:field:value` allowlist keys, so allowing one capability, host path or security option does not allow another; unresolved interpolations produce warnings. GPU reservations and ordinary named volumes are accepted ([#46](https://github.com/Generality-Labs/inspect-evals-lint/issues/46)).
 - The `security` category uses the `IESC` rule prefix and covers isolation and access to the host, other containers, or execution capabilities.
 
 ### Changed

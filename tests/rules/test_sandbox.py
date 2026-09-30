@@ -179,10 +179,19 @@ class TestSandboxPrivileges:
         assert result.key == f"default:{key}"
         assert result.file == tmp_path / "compose.yaml"
 
-    @pytest.mark.parametrize("option", ["seccomp", "apparmor", "label", "systempaths"])
+    @pytest.mark.parametrize(
+        ("option", "value"),
+        [
+            ("seccomp", "unconfined"),
+            ("apparmor", "unconfined"),
+            ("label", "disable"),
+            ("label", "type:spc_t"),
+            ("label", "type:unconfined_t"),
+            ("systempaths", "unconfined"),
+        ],
+    )
     @pytest.mark.parametrize("separator", [":", "="])
-    def test_security_restrictions(self, tmp_path, option, separator):
-        value = "disable" if option == "label" else "unconfined"
+    def test_security_restrictions(self, tmp_path, option, value, separator):
         setting = f"{option}{separator}{value}"
         (result,) = self.run_check(tmp_path, {"security_opt": [setting]})
         assert result.status == "fail"
@@ -229,12 +238,30 @@ class TestSandboxPrivileges:
         assert result.key.startswith("default:volumes:")
 
     @pytest.mark.parametrize(
-        "source", ["/var/run/docker.sock", "/run/docker.sock", "/run/user/1000/docker.sock"]
+        "mount",
+        [
+            "/var/run/docker.sock:/socket:ro",
+            "/run/docker.sock:/socket",
+            "/run/user/1000/docker.sock:/socket",
+            "/run/podman/podman.sock:/var/run/docker.sock",
+            "/run/containerd/containerd.sock:/socket",
+            "/var/run/crio/crio.sock:/socket",
+            "/custom/engine:/var/run/docker.sock",
+            "/var/run:/host-run",
+            "/var/run/:/host-run",
+            "/:/host",
+            {"type": "bind", "source": "/srv/engine", "target": "/run/docker.sock"},
+        ],
     )
-    def test_docker_socket_is_identified(self, tmp_path, source):
-        (result,) = self.run_check(tmp_path, {"volumes": [f"{source}:/socket:ro"]})
+    def test_engine_socket_is_identified(self, tmp_path, mount):
+        (result,) = self.run_check(tmp_path, {"volumes": [mount]})
         assert result.status == "fail"
-        assert "Docker daemon socket" in result.message
+        assert "container engine API socket" in result.message
+
+    def test_ordinary_bind_mount_has_no_engine_callout(self, tmp_path):
+        (result,) = self.run_check(tmp_path, {"volumes": ["/var/log:/logs"]})
+        assert result.status == "fail"
+        assert "engine" not in result.message
 
     @pytest.mark.parametrize(
         "mount", ["data:/data", {"type": "volume", "source": "data", "target": "/data"}]
@@ -298,6 +325,8 @@ class TestSandboxPrivileges:
                     "no-new-privileges:true",
                     "seccomp=profile.json",
                     "apparmor=my-profile",
+                    "label=type:container_t",
+                    "label=level:s0:c100,c200",
                 ],
                 "volumes": [
                     "/data",

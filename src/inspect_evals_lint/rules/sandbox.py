@@ -125,11 +125,22 @@ def sandbox_image_pinning(ctx: LintContext) -> Iterable[Finding]:
 
 _HOST_NAMESPACES = ("network_mode", "pid", "ipc", "userns_mode", "uts", "cgroup")
 _UNCONFINED_OPTIONS = {
-    "seccomp": "unconfined",
-    "apparmor": "unconfined",
-    "label": "disable",
-    "systempaths": "unconfined",
+    "seccomp": {"unconfined"},
+    "apparmor": {"unconfined"},
+    "label": {"disable", "type:spc_t", "type:unconfined_t"},
+    "systempaths": {"unconfined"},
 }
+_ENGINE_SOCKETS = (
+    "docker.sock",
+    "docker_engine",
+    "podman.sock",
+    "containerd.sock",
+    "crio.sock",
+    "cri-dockerd.sock",
+    "buildkitd.sock",
+)
+_ENGINE_SOCKET_DIRS = {"/", "/run", "/var", "/var/run"}
+"""Directories holding ``/var/run/docker.sock``, the default Docker socket."""
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -288,7 +299,7 @@ def _service_privileges(service: dict[str, Any], compose: dict[str, Any]) -> Ite
 
     for option, line in _values(service, "security_opt"):
         parts = re.split(r"[:=]", option, maxsplit=1)
-        if len(parts) == 2 and _UNCONFINED_OPTIONS.get(parts[0]) == parts[1]:
+        if len(parts) == 2 and parts[1] in _UNCONFINED_OPTIONS.get(parts[0], set()):
             yield _Privilege(
                 "security_opt", option, f"disables a security restriction ({option})", line
             )
@@ -327,8 +338,11 @@ def _service_privileges(service: dict[str, Any], compose: dict[str, Any]) -> Ite
         source = _bind_source(volume, named_volumes)
         if source is not None:
             detail = f"bind-mounts host path '{source}'"
-            if "docker.sock" in source or "docker_engine" in source:
-                detail += ", exposing the Docker daemon socket"
+            # The target counts too: clients look for the socket at /var/run/docker.sock.
+            if (source.rstrip("/") or "/") in _ENGINE_SOCKET_DIRS or any(
+                name in source or name in str(volume) for name in _ENGINE_SOCKETS
+            ):
+                detail += ", exposing a container engine API socket"
             yield _Privilege("volumes", source, detail, line)
         elif isinstance(volume, str) and "$" in volume:
             yield _Privilege(
@@ -447,7 +461,10 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
       [Docker AppArmor profiles](https://docs.docker.com/engine/security/apparmor/).
     - ``label=disable`` disables SELinux labeling for the container. On an
       SELinux-enabled host, this removes label-based confinement that helps
-      separate container processes and resources.
+      separate container processes and resources. ``label=type:spc_t`` (the
+      super-privileged container type) and ``label=type:unconfined_t`` run the
+      container in an SELinux domain without that confinement, with the same
+      effect.
       [Docker security options](https://docs.docker.com/reference/cli/docker/container/run/#security-opt).
     - ``systempaths=unconfined`` removes the runtime's masking and read-only
       protection of system paths. Kernel information and controls at those
@@ -493,9 +510,13 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
       endpoint. The implications depend on the service listening on that pipe
       and the caller's permissions.
       [Compose mount types](https://docs.docker.com/reference/compose-file/services/#volumes).
-    - Docker daemon sockets receive an additional callout when the source
-      contains ``docker.sock`` or ``docker_engine``. Access to the engine API
-      can allow creation of containers with host mounts or elevated privileges.
+    - Container engine sockets receive an additional callout when the source
+      or target names a Docker, Podman, containerd, CRI-O or BuildKit socket
+      (``docker.sock``, ``docker_engine``, ``podman.sock``, ``containerd.sock``,
+      ``crio.sock``, ``cri-dockerd.sock``, ``buildkitd.sock``), or the source is
+      a directory holding ``/var/run/docker.sock``, such as ``/var/run``. Access
+      to an engine API can allow creation of containers with host mounts or
+      elevated privileges.
       [Docker daemon access](https://docs.docker.com/engine/security/#docker-daemon-attack-surface).
       A read-only socket mount does not restrict which API operations a
       connected client can request. Review must therefore account for
