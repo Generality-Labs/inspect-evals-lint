@@ -98,3 +98,5 @@ addopts = "-rA --durations=10 --color=yes --cov=src --cov-report=term-missing"
 [tool.typos.default.extend-words]
 # Import name of the odfpy package, not a misspelling of "of".
 odf = "odf"
+# os.spawnve, one of the process sinks host_code_execution checks.
+spawnve = "spawnve"

@@ -1145,3 +1145,166 @@ class TestPerformance:
         assert d.status == "fail"
         assert "via helper() from line 206" in d.message
         assert elapsed < 0.5
+
+
+class TestMoreFlows:
+    @pytest.mark.parametrize(
+        ("pattern", "use"),
+        [
+            ("code", "code"),
+            ("str() as code", "code"),
+            ("[first, *others]", "others[0]"),
+            ('{"kind": "python", **rest}', 'rest["code"]'),
+            ('{"code": str(code)}', "code"),
+        ],
+    )
+    def test_match_captures_take_the_subject(self, tmp_path, pattern, use):
+        results = run(
+            tmp_path,
+            f"""
+async def solve(state, generate):
+    match state.output.completion:
+        case {pattern}:
+            exec({use})
+""",
+        )
+        assert statuses(results) == ["fail"]
+
+    def test_lambda_defaults_taint_their_parameters(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+async def solve(state, generate):
+    run = lambda code=state.output.completion: exec(code)
+    run()
+""",
+        )
+        assert statuses(results) == ["fail"]
+
+    def test_function_defaults_taint_their_parameters(self, tmp_path):
+        results = run(
+            tmp_path,
+            """
+async def solve(state, generate):
+    def run(namespace, code=state.output.completion, *, mode=None):
+        exec(code, namespace)
+    run({})
+""",
+        )
+        assert statuses(results) == ["fail"]
+
+
+_EXEC_SINKS = ["execv", "execve", "execvp", "execvpe", "posix_spawn", "posix_spawnp"]
+_EXECL_SINKS = ["execl", "execle", "execlp", "execlpe"]
+_SPAWN_SINKS = [
+    "spawnv",
+    "spawnve",
+    "spawnvp",
+    "spawnvpe",
+    "spawnl",
+    "spawnle",
+    "spawnlp",
+    "spawnlpe",
+]
+
+
+class TestProgramSinks:
+    @pytest.mark.parametrize("name", [*_EXEC_SINKS, *_EXECL_SINKS])
+    def test_os_exec_program_is_the_first_argument(self, tmp_path, name):
+        rest = '["x"], {}' if name in _EXEC_SINKS else '"x", "-v"'
+        tainted = run(
+            tmp_path,
+            f"import os\n\ndef f(state):\n    os.{name}(state.output.completion, {rest})\n",
+        )
+        (d,) = diagnostics(tainted)
+        assert (d.status, d.key) == ("fail", f"tools.py:os.{name}")
+        assert "runs a model-controlled program" in d.message
+        constant = run(
+            tmp_path,
+            f'import os\n\ndef f(state):\n    os.{name}("/bin/ls", state.output.completion)\n',
+        )
+        assert statuses(constant) == ["pass"]
+
+    @pytest.mark.parametrize("name", _SPAWN_SINKS)
+    def test_os_spawn_program_follows_the_mode(self, tmp_path, name):
+        tainted = run(
+            tmp_path,
+            f'import os\n\ndef f(state):\n    os.{name}(os.P_WAIT, state.output.completion, "x")\n',
+        )
+        (d,) = diagnostics(tainted)
+        assert (d.status, d.key) == ("fail", f"tools.py:os.{name}")
+        constant = run(
+            tmp_path,
+            f'import os\n\ndef f(state):\n    os.{name}(os.P_WAIT, "/bin/ls", state.output.completion)\n',
+        )
+        assert statuses(constant) == ["pass"]
+
+    def test_os_exec_with_an_unpacked_argv_warns_when_tainted(self, tmp_path):
+        results = run(
+            tmp_path,
+            "import os\n\ndef f(state):\n    argv = [state.output.completion]\n    os.execv(*argv)\n",
+        )
+        assert statuses(results) == ["warn"]
+
+    @pytest.mark.parametrize(
+        ("call", "status"),
+        [
+            ("pty.spawn([state.output.completion, '-i'])", "fail"),
+            ("pty.spawn(f'{state.output.completion}')", "fail"),
+            ("pty.spawn(['bash', state.output.completion])", "pass"),
+            ("pty.spawn('bash')", "pass"),
+            ("pty.spawn(state.output.completion)", "warn"),
+        ],
+    )
+    def test_pty_spawn_program_is_a_string_or_the_first_element(self, tmp_path, call, status):
+        results = run(tmp_path, f"import pty\n\ndef f(state):\n    {call}\n")
+        assert statuses(results) == [status]
+        if status == "fail":
+            assert diagnostics(results)[0].key == "tools.py:pty.spawn"
+
+
+class TestCodeAndDataSinks:
+    @pytest.mark.parametrize(
+        ("module", "call"),
+        [
+            ("runpy", "runpy.run_path"),
+            ("runpy", "runpy.run_module"),
+            ("marshal", "marshal.loads"),
+            ("marshal", "marshal.load"),
+            ("dill", "dill.load"),
+            ("dill", "dill.loads"),
+            ("cloudpickle", "cloudpickle.load"),
+            ("cloudpickle", "cloudpickle.loads"),
+            ("joblib", "joblib.load"),
+            ("pandas", "pandas.read_pickle"),
+        ],
+    )
+    def test_code_and_data_sinks(self, tmp_path, module, call):
+        tainted = run(
+            tmp_path, f"import {module}\n\ndef f(state):\n    {call}(state.output.completion)\n"
+        )
+        (d,) = diagnostics(tainted)
+        assert (d.status, d.key) == ("fail", f"tools.py:{call}")
+        constant = run(tmp_path, f'import {module}\n\ndef f():\n    {call}("local.bin")\n')
+        assert statuses(constant) == ["warn"]
+
+    def test_pandas_under_its_usual_alias(self, tmp_path):
+        results = run(
+            tmp_path, 'import pandas as pd\n\ndef f():\n    pd.read_pickle("scores.pkl")\n'
+        )
+        assert [d.message.split("()")[0] for d in diagnostics(results)] == ["pandas.read_pickle"]
+
+    @pytest.mark.parametrize(
+        ("call", "status"),
+        [
+            ('np.load("x.npy")', "pass"),
+            ('np.load("x.npy", allow_pickle=False)', "pass"),
+            ('np.load("x.npy", allow_pickle=True)', "warn"),
+            ("np.load(state.output.completion, allow_pickle=flag)", "fail"),
+        ],
+    )
+    def test_numpy_load_only_with_allow_pickle(self, tmp_path, call, status):
+        results = run(tmp_path, f"import numpy as np\n\ndef f(state, flag):\n    {call}\n")
+        assert statuses(results) == [status]
+        if status == "fail":
+            assert diagnostics(results)[0].key == "tools.py:numpy.load"

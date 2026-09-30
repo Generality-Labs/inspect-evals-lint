@@ -51,10 +51,14 @@ class _Sink:
     kind: SinkKind
     keywords: tuple[str, ...] = ()
     """Keyword spellings of the positional argument that carries the payload."""
+    position: int = 0
+    """Where the payload sits among the positional arguments: 1 for ``os.spawnv(mode, path, args)``."""
 
 
-def _sinks(kind: SinkKind, names: Iterable[str], *keywords: str) -> dict[str, _Sink]:
-    return {name: _Sink(name, kind, keywords) for name in names}
+def _sinks(
+    kind: SinkKind, names: Iterable[str], *keywords: str, position: int = 0
+) -> dict[str, _Sink]:
+    return {name: _Sink(name, kind, keywords, position) for name in names}
 
 
 _BUILTIN_SINKS = frozenset({"exec", "eval", "compile", "__import__"})
@@ -74,12 +78,26 @@ SINKS: dict[str, _Sink] = {
             "yaml.full_load",
             "yaml.full_load_all",
             "torch.load",
+            "marshal.loads",
+            "marshal.load",
+            "dill.loads",
+            "dill.load",
+            "cloudpickle.loads",
+            "cloudpickle.load",
+            "joblib.load",
+            "pandas.read_pickle",
+            "numpy.load",
         ),
         "data",
         "file",
         "stream",
         "f",
+        "bytes",
+        "str",
+        "filename",
+        "filepath_or_buffer",
     ),
+    **_sinks("code", ("runpy.run_path", "runpy.run_module"), "path_name", "mod_name"),
     **_sinks(
         "shell",
         ("os.system", "os.popen", "subprocess.getoutput", "subprocess.getstatusoutput"),
@@ -99,7 +117,22 @@ SINKS: dict[str, _Sink] = {
         "args",
     ),
     **_sinks("command", ("inspect_ai.util.subprocess",), "args"),
+    **_sinks("argv", ("pty.spawn",), "argv"),
     **_sinks("program", ("asyncio.create_subprocess_exec",), "program"),
+    **_sinks(
+        "program",
+        (
+            *(f"os.exec{suffix}" for suffix in ("v", "ve", "vp", "vpe", "l", "le", "lp", "lpe")),
+            "os.posix_spawn",
+            "os.posix_spawnp",
+        ),
+        "path",
+    ),
+    **_sinks(
+        "program",
+        (f"os.spawn{suffix}" for suffix in ("v", "ve", "vp", "vpe", "l", "le", "lp", "lpe")),
+        position=1,
+    ),
     **_sinks("import", ("importlib.import_module",), "name"),
 }
 """Sinks by qualified name. Bare builtins resolve to ``builtins.<name>`` unless an import in force rebinds the name."""
@@ -591,6 +624,10 @@ class FileAnalysis:
             sandboxes={s for s in defining.sandboxes if closes_over(s)},
         )
         self._seed_parameters(fn, scope)
+        for param, default in _defaults(fn.args):
+            reason = self.taint_of(default, defining)
+            if reason is not None:
+                scope.taint.setdefault(param.arg, reason)
         return scope
 
     def _seed_parameters(self, fn: FunctionNode, scope: Scope) -> None:
@@ -791,11 +828,15 @@ class FileAnalysis:
         return seeds
 
     def _sink_hit(self, call: ast.Call, sink: _Sink, scope: Scope) -> Hit | None:
-        payload = _argument(call, 0, sink.keywords)
+        payload = _argument(call, sink.position, sink.keywords)
         if sink.name in _YAML_LOADS_WITH_LOADER and _has_safe_loader(call, self.safe_loaders):
             return None
         if sink.name == "torch.load" and _is_true(_keyword(call, "weights_only")):
             return None
+        if sink.name == "numpy.load":
+            allow_pickle = _keyword(call, "allow_pickle")
+            if allow_pickle is None or _is_false(allow_pickle.value):
+                return None
         if sink.kind == "argv":
             shell = _keyword(call, "shell")
             if shell is not None and not _is_false(shell.value):
@@ -839,7 +880,7 @@ class FileAnalysis:
         if program is None:
             return None
         if program is False:
-            argv = _argument(call, 0, sink.keywords)
+            argv = _argument(call, sink.position, sink.keywords)
             if isinstance(argv, ast.Starred):
                 argv = argv.value
             reason = self.taint_of(argv, scope) if argv is not None else None
@@ -890,6 +931,30 @@ def _flows(node: ast.AST) -> Iterator[tuple[ast.expr, ast.expr]]:
     ):
         for arg in [*node.args, *(k.value for k in node.keywords)]:
             yield node.func.value, arg
+    elif isinstance(node, ast.Match):
+        for case in node.cases:
+            for name in _captures(case.pattern):
+                yield ast.Name(id=name, ctx=ast.Store()), node.subject
+    elif isinstance(node, ast.Lambda):
+        for param, default in _defaults(node.args):
+            yield ast.Name(id=param.arg, ctx=ast.Store()), default
+
+
+def _defaults(args: ast.arguments) -> list[tuple[ast.arg, ast.expr]]:
+    """Each parameter that has a default, with its default."""
+    positional = [*args.posonlyargs, *args.args]
+    pairs = zip(positional[len(positional) - len(args.defaults) :], args.defaults, strict=True)
+    keyword_only = zip(args.kwonlyargs, args.kw_defaults, strict=True)
+    return [*pairs, *((param, d) for param, d in keyword_only if d is not None)]
+
+
+def _captures(pattern: ast.pattern) -> Iterator[str]:
+    """The names a ``match`` pattern binds; each takes part of the subject."""
+    for node in ast.walk(pattern):
+        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            yield node.name
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            yield node.rest
 
 
 def _unwrap_await(node: ast.expr) -> ast.expr:
@@ -901,8 +966,10 @@ def _keyword(call: ast.Call, name: str) -> ast.keyword | None:
 
 
 def _argument(call: ast.Call, index: int, keywords: tuple[str, ...]) -> ast.expr | None:
-    if len(call.args) > index:
-        return call.args[index]
+    """The argument at ``index``, or an unpacked ``*args`` at or before it that may supply it."""
+    for position, arg in enumerate(call.args):
+        if position == index or isinstance(arg, ast.Starred):
+            return arg
     for keyword in call.keywords:
         if keyword.arg in keywords:
             return keyword.value
@@ -948,11 +1015,13 @@ def _shell_command(payload: ast.expr | None) -> ast.expr | None:
 
 
 def _program_of(argv: ast.expr | None) -> ast.expr | None | Literal[False]:
-    """The program an argv runs: its first element, None when constant or absent, False when it cannot be told."""
+    """The program an argv runs: a string or a list's first element, None when constant or absent, False when it cannot be told."""
     if argv is None:
         return None
     if isinstance(argv, ast.Constant):
         return None
+    if _is_string(argv):
+        return argv
     if isinstance(argv, (ast.List, ast.Tuple)):
         if not argv.elts:
             return None
@@ -962,7 +1031,7 @@ def _program_of(argv: ast.expr | None) -> ast.expr | None | Literal[False]:
 
 
 def _program_argument(program: ast.expr | None) -> ast.expr | None | Literal[False]:
-    """``create_subprocess_exec``'s program: None when constant or absent, False when unpacked from an argv."""
+    """A program argument (``create_subprocess_exec``, ``os.execv``): None when constant or absent, False when unpacked from an argv."""
     if program is None or isinstance(program, ast.Constant):
         return None
     return False if isinstance(program, ast.Starred) else program
