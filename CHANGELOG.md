@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Suppressed findings count as met. A suppression is a decision recorded in the repository, and pylint, ruff, mypy, Biome and ESLint all leave suppressed findings out of their counts. In `Score`, `passing` is now `pass` + `warn` + `suppressed`. The `suppressed` count is shown beside the score, e.g. `**16/17 checks met** (2 by suppression)` in the Markdown headline. A package whose only unmet rules were suppressed now scores 100%, where it scored less on 0.9.0.
+- JSON reports use `schema_version: 3`, because `passing` and `score` add up differently. Fields and statuses are unchanged. A consumer that recomputes the score, such as the register publisher, must count `suppressed` as passing for version 3. It must be updated before any pin moves to this release.
+
 ## [0.9.0] - 2026-09-30
 
 Compose files are now checked for sandbox privileges and host access. The new `security` category holds `sandbox_privileges` (IESC001), which fails a package whose Compose services grant extra privileges or host access unless each exception is allowlisted. Upgrading can fail a package that passed on 0.8.0: IESC001 reports errors by default, and IEBP005 now also reads `docker-compose*.y*ml` files. JSON reports move to `schema_version: 2`. Consumers that validate categories or rule codes must accept `security` and `IESC` before upgrading.
