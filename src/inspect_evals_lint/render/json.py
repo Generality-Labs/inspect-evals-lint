@@ -16,8 +16,8 @@ from inspect_evals_lint.diagnostics import (
 )
 from inspect_evals_lint.render.paths import relative_to_root
 
-SCHEMA_VERSION = 1
-"""Bumped when the document changes shape. Consumers should check it before reading anything else."""
+SCHEMA_VERSION = 2
+"""Bumped for incompatible output changes, including categories. Consumers should check it first."""
 
 
 def _outcome_to_dict(outcome: Outcome) -> dict[str, Any]:

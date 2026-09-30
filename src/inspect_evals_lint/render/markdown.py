@@ -32,6 +32,7 @@ CATEGORY_LABELS: dict[str, str] = {
     "code_quality": "Code quality",
     "tests": "Tests",
     "best_practices": "Best practices",
+    "security": "Security",
 }
 STATUS_LABELS: dict[str, str] = {
     "fail": "Not met",

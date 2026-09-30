@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `sandbox_privileges` (IESC001) checks Compose services for elevated privileges, added capabilities, disabled security restrictions, host or external-container namespaces, host mounts, device access, host-sourced secrets and configs, and privileged lifecycle commands. It includes container engine socket access and named volumes backed by host bind mounts. Compose files in `exclude`d directories are checked, since Compose reads them on the host. Findings use `service:field:value` allowlist keys, so allowing one capability, host path or security option does not allow another; unresolved interpolations produce warnings. GPU reservations and ordinary named volumes are accepted ([#46](https://github.com/Generality-Labs/inspect-evals-lint/issues/46)).
+- The `security` category uses the `IESC` rule prefix and covers isolation and access to the host, other containers, or execution capabilities.
+
+### Changed
+
+- JSON reports use `schema_version: 2` because the category set now includes `security`. Consumers must accept the new category and rule prefix before upgrading. Existing rule codes and categories are unchanged.
+
+### Fixed
+
+- `sandbox_image_pinning` (IEBP005) also reads `docker-compose*.y*ml` files, so an unpinned image there is now reported. Compose's `!override` and `!reset` tags no longer make a file unreadable, a non-UTF-8 file is reported as unreadable instead of stopping the run, and a directory named like a compose file is ignored. The rules that read Compose files share one reader.
+- Findings in Compose files point at the line of the setting or list item, and `# inspect-evals-lint: ignore[...]` comments in Compose files are read. Before, `sandbox_image_pinning` findings had no line, so the documented line suppression could not apply to them.
+
 ## [0.8.0] - 2026-09-25
 
 Linting a standalone evaluation repository no longer reports the inspect_evals monorepo's conventions as failures. [#36](https://github.com/Generality-Labs/inspect-evals-lint/issues/36) ran 0.7.0 over a typical single-evaluation repository and found one genuine finding among eight failures; the other seven came from rules that assumed the monorepo or template layout. Each is fixed below, the default preset now follows the repository's shape, and the presets are named for the layout they describe. Every change is additive or aliased: a repository pinned on 0.7.0 gets the same results or fewer false positives, and the old preset names keep working for this release with a notice.

@@ -17,13 +17,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, cast, get_args
 
-import yaml
-
 from inspect_evals_lint.config import ConfigError
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
 from inspect_evals_lint.registry import inspect_docs, rule
 from inspect_evals_lint.rules._ast import iter_dockerfiles
+from inspect_evals_lint.rules._compose import iter_compose_files, load_compose
 
 RULE_NAME = "dockerfile_locking"
 
@@ -171,19 +170,16 @@ def parse_dockerfile(path: Path) -> tuple[list[Instruction], dict[str, str]]:
     return instructions, directives
 
 
-def _compose_build_contexts(package_path: Path) -> dict[Path, Path]:
+def _compose_build_contexts(ctx: LintContext) -> dict[Path, Path]:
     """Map each Dockerfile a compose file builds to the ``build.context`` it declares.
 
     Compose resolves ``build.dockerfile`` relative to ``build.context``, and
     ``build.context`` relative to the compose file. Interpolated values are skipped.
     """
     mapping: dict[Path, Path] = {}
-    for compose_file in sorted(package_path.rglob("compose*.y*ml")):
-        try:
-            data: object = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
-        except (yaml.YAMLError, OSError):
-            continue
-        if not isinstance(data, dict):
+    for compose_file in iter_compose_files(ctx):
+        data, problem = load_compose(compose_file)
+        if problem is not None or not isinstance(data, dict):
             continue
         services: object = cast(dict[str, object], data).get("services")
         if not isinstance(services, dict):
@@ -701,7 +697,7 @@ def dockerfile_locking(ctx: LintContext) -> Iterable[Finding]:
         yield Outcome("skip", "No Dockerfile found")
         return
 
-    compose_contexts = _compose_build_contexts(ctx.path)
+    compose_contexts = _compose_build_contexts(ctx)
     warned = 0
     limits: list[str] = []
     for dockerfile in dockerfiles:

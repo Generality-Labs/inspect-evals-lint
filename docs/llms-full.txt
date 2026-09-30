@@ -33,7 +33,7 @@ Run it inside the project's environment (`uv run inspect-evals-lint`): `external
 
 `--output-format json` writes one document to stdout and sends progress to stderr, so the output can be piped straight into other tooling ([docs/output.md](output.md) has the schema). `--output-format github` writes one GitHub Actions annotation per finding instead, each message starting with the file, line and rule, so a lint step marks up the pull request and the job log still names every location; in an Actions job it also appends the Markdown summary to the job summary (`GITHUB_STEP_SUMMARY`). `--output-format markdown` writes, per package, a headline of rules met with a per-category split and a collapsible list of the rules not met, with warnings or suppressed, for a pull request comment or job summary.
 
-`--task <path>` (repeatable) lints the package holding a task file instead of a named package: the evaluation is the directory holding the file, its parent is the source root, and enclosing packages form the import prefix, so a repository can be linted from a register entry's `task_path` without knowing its layout. A task file with no `__init__.py` beside it is a usage error naming the problem. Everything but the layout comes from the configuration or `--preset`. It carries `schema_version`, `passed`, run-wide `summary` counts and a `packages` list. Each package has its `kind` (`eval` or `helper`), `rules` (one entry per rule that ran, at its worst status, with indexes into that package's `diagnostics`), `outcomes` (one per rule that passed or did not apply) and `diagnostics` (one per finding, with `rule`, `code`, `category` (`file_structure`, `code_quality`, `tests` or `best_practices`), `severity`, `status`, `message`, `file` relative to the repository root, `line`, `column` and a `hint`). Every finding points at a file, and at a line where the finding is in a file's contents, so `# inspect-evals-lint: ignore[<rule>]` on that line suppresses it whatever the rule. The set of categories is stable: a new rule always joins one of the four, because badge and dashboard tooling keys on them.
+`--task <path>` (repeatable) lints the package holding a task file instead of a named package: the evaluation is the directory holding the file, its parent is the source root, and enclosing packages form the import prefix, so a repository can be linted from a register entry's `task_path` without knowing its layout. A task file with no `__init__.py` beside it is a usage error naming the problem. Everything but the layout comes from the configuration or `--preset`. It carries `schema_version`, `passed`, run-wide `summary` counts and a `packages` list. Each package has its `kind` (`eval` or `helper`), `rules` (one entry per rule that ran, at its worst status, with indexes into that package's `diagnostics`), `outcomes` (one per rule that passed or did not apply) and `diagnostics` (one per finding, with `rule`, `code`, `category` (`file_structure`, `code_quality`, `tests`, `best_practices` or `security`), `severity`, `status`, `message`, `file` relative to the repository root, `line`, `column` and a `hint`). Every finding points at a file, and at a line where the finding is in a file's contents, so `# inspect-evals-lint: ignore[<rule>]` on that line suppresses it whatever the rule. JSON schema version 2 adds the `security` category and `IESC` rule prefix. Consumers of version 1 must update their category and code validation before upgrading. Existing rule codes and categories are unchanged.
 
 The repository root is the nearest `pyproject.toml` carrying a `[tool.inspect-evals-lint]` table (falling back to the nearest `pyproject.toml`, then the current directory). Pass `--root` to override.
 
@@ -165,7 +165,7 @@ See [RELEASING.md](https://github.com/Generality-Labs/inspect-evals-lint/blob/ma
 
 # Rule index
 
-Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four categories below) and a name; either is accepted by `--select`, `--ignore` and in suppression comments, and a prefix selects a whole category. A rule reports one diagnostic per site it finds something wrong at, each with a file and, where the finding is in a file's contents, a line and column. A rule with nothing to point at reports `pass`, or `skip` with the reason. Diagnostics are `fail` or `warn`; only `fail` makes the run exit non-zero. `inspect-evals-lint --explain <code>` prints the same text as a rule's page.
+Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the categories below) and a name; either is accepted by `--select`, `--ignore` and in suppression comments, and a prefix selects a whole category. A rule reports one diagnostic per site it finds something wrong at, each with a file and, where the finding is in a file's contents, a line and column. A rule with nothing to point at reports `pass`, or `skip` with the reason. Diagnostics are `fail` or `warn`; only `fail` makes the run exit non-zero. `inspect-evals-lint --explain <code>` prints the same text as a rule's page.
 
 ## File structure
 
@@ -214,17 +214,29 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four cate
 | [IEBP008](rules/IEBP008.md) | `duplicate_filter_acknowledged` | eval, helper | Every filter_duplicate_ids() call states how many duplicates it drops and links the upstream report |
 | [IEBP009](rules/IEBP009.md) | `known_broken_reported`         | eval, helper | Every drop_known_broken() entry maps a sample id to the URL of its upstream report                  |
 
+## Security
+
+| Code                        | Rule                 | Applies to   | Summary                                                                    |
+| --------------------------- | -------------------- | ------------ | -------------------------------------------------------------------------- |
+| [IESC001](rules/IESC001.md) | `sandbox_privileges` | eval, helper | Compose services do not grant additional sandbox privileges or host access |
+
 ## Helper packages
 
-Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
+Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`, `sandbox_privileges`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
 
 ## Categories
 
-Each rule belongs to one of exactly four categories, the sections above. The JSON output and `registry.CATEGORIES` expose them, and downstream tooling (badges, the register lint service) is built around that fixed set. A new rule joins one of the four; adding a category would be a breaking change.
+Each rule belongs to one category. The JSON output and `registry.CATEGORIES` expose this set; changing it requires a JSON schema version update and coordinated consumer changes. Schema version 2 adds `security`. Existing rule codes and categories are unchanged.
+
+- File structure covers package layout, registration, and metadata.
+- Code quality covers Python API conventions and dependency declarations.
+- Tests covers the presence of tests for evaluation components and execution.
+- Best practices covers evaluation configuration, dataset handling, and reproducibility. Image pinning and dependency locking remain here because their primary check is whether inputs are fixed.
+- Security covers isolation and access to the host, other containers, or execution capabilities. Runtime-user and build-isolation checks would also belong here as separate rules.
 
 ## Suppression
 
-- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. In a Dockerfile, on the line above the instruction.
+- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. In a Dockerfile, on the line above the instruction. In a Compose file, on the setting's line or the list item's line.
 - File: `# inspect-evals-lint: ignore-file[<rule>]` within the first ten lines.
 - Paths: `per-file-ignores = { "<glob>" = ["<rule>"] }` in `[tool.inspect-evals-lint]`.
 - Never read: `exclude = ["<glob>"]` keeps files out of the AST-based rules entirely, for code shipped into a sandbox.
@@ -244,7 +256,7 @@ One document per run. `RunReport.to_dict()` produces the same mapping from the P
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "version": "0.3.0",
   "root": "/abs/path/to/repo",
   "passed": false,
@@ -287,7 +299,7 @@ One document per run. `RunReport.to_dict()` produces the same mapping from the P
 
 | Field                      | Meaning                                                                                                                                                                                                                                                                                                                                                                               |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema_version`           | Integer, bumped when this document changes shape. Check it first.                                                                                                                                                                                                                                                                                                                     |
+| `schema_version`           | Integer, bumped for incompatible output changes, including the category set. Check it first.                                                                                                                                                                                                                                                                                          |
 | `version`                  | The inspect-evals-lint version that produced the document.                                                                                                                                                                                                                                                                                                                            |
 | `root`                     | Absolute repository root the run used. Every `file` below is relative to it when it falls under it.                                                                                                                                                                                                                                                                                   |
 | `passed`                   | `true` when no diagnostic in any package has status `fail`. Mirrors the exit code.                                                                                                                                                                                                                                                                                                    |
@@ -296,11 +308,13 @@ One document per run. `RunReport.to_dict()` produces the same mapping from the P
 | `packages[].kind`          | `eval` or `helper`. Filter on this rather than expecting separate lists.                                                                                                                                                                                                                                                                                                              |
 | `packages[].skipped`       | Why the package was not linted at all (listed in `ignore-dirs`), else `null`.                                                                                                                                                                                                                                                                                                         |
 | `packages[].score`         | The package's own score, in the same shape as the run's.                                                                                                                                                                                                                                                                                                                              |
-| `packages[].rules[]`       | One entry per rule that ran, in execution order, at the worst status it reported (`fail`, `warn`, `suppressed`, `pass`, `skip`). `diagnostics` is a list of indexes into this package's `diagnostics` array; a pass or skip with no findings has `[]`. Counting these by `status` reproduces `packages[].score`. Additive; `schema_version` stays 1.                                  |
+| `packages[].rules[]`       | One entry per rule that ran, in execution order, at the worst status it reported (`fail`, `warn`, `suppressed`, `pass`, `skip`). `diagnostics` is a list of indexes into this package's `diagnostics` array; a pass or skip with no findings has `[]`. Counting these by `status` reproduces `packages[].score`. This field was added in schema version 1 and remains in version 2.   |
 | `packages[].outcomes[]`    | One per rule that ran and had nothing to point at: `status` is `pass` or `skip`, `message` says why.                                                                                                                                                                                                                                                                                  |
 | `packages[].diagnostics[]` | One per finding. `severity` is `error` or `warning`; `status` is `fail`, `warn` or `suppressed`. `line` and `column` are 1-based and `null` when the finding is about a file or directory as a whole. `hint` is what to do about it, or `null`.                                                                                                                                       |
 
-`category` is always one of `file_structure`, `code_quality`, `tests` and `best_practices`; a new rule joins one of the four, so tooling that groups by category (badges, dashboards) does not change when rules are added.
+`category` is one of `file_structure`, `code_quality`, `tests`, `best_practices`, and `security`. Schema version 2 adds `security` and the `IESC` rule prefix. Existing codes, categories, fields, and score calculations are unchanged. Consumers must accept both versions during migration, add the category to validation and displays, and accept `IESC` codes. Adding or changing categories requires a schema version update.
+
+Update the register publisher and documentation dashboard before deploying a linter release that emits version 2. The register service wraps lint reports in its own result and summary formats; their schema versions are independent of the nested lint report version.
 
 ## GitHub Actions (`--output-format github`)
 
@@ -693,7 +707,7 @@ Every suppression marker is one the linter reads.
 
 ## What it does
 
-Reads the `# inspect-evals-lint: ignore[...]` comments in the package's Python files and Dockerfiles (`exclude`d files are skipped) and warns about each marker that suppresses nothing: a comment in the removed `# noautolint` syntax or a `.noautolint` file, an `ignore` or `ignore-file` without a bracketed rule list, an `ignore-file` past the first ten lines, and a selector that names no rule. One warning per marker, at its line. The other selectors in the same comment still apply.
+Reads the `# inspect-evals-lint: ignore[...]` comments in the package's Python files and Dockerfiles (`exclude`d files are skipped) and Compose files, and warns about each marker that suppresses nothing: a comment in the removed `# noautolint` syntax or a `.noautolint` file, an `ignore` or `ignore-file` without a bracketed rule list, an `ignore-file` past the first ten lines, and a selector that names no rule. One warning per marker, at its line. The other selectors in the same comment still apply.
 
 ## Why is this bad?
 
@@ -1065,7 +1079,7 @@ Registry images in compose files use an immutable tag or digest.
 
 ## What it does
 
-Reads every `compose*.y*ml` under the package and flags each service whose `image` is untagged or `:latest`. Services built locally (`build:`) and `${VAR}` interpolated references are skipped. Each diagnostic is keyed by the image reference, which is what an allowlist entry names.
+Reads every `compose*.y*ml` and `docker-compose*.y*ml` under the package, `exclude`d directories included, and flags each service whose `image` is untagged or `:latest`. Services built locally (`build:`) and `${VAR}` interpolated references are skipped. Each diagnostic is keyed by the image reference, which is what an allowlist entry names.
 
 ## Why is this bad?
 
@@ -1263,3 +1277,107 @@ KNOWN_BROKEN = {"ruin_names_100": "https://github.com/org/repo/issues/19"}
 - [Datasets: Dataset Samples](https://inspect.aisi.org.uk/datasets.html#dataset-samples)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP009]` or `ignore[known_broken_reported]`; select or ignore it in configuration by either, or by the prefix `IEBP`.
+
+
+---
+
+# IESC001: sandbox_privileges
+
+Compose services do not grant additional sandbox privileges or host access.
+
+**Category:** security · **Applies to:** eval, helper · **Allowlist:** `[tool.inspect-evals-lint.allowlists.sandbox_privileges]`
+
+## What it does
+
+Reads parsed YAML from every `compose*.y*ml` and `docker-compose*.y*ml` under the package, including nested files and overrides. `exclude` does not apply: Compose files configure the sandbox from the host even when they sit beside challenge code that is excluded. Reports one error per service, field and value for the settings described below.
+
+GPU reservations under `deploy.resources.reservations.devices`, ordinary named or anonymous volumes, and namespaces shared by `service:` reference are accepted. YAML anchors are resolved; commented-out settings are ignored. A value tagged `!override` or `!reset` is checked as written.
+
+Each finding points at the line of the setting, or of the list item for list settings such as `volumes` and `cap_add`. A setting merged from a YAML anchor points at the anchor, so a suppression comment there covers every service that merges it.
+
+## Why is this bad?
+
+These settings can give model-controlled processes access to host data, devices, namespaces, or the container engine, or remove runtime restrictions. Some evaluations need them. Each exception needs review and an allowlist entry; a finding does not establish that a setting is exploitable.
+
+The effects depend on the host platform, daemon configuration, and remaining permissions. In particular, sharing a namespace does not automatically authorize every operation on the resources it exposes.
+
+### Privileges and device access
+
+- `privileged: true` grants all Linux capabilities, exposes host devices, and relaxes security profiles. This can allow sandbox processes to alter host resources and take control of the host. [Docker runtime privileges](https://docs.docker.com/engine/containers/run/#runtime-privilege-and-linux-capabilities).
+- Any nonempty `cap_add` requests additional Linux capabilities. Each capability authorizes particular operations: for example, `SYS_ADMIN` includes mounting filesystems, while `SYS_PTRACE` permits process inspection subject to other restrictions. The implications depend on the capabilities requested and the namespaces in which they apply. [Linux capabilities](https://man7.org/linux/man-pages/man7/capabilities.7.html).
+- Any nonempty `devices` exposes selected devices and their drivers to the container. For example, access to a disk device can expose data beyond the container's mounted directories. The effect depends on the device and its allowed operations. [Docker device access](https://docs.docker.com/reference/cli/docker/container/run/#device).
+- Any nonempty `device_cgroup_rules` adds device permissions by type and major/minor number. Rules can allow reading, writing, and creating device nodes; wildcards can cover whole classes of devices. These permissions can apply when a device node becomes available later. [Linux device access rules](https://docs.kernel.org/admin-guide/cgroup-v1/devices.html).
+
+### Disabled security restrictions
+
+The following values in `security_opt` are reported with either `:` or `=` as the separator. Each disables a different restriction.
+
+- `seccomp=unconfined` removes the container's system-call filter. Code can attempt kernel operations that the default profile would reject, subject to remaining permission checks. [Docker seccomp profiles](https://docs.docker.com/engine/security/seccomp/).
+- `apparmor=unconfined` removes AppArmor profile enforcement where AppArmor is enabled. File access, mounts, and other operations lose the additional restrictions imposed by that profile. [Docker AppArmor profiles](https://docs.docker.com/engine/security/apparmor/).
+- `label=disable` disables SELinux labeling for the container. On an SELinux-enabled host, this removes label-based confinement that helps separate container processes and resources. `label=type:spc_t` (the super-privileged container type) and `label=type:unconfined_t` run the container in an SELinux domain without that confinement, with the same effect. [Docker security options](https://docs.docker.com/reference/cli/docker/container/run/#security-opt).
+- `systempaths=unconfined` removes the runtime's masking and read-only protection of system paths. Kernel information and controls at those paths become accessible subject to remaining permissions. [Docker system-path security option](https://docs.docker.com/reference/cli/docker/container/run/#security-opt).
+
+### Shared namespaces
+
+| Setting                       | Implication                                                                                                                                                                                                                                                                                  |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `network_mode: host`          | Shares host networking. Processes can reach services on host loopback and listen on host ports without a port mapping. [Docker host networking](https://docs.docker.com/engine/network/drivers/host/).                                                                                       |
+| `pid: host`                   | Makes host processes visible. Signaling or inspecting them then depends on credentials, capabilities, and other controls. [Linux PID namespaces](https://man7.org/linux/man-pages/man7/pid_namespaces.7.html).                                                                               |
+| `ipc: host`                   | Shares host IPC resources, including System V shared memory, semaphores, and message queues. Processes may read data or interfere with applications when IPC permissions allow it. [Linux IPC namespaces](https://man7.org/linux/man-pages/man7/ipc_namespaces.7.html).                      |
+| `userns_mode: host`           | Disables per-container user-namespace remapping where the Docker daemon enables it. Container user IDs lose that remapping's separation from host IDs. [Docker user-namespace remapping](https://docs.docker.com/engine/security/userns-remap/#disable-namespace-remapping-for-a-container). |
+| `uts: host`                   | Shares the host's hostname and NIS domain name. A process with the required capability can change these identifiers for other processes in that namespace. [Linux UTS namespaces](https://man7.org/linux/man-pages/man7/uts_namespaces.7.html).                                              |
+| `cgroup: host`                | Exposes the host view of cgroup paths and hierarchy. This reveals information outside the container's private view; it does not itself remove resource limits or grant write access. [Linux cgroup namespaces](https://man7.org/linux/man-pages/man7/cgroup_namespaces.7.html).              |
+| `network_mode: container:...` | Joins another container's networking, including its loopback services and listening ports. [Docker container networking mode](https://docs.docker.com/engine/network/#container-networks).                                                                                                   |
+| `pid: container:...`          | Shares another container's process namespace, allowing process visibility and operations subject to permissions. [Docker PID settings](https://docs.docker.com/reference/cli/docker/container/run/#pid).                                                                                     |
+| `ipc: container:...`          | Shares another container's IPC resources, allowing data access or interference subject to permissions. [Docker IPC settings](https://docs.docker.com/reference/cli/docker/container/run/#ipc).                                                                                               |
+
+`container:` references depend on containers outside the declared Compose service relationships. The rule cannot establish their configuration. References using `service:` remain within those declared relationships and are outside this check.
+
+### Host files and engine access
+
+- Host bind mounts in either short or long `volumes` syntax expose a host path. Writable mounts can let sandbox code change host files; read-only mounts still expose their contents, potentially including credentials or evaluation answers. Relative paths and Windows host paths are checked too, as is a short-syntax source with a path separator outside its interpolations, such as `${HOME}/.ssh`: a volume name cannot contain one. [Docker bind mounts](https://docs.docker.com/engine/storage/bind-mounts/).
+- Named volumes whose local `driver_opts.o` contains `bind` or `rbind` also expose the host path in `driver_opts.device`. Review them as host bind mounts even though the service refers to a volume name. [Compose local-driver bind example](https://docs.docker.com/reference/compose-file/volumes/#driver_opts). The `rbind` option also includes existing mounts below the source path, potentially exposing additional filesystems. [Linux recursive bind mounts](https://man7.org/linux/man-pages/man8/mount.8.html).
+- Windows named pipe mounts (`type: npipe`) expose a host communication endpoint. The implications depend on the service listening on that pipe and the caller's permissions. [Compose mount types](https://docs.docker.com/reference/compose-file/services/#volumes).
+- Container engine sockets receive an additional callout when the source or target names a Docker, Podman, containerd, CRI-O or BuildKit socket (`docker.sock`, `docker_engine`, `podman.sock`, `containerd.sock`, `crio.sock`, `cri-dockerd.sock`, `buildkitd.sock`), or the source is a directory holding `/var/run/docker.sock`, such as `/var/run`. Access to an engine API can allow creation of containers with host mounts or elevated privileges. [Docker daemon access](https://docs.docker.com/engine/security/#docker-daemon-attack-surface). A read-only socket mount does not restrict which API operations a connected client can request. Review must therefore account for [Docker's API authorization policy](https://docs.docker.com/engine/extend/plugins_authorization/), which allows all operations by default.
+- `secrets` and `configs` whose top-level definition has a `file` or `environment` source copy a host file or environment variable into the container, at `/run/secrets/<name>` for a secret. Review them as you would a read-only bind mount of that file. `content` and `external` sources are accepted. Keys name the file, or `env:<variable>`. [Compose secrets](https://docs.docker.com/reference/compose-file/secrets/), [Compose configs](https://docs.docker.com/reference/compose-file/configs/).
+- `use_api_socket: true` provides the engine socket and the user's credentials. In addition to engine access, this can permit registry operations using those credentials. [Compose API socket access](https://docs.docker.com/reference/compose-file/services/#use_api_socket).
+- `volumes_from: [container:...]` imports another container's mounts, potentially exposing files or sockets whose sources are not declared in this Compose file. A read-only import still exposes readable data. [Compose imported volumes](https://docs.docker.com/reference/compose-file/services/#volumes_from).
+
+### Privileged lifecycle commands
+
+The rule also reports `privileged: true` within each lifecycle hook:
+
+- `pre_start` runs an initialization step with extra privileges in a temporary container before the service starts. [Compose pre-start hooks](https://docs.docker.com/reference/compose-file/services/#pre_start).
+- `post_start` runs a command with extra privileges in the running service container after startup. [Compose post-start hooks](https://docs.docker.com/reference/compose-file/services/#post_start).
+- `pre_stop` runs a command with extra privileges before the service container stops. [Compose pre-stop hooks](https://docs.docker.com/reference/compose-file/services/#pre_stop).
+
+These hooks need review even when the service itself has no `privileged` setting. Check what the command does and whether sandbox code can modify any scripts or inputs it will use with those privileges.
+
+## Example
+
+```yaml
+services:
+  default:
+    image: example/sandbox:1.0
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+```
+
+Remove the settings when they are unnecessary. If required, document the reason next to `default:privileged` and `default:volumes:/var/run/docker.sock` entries in `allowlists.sandbox_privileges`.
+
+## Scope and related checks
+
+This is a static check of declared Compose settings. It does not run Docker, read environment files, inspect images, combine overrides, follow `include` or `extends` files, or inspect Kubernetes settings. Interpolated privilege, namespace, capability, device, security-option, and mount values that cannot be checked produce warnings because [Compose interpolation](https://docs.docker.com/reference/compose-file/interpolation/) can change the effective settings at runtime. A pass means no listed settings were found in the files checked.
+
+Service `environment` and `env_file` values are not checked, though they can also carry host values into the container. Published ports, external networks, and host-gateway mappings need a network-exposure policy. Missing hardening settings such as `read_only` or `no-new-privileges` are outside this rule's checks.
+
+## Options
+
+- `allowlists.sandbox_privileges`: `{ package = ["service:field:value"] }` entries report warnings while present. Each finding names its key in the hint. The value is the capability, device, rule, namespace mode, security option, host path, secret or config source, or container, so allowing `default:cap_add:SYS_PTRACE` does not allow `ALL`, and allowing one host path does not allow another. Settings without a value use `service:field`, such as `default:privileged` and `default:post_start.privileged`. A key applies to that service across the package's Compose files. Removed settings leave stale entries for the runner to report.
+
+## See also
+
+- [Sandboxing](https://inspect.aisi.org.uk/sandboxing.html)
+
+Suppress on a line with `# inspect-evals-lint: ignore[IESC001]` or `ignore[sandbox_privileges]`; select or ignore it in configuration by either, or by the prefix `IESC`.

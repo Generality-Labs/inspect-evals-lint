@@ -29,6 +29,7 @@ CATEGORY_TITLES: dict[str, str] = {
     "code_quality": "Code quality",
     "tests": "Tests",
     "best_practices": "Best practices",
+    "security": "Security",
 }
 
 SITE_URL = "https://inspect-evals-lint.generality.org/"
@@ -102,7 +103,7 @@ def index_page() -> str:
         "",
         GENERATED_NOTE,
         "",
-        "Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP` prefixes for the four categories below) and a name; either is accepted by `--select`, `--ignore` and in suppression comments, and a prefix selects a whole category. A rule reports one diagnostic per site it finds something wrong at, each with a file and, where the finding is in a file's contents, a line and column. A rule with nothing to point at reports `pass`, or `skip` with the reason. Diagnostics are `fail` or `warn`; only `fail` makes the run exit non-zero. `inspect-evals-lint --explain <code>` prints the same text as a rule's page.",
+        "Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the categories below) and a name; either is accepted by `--select`, `--ignore` and in suppression comments, and a prefix selects a whole category. A rule reports one diagnostic per site it finds something wrong at, each with a file and, where the finding is in a file's contents, a line and column. A rule with nothing to point at reports `pass`, or `skip` with the reason. Diagnostics are `fail` or `warn`; only `fail` makes the run exit non-zero. `inspect-evals-lint --explain <code>` prints the same text as a rule's page.",
         "",
     ]
     for category in CATEGORIES:
@@ -127,11 +128,17 @@ def index_page() -> str:
         "",
         "## Categories",
         "",
-        "Each rule belongs to one of exactly four categories, the sections above. The JSON output and `registry.CATEGORIES` expose them, and downstream tooling (badges, the register lint service) is built around that fixed set. A new rule joins one of the four; adding a category would be a breaking change.",
+        "Each rule belongs to one category. The JSON output and `registry.CATEGORIES` expose this set; changing it requires a JSON schema version update and coordinated consumer changes. Schema version 2 adds `security`. Existing rule codes and categories are unchanged.",
+        "",
+        "- File structure covers package layout, registration, and metadata.",
+        "- Code quality covers Python API conventions and dependency declarations.",
+        "- Tests covers the presence of tests for evaluation components and execution.",
+        "- Best practices covers evaluation configuration, dataset handling, and reproducibility. Image pinning and dependency locking remain here because their primary check is whether inputs are fixed.",
+        "- Security covers isolation and access to the host, other containers, or execution capabilities. Runtime-user and build-isolation checks would also belong here as separate rules.",
         "",
         "## Suppression",
         "",
-        "- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. In a Dockerfile, on the line above the instruction.",
+        "- Line: `# inspect-evals-lint: ignore[<rule>]` on the offending line, or on any line of a multi-line statement; names, codes and code prefixes, comma-separated. In a Dockerfile, on the line above the instruction. In a Compose file, on the setting's line or the list item's line.",
         "- File: `# inspect-evals-lint: ignore-file[<rule>]` within the first ten lines.",
         '- Paths: `per-file-ignores = { "<glob>" = ["<rule>"] }` in `[tool.inspect-evals-lint]`.',
         '- Never read: `exclude = ["<glob>"]` keeps files out of the AST-based rules entirely, for code shipped into a sandbox.',
@@ -281,7 +288,7 @@ def llms_txt() -> str:
     lines = [
         "# inspect-evals-lint",
         "",
-        "> Static checks for Inspect AI evaluations: file structure, test coverage conventions, best practices and sandbox image pinning. Every check is a rule with a code (IEFS, IECQ, IETS, IEBP prefixes for the four categories) and a name.",
+        "> Static checks for Inspect AI evaluations: file structure, code quality, test coverage conventions, best practices, and security. Every check is a rule with a code (IEFS, IECQ, IETS, IEBP, IESC prefixes for the categories) and a name.",
         "",
         "Every HTML page on this site is also available as raw Markdown at the same path with a `.md` suffix (for example `rules/IEBP002.md`). The full documentation is concatenated in `llms-full.txt`. `rules.json` lists every rule with its code, name, category, scopes and page URLs. Suppress a finding with `# inspect-evals-lint: ignore[<code or name>]` on the offending line; configure the linter under `[tool.inspect-evals-lint]` in `pyproject.toml`. Locally, `inspect-evals-lint --explain <code>` prints a rule's page and `inspect-evals-lint --list-rules --output-format json` lists them.",
         "",

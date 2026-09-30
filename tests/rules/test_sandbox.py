@@ -1,8 +1,15 @@
-"""Sandbox rules: image pinning and the GPU sandbox check."""
+"""Sandbox rules for images, runtime privileges, and GPU maintenance checks."""
 
+from dataclasses import replace
+
+import pytest
+import yaml
+
+from inspect_evals_lint.config import PRESETS
 from inspect_evals_lint.rules.sandbox import (
     gpu_sandbox_check,
     sandbox_image_pinning,
+    sandbox_privileges,
 )
 from tests.conftest import context_for
 
@@ -107,6 +114,376 @@ class TestSandboxImagePinning:
     def test_invalid_yaml_warns(self, tmp_path):
         results = self.run_check(tmp_path, "services: [unclosed\n")
         assert [r.status for r in results] == ["warn"]
+
+    def test_docker_compose_files_are_checked(self, tmp_path):
+        (tmp_path / "docker-compose.yml").write_text(
+            "services:\n  default:\n    image: example/untagged\n"
+        )
+        results = list(sandbox_image_pinning(context_for(tmp_path)))
+        assert [r.status for r in results] == ["fail"]
+
+    def test_excluded_directories_are_still_checked(self, tmp_path):
+        eval_path = tmp_path / "my_eval"
+        (eval_path / "challenges").mkdir(parents=True)
+        (eval_path / "challenges" / "compose.yaml").write_text(
+            "services:\n  default:\n    image: example/untagged\n"
+        )
+        config = replace(PRESETS["multi-eval"], exclude=("my_eval/challenges/**",))
+        results = list(sandbox_image_pinning(context_for(eval_path, config)))
+        assert [r.status for r in results] == ["fail"]
+
+    def test_directory_named_like_a_compose_file_is_ignored(self, tmp_path):
+        (tmp_path / "compose.yaml").mkdir()
+        results = list(sandbox_image_pinning(context_for(tmp_path)))
+        assert [r.status for r in results] == ["skip"]
+
+    def test_non_utf8_file_warns(self, tmp_path):
+        (tmp_path / "compose.yaml").write_bytes(b"services:\n  default:\n    image: \xff\n")
+        results = list(sandbox_image_pinning(context_for(tmp_path)))
+        assert [r.status for r in results] == ["warn"]
+
+
+class TestSandboxPrivileges:
+    def run_check(self, tmp_path, service, *, volumes=None):
+        compose = {"services": {"default": service}}
+        if volumes is not None:
+            compose["volumes"] = volumes
+        (tmp_path / "compose.yaml").write_text(yaml.safe_dump(compose))
+        return list(sandbox_privileges(context_for(tmp_path)))
+
+    @pytest.mark.parametrize(
+        ("field", "value", "key"),
+        [
+            ("privileged", True, "privileged"),
+            ("privileged", "true", "privileged"),
+            ("use_api_socket", True, "use_api_socket"),
+            ("cap_add", ["SYS_PTRACE"], "cap_add:SYS_PTRACE"),
+            ("cap_add", ["ALL"], "cap_add:ALL"),
+            ("devices", ["/dev/kvm:/dev/kvm"], "devices:/dev/kvm:/dev/kvm"),
+            ("device_cgroup_rules", ["c 1:3 mr"], "device_cgroup_rules:c 1:3 mr"),
+            ("network_mode", "host", "network_mode:host"),
+            ("pid", "host", "pid:host"),
+            ("ipc", "host", "ipc:host"),
+            ("userns_mode", "host", "userns_mode:host"),
+            ("uts", "host", "uts:host"),
+            ("cgroup", "host", "cgroup:host"),
+            ("network_mode", "container:outside", "network_mode:container:outside"),
+            ("pid", "container:outside", "pid:container:outside"),
+            ("ipc", "container:outside", "ipc:container:outside"),
+            ("volumes_from", ["container:outside:ro"], "volumes_from:container:outside:ro"),
+        ],
+    )
+    def test_service_privilege_fails_with_allowlist_key(self, tmp_path, field, value, key):
+        (result,) = self.run_check(tmp_path, {field: value})
+        assert result.status == "fail"
+        assert result.key == f"default:{key}"
+        assert result.file == tmp_path / "compose.yaml"
+
+    @pytest.mark.parametrize(
+        ("option", "value"),
+        [
+            ("seccomp", "unconfined"),
+            ("apparmor", "unconfined"),
+            ("label", "disable"),
+            ("label", "type:spc_t"),
+            ("label", "type:unconfined_t"),
+            ("systempaths", "unconfined"),
+        ],
+    )
+    @pytest.mark.parametrize("separator", [":", "="])
+    def test_security_restrictions(self, tmp_path, option, value, separator):
+        setting = f"{option}{separator}{value}"
+        (result,) = self.run_check(tmp_path, {"security_opt": [setting]})
+        assert result.status == "fail"
+        assert result.key == f"default:security_opt:{setting}"
+        assert setting in result.message
+
+    @pytest.mark.parametrize("hook", ["pre_start", "post_start", "pre_stop"])
+    def test_privileged_lifecycle_hooks(self, tmp_path, hook):
+        (result,) = self.run_check(
+            tmp_path, {hook: [{"command": "./setup.sh", "privileged": True}]}
+        )
+        assert result.status == "fail"
+        assert result.key == f"default:{hook}.privileged"
+
+    @pytest.mark.parametrize(
+        "mount",
+        [
+            "/host:/container",
+            "./data:/data:ro",
+            "../data:/data",
+            ".:/workspace",
+            "..:/workspace",
+            r".\data:/data",
+            "~/data:/data",
+            r"C:\data:/data",
+            r"C:\data:C:\container",
+            r"\\server\share:/data",
+            "${HOME}/.ssh:/root/.ssh",
+            "$PWD/src:/src",
+            "${DATA_ROOT:-/srv}/data:/data",
+            {"type": "bind", "source": "/host", "target": "/container", "read_only": True},
+            {"type": "bind", "source": "${HOST_PATH}", "target": "/container"},
+            {
+                "type": "npipe",
+                "source": "//./pipe/docker_engine",
+                "target": "//./pipe/docker_engine",
+            },
+        ],
+    )
+    def test_host_mounts(self, tmp_path, mount):
+        (result,) = self.run_check(tmp_path, {"volumes": [mount]})
+        assert result.status == "fail"
+        assert result.key is not None
+        assert result.key.startswith("default:volumes:")
+
+    @pytest.mark.parametrize(
+        "mount",
+        [
+            "/var/run/docker.sock:/socket:ro",
+            "/run/docker.sock:/socket",
+            "/run/user/1000/docker.sock:/socket",
+            "/run/podman/podman.sock:/var/run/docker.sock",
+            "/run/containerd/containerd.sock:/socket",
+            "/var/run/crio/crio.sock:/socket",
+            "/custom/engine:/var/run/docker.sock",
+            "/var/run:/host-run",
+            "/var/run/:/host-run",
+            "/:/host",
+            {"type": "bind", "source": "/srv/engine", "target": "/run/docker.sock"},
+        ],
+    )
+    def test_engine_socket_is_identified(self, tmp_path, mount):
+        (result,) = self.run_check(tmp_path, {"volumes": [mount]})
+        assert result.status == "fail"
+        assert "container engine API socket" in result.message
+
+    def test_ordinary_bind_mount_has_no_engine_callout(self, tmp_path):
+        (result,) = self.run_check(tmp_path, {"volumes": ["/var/log:/logs"]})
+        assert result.status == "fail"
+        assert "engine" not in result.message
+
+    @pytest.mark.parametrize(
+        "mount", ["data:/data", {"type": "volume", "source": "data", "target": "/data"}]
+    )
+    @pytest.mark.parametrize("mode", ["bind", "ro,bind", "rbind"])
+    def test_named_volume_backed_by_host_bind(self, tmp_path, mount, mode):
+        (result,) = self.run_check(
+            tmp_path,
+            {"volumes": [mount]},
+            volumes={"data": {"driver_opts": {"type": "none", "o": mode, "device": "/host"}}},
+        )
+        assert result.status == "fail"
+        assert result.key == "default:volumes:/host"
+        assert "/host" in result.message
+
+    @pytest.mark.parametrize("field", ["secrets", "configs"])
+    @pytest.mark.parametrize(
+        ("reference", "definition", "key"),
+        [
+            ("aws", {"file": "~/.aws/credentials"}, "~/.aws/credentials"),
+            ({"source": "aws", "target": "creds"}, {"file": "./creds"}, "./creds"),
+            ("aws", {"environment": "AWS_SECRET_ACCESS_KEY"}, "env:AWS_SECRET_ACCESS_KEY"),
+        ],
+    )
+    def test_host_sourced_secrets_and_configs(self, tmp_path, field, reference, definition, key):
+        compose = {"services": {"default": {field: [reference]}}, field: {"aws": definition}}
+        (tmp_path / "compose.yaml").write_text(yaml.safe_dump(compose))
+        (result,) = list(sandbox_privileges(context_for(tmp_path)))
+        assert result.status == "fail"
+        assert result.key == f"default:{field}:{key}"
+
+    @pytest.mark.parametrize("definition", [{"content": "x"}, {"external": True}, None])
+    def test_inline_external_and_undefined_configs_pass(self, tmp_path, definition):
+        compose = {"services": {"default": {"configs": ["app"]}}, "configs": {"app": definition}}
+        (tmp_path / "compose.yaml").write_text(yaml.safe_dump(compose))
+        (result,) = list(sandbox_privileges(context_for(tmp_path)))
+        assert result.status == "pass"
+
+    def test_unused_host_sourced_secret_passes(self, tmp_path):
+        compose = {"services": {"default": {}}, "secrets": {"aws": {"file": "~/.aws/credentials"}}}
+        (tmp_path / "compose.yaml").write_text(yaml.safe_dump(compose))
+        (result,) = list(sandbox_privileges(context_for(tmp_path)))
+        assert result.status == "pass"
+
+    def test_ordinary_settings_and_gpu_reservations_pass(self, tmp_path):
+        (result,) = self.run_check(
+            tmp_path,
+            {
+                "privileged": False,
+                "use_api_socket": "false",
+                "cap_add": [],
+                "cap_drop": ["ALL"],
+                "devices": [],
+                "device_cgroup_rules": [],
+                "network_mode": "none",
+                "pid": "service:worker",
+                "ipc": "shareable",
+                "cgroup": "private",
+                "user": "root",
+                "security_opt": [
+                    "no-new-privileges:true",
+                    "seccomp=profile.json",
+                    "apparmor=my-profile",
+                    "label=type:container_t",
+                    "label=level:s0:c100,c200",
+                ],
+                "volumes": [
+                    "/data",
+                    "/cache:ro",
+                    "/cache:ro,z",
+                    "data:/data",
+                    {"type": "volume", "source": "data", "target": "/data"},
+                ],
+                "volumes_from": ["worker:ro"],
+                "post_start": [{"command": "true", "privileged": False}],
+                "deploy": {
+                    "resources": {
+                        "reservations": {"devices": [{"driver": "nvidia", "capabilities": ["gpu"]}]}
+                    }
+                },
+            },
+            volumes={"data": None, "unused": {"driver_opts": {"o": "bind", "device": "/host"}}},
+        )
+        assert result.status == "pass"
+        assert "1 service(s)" in result.message
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("privileged", "${PRIVILEGED}"),
+            ("use_api_socket", "${USE_SOCKET}"),
+            ("network_mode", "${NETWORK_MODE:-host}"),
+            ("security_opt", ["seccomp=${PROFILE}"]),
+            ("volumes", ["${HOST_PATH}:/data"]),
+            ("volumes", ["${VOLUME:-./data}:/data"]),
+            ("cap_add", ["${CAP}"]),
+            ("cap_add", "${CAPS}"),
+            ("devices", ["${DEVICE}:/dev/device"]),
+            ("device_cgroup_rules", ["${RULE}"]),
+            ("volumes", [{"type": "volume", "source": "${VOLUME}", "target": "/data"}]),
+            ("volumes_from", ["${CONTAINER}"]),
+            ("post_start", [{"command": "true", "privileged": "${PRIVILEGED}"}]),
+        ],
+    )
+    def test_unresolved_interpolation_warns(self, tmp_path, field, value):
+        (result,) = self.run_check(tmp_path, {field: value})
+        assert result.status == "warn"
+        assert "cannot be checked" in result.message
+
+    def test_one_finding_per_value(self, tmp_path):
+        results = self.run_check(
+            tmp_path,
+            {
+                "privileged": True,
+                "cap_add": ["SYS_PTRACE", "NET_ADMIN"],
+                "volumes": ["/a:/a", "/b:/b"],
+                "security_opt": ["seccomp=unconfined", "apparmor:unconfined", "${OPTION}"],
+            },
+        )
+        assert [(r.key, r.status) for r in results] == [
+            ("default:privileged", "fail"),
+            ("default:cap_add:SYS_PTRACE", "fail"),
+            ("default:cap_add:NET_ADMIN", "fail"),
+            ("default:security_opt:seccomp=unconfined", "fail"),
+            ("default:security_opt:apparmor:unconfined", "fail"),
+            ("default:security_opt:${OPTION}", "warn"),
+            ("default:volumes:/a", "fail"),
+            ("default:volumes:/b", "fail"),
+        ]
+
+    def test_findings_point_at_the_line_of_the_setting(self, tmp_path):
+        (tmp_path / "compose.yaml").write_text(
+            "x-defaults: &defaults\n"
+            "  cap_add: [SYS_ADMIN]\n"
+            "services:\n"
+            "  default:\n"
+            "    <<: *defaults\n"
+            "    image: example/untagged\n"
+            "    privileged: true\n"
+            "    volumes:\n"
+            "      - data:/data\n"
+            "      - /var/run/docker.sock:/var/run/docker.sock\n"
+            "    post_start:\n"
+            "      - command: ./setup.sh\n"
+            "        privileged: true\n"
+            "  broken: []\n"
+        )
+        results = list(sandbox_privileges(context_for(tmp_path)))
+        assert [(r.key, r.line) for r in results] == [
+            ("default:privileged", 7),
+            ("default:cap_add:SYS_ADMIN", 2),
+            ("default:post_start.privileged", 13),
+            ("default:volumes:/var/run/docker.sock", 10),
+            (None, 14),
+        ]
+        (pinning,) = sandbox_image_pinning(context_for(tmp_path))
+        assert pinning.line == 6
+
+    def test_yaml_anchors_comments_and_multiple_files(self, tmp_path):
+        (tmp_path / "compose.yaml").write_text(
+            "x-defaults: &defaults\n  privileged: true\nservices:\n"
+            "  default:\n    <<: *defaults\n"
+            "  other:\n    <<: *defaults\n    privileged: false\n    # ipc: host\n"
+        )
+        nested = tmp_path / "nested"
+        nested.mkdir()
+        other_file = nested / "docker-compose.override.yml"
+        other_file.write_text("services:\n  other:\n    cap_add: [SYS_ADMIN]\n")
+        results = list(sandbox_privileges(context_for(tmp_path)))
+        assert [(r.key, r.file) for r in results] == [
+            ("default:privileged", tmp_path / "compose.yaml"),
+            ("other:cap_add:SYS_ADMIN", other_file),
+        ]
+
+    @pytest.mark.parametrize(
+        "content", ["services: [unclosed", "[]", "services: []", "services:\n  default: []\n"]
+    )
+    def test_unreadable_services_warn_without_passing(self, tmp_path, content):
+        (tmp_path / "compose.yml").write_text(content)
+        (result,) = list(sandbox_privileges(context_for(tmp_path)))
+        assert result.status == "warn"
+
+    def test_non_utf8_file_warns(self, tmp_path):
+        (tmp_path / "compose.yaml").write_bytes(b"services:\n  default:\n    image: \xff\n")
+        (result,) = list(sandbox_privileges(context_for(tmp_path)))
+        assert result.status == "warn"
+
+    @pytest.mark.parametrize("content", ["", "# placeholder\n", "services:\n"])
+    def test_empty_compose_file_passes(self, tmp_path, content):
+        (tmp_path / "compose.yaml").write_text(content)
+        (result,) = list(sandbox_privileges(context_for(tmp_path)))
+        assert result.status == "pass"
+        assert "0 service(s)" in result.message
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "services:\n  default:\n    privileged: !override true\n",
+            "services:\n  default:\n    privileged: true\n    ports: !override ['80:80']\n",
+            "services:\n  default:\n    privileged: true\n    build: !reset null\n",
+            "services:\n  default: !override\n    privileged: true\n",
+            "services:\n  default:\n    cap_add: !reset [SYS_ADMIN]\n",
+        ],
+    )
+    def test_compose_merge_tags_are_checked_as_written(self, tmp_path, content):
+        (tmp_path / "compose.override.yaml").write_text(content)
+        (result,) = list(sandbox_privileges(context_for(tmp_path)))
+        assert result.status == "fail"
+
+    def test_excluded_directories_are_still_checked(self, tmp_path):
+        eval_path = tmp_path / "my_eval"
+        (eval_path / "challenges").mkdir(parents=True)
+        (eval_path / "challenges" / "compose.yaml").write_text(
+            "services:\n  default:\n    privileged: true\n"
+        )
+        config = replace(PRESETS["multi-eval"], exclude=("my_eval/challenges/**",))
+        (result,) = list(sandbox_privileges(context_for(eval_path, config)))
+        assert result.status == "fail"
+
+    def test_no_compose_files_skips(self, tmp_path):
+        (result,) = list(sandbox_privileges(context_for(tmp_path)))
+        assert result.status == "skip"
 
 
 class TestGpuSandboxCheck:

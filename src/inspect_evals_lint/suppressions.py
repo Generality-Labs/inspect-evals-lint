@@ -22,6 +22,7 @@ from inspect_evals_lint.rules._ast import (
     iter_package_files,
     iter_python_files,
 )
+from inspect_evals_lint.rules._compose import iter_compose_files
 
 LINE_PATTERN = re.compile(r"#\s*inspect-evals-lint:\s*ignore\[([^\]]*)\]")
 FILE_PATTERN = re.compile(r"#\s*inspect-evals-lint:\s*ignore-file\[([^\]]*)\]")
@@ -183,11 +184,13 @@ def _read_comments(path: Path, suppressions: Suppressions) -> None:
 
 
 def load_suppressions(ctx: LintContext) -> Suppressions:
-    """Collect ignore comments from the package's Python files and Dockerfiles, skipping ``exclude``d ones.
+    """Collect ignore comments from the package's Python files, Dockerfiles and Compose files.
 
-    Excluded files are never linted, so nothing in them can be suppressed and a
-    stray comment there (in code shipped into a sandbox, say) is not read. In a
-    Dockerfile a comment on its own line applies to the instruction below it.
+    Excluded Python files and Dockerfiles are never linted, so nothing in them can
+    be suppressed and a stray comment there (in code shipped into a sandbox, say)
+    is not read. Compose files are always linted, so their comments are always
+    read. In a Dockerfile a comment on its own line applies to the instruction
+    below it; in a Compose file a comment applies to its own line.
 
     Markers the linter does not read (the removed ``noautolint`` syntax, an
     ``ignore`` without a rule list, an ``ignore-file`` past the header, a selector
@@ -204,7 +207,7 @@ def load_suppressions(ctx: LintContext) -> Suppressions:
                 LEGACY_FILE_HINT,
             )
         )
-    for path in (*iter_python_files(ctx), *iter_dockerfiles(ctx)):
+    for path in (*iter_python_files(ctx), *iter_dockerfiles(ctx), *iter_compose_files(ctx)):
         _read_comments(path, suppressions)
     return suppressions
 
