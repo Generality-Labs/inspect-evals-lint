@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
@@ -154,22 +155,136 @@ class SampleIdVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+FIELD_SPEC_ID_POSITION = 3
+"""``FieldSpec(input, target, choices, id, ...)``: a fourth positional argument is the id field."""
+
+
+@dataclass
+class FieldSpecSite:
+    """A ``FieldSpec(...)`` call, whether it names an id field, and the loader calls it is passed to."""
+
+    node: ast.Call
+    has_id: bool
+    loaders: dict[int, ast.Call] = field(default_factory=dict)
+    """Calls passing this FieldSpec as ``sample_fields=``, directly or through a name bound to it."""
+
+    @property
+    def auto_id(self) -> bool:
+        """Whether every loader it is passed to numbers its samples with ``auto_id=``."""
+        return bool(self.loaders) and all(_passes_auto_id(call) for call in self.loaders.values())
+
+
+def _is_field_spec(node: ast.AST | None) -> bool:
+    return isinstance(node, ast.Call) and get_call_name(node) == "FieldSpec"
+
+
+def _passes_auto_id(call: ast.Call) -> bool:
+    """``auto_id=`` with anything but a false literal; a non-literal is taken as set, as ``required=`` is."""
+    keyword = next((k for k in call.keywords if k.arg == "auto_id"), None)
+    if keyword is None:
+        return False
+    return not (isinstance(keyword.value, ast.Constant) and not keyword.value.value)
+
+
+def _field_spec_has_id(node: ast.Call) -> bool:
+    """``id=``, a fourth positional argument, or ``**kwargs`` (which may hold one)."""
+    return len(node.args) > FIELD_SPEC_ID_POSITION or any(
+        keyword.arg in ("id", None) for keyword in node.keywords
+    )
+
+
+def _field_spec_names(nodes: Iterable[ast.AST]) -> dict[str, ast.Call]:
+    """Names bound to a ``FieldSpec(...)`` call by the assignments among ``nodes``."""
+    names: dict[str, ast.Call] = {}
+    for node in nodes:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            if _is_field_spec(node.value):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        names[target.id] = node.value
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and isinstance(node.value, ast.Call)
+            and _is_field_spec(node.value)
+        ):
+            names[node.target.id] = node.value
+    return names
+
+
+def field_spec_sites(tree: ast.AST) -> list[FieldSpecSite]:
+    """Every ``FieldSpec(...)`` call in a file, with the loaders it reaches.
+
+    A loader is any call passing ``sample_fields=``. The value may be the
+    ``FieldSpec(...)`` call itself or a name bound to one in the same function
+    or at module level. A function passed as ``sample_fields`` builds its own
+    ``Sample()`` calls, which are checked as such.
+    """
+    sites = {
+        id(node): FieldSpecSite(node, _field_spec_has_id(node))
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _is_field_spec(node)
+    }
+    module_names = _field_spec_names(tree.body if isinstance(tree, ast.Module) else [])
+    scopes: list[tuple[ast.AST, dict[str, ast.Call]]] = [(tree, {})]
+    scopes += [
+        (fn, _field_spec_names(ast.walk(fn)))
+        for fn in ast.walk(tree)
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    for scope, local_names in scopes:
+        for node in ast.walk(scope):
+            if not isinstance(node, ast.Call):
+                continue
+            for keyword in node.keywords:
+                if keyword.arg != "sample_fields":
+                    continue
+                value = keyword.value
+                spec = value if isinstance(value, ast.Call) and _is_field_spec(value) else None
+                if spec is None and isinstance(value, ast.Name):
+                    spec = local_names.get(value.id) or module_names.get(value.id)
+                if spec is not None:
+                    sites[id(spec)].loaders[id(node)] = node
+    return sorted(sites.values(), key=lambda site: (site.node.lineno, site.node.col_offset))
+
+
+_FIELD_SPEC_HINT = (
+    'name the record\'s id field with id= (FieldSpec reads a field called "id" by default, so '
+    'write id="id" if that is the one), or pass auto_id=True to the loader'
+)
+
+
 @rule(
     code="IEBP003",
     name="sample_ids",
     category="best_practices",
     scopes=("eval", "helper"),
-    summary="Every Sample() passes id=",
+    summary="Every Sample() passes id=, and every FieldSpec() names an id field",
     references=(
         inspect_docs("datasets", "Datasets: Dataset Samples", "dataset-samples"),
         inspect_docs("eval-logs", "Log Files: IDs and Shuffling", "ids-and-shuffling"),
     ),
 )
 def sample_ids(ctx: LintContext) -> Iterable[Finding]:
-    """Every ``Sample()`` passes ``id=``.
+    """Every ``Sample()`` passes ``id=``, and every ``FieldSpec()`` names an id field.
 
     ## What it does
     Flags each ``Sample(...)`` call without an ``id=`` keyword.
+
+    Also flags each ``FieldSpec(...)`` without ``id=`` (or a fourth positional
+    argument), unless every loader call it is passed to as ``sample_fields=``
+    sets ``auto_id=True``. The ``FieldSpec`` may be passed directly or through
+    a name bound to it in the same function or at module level; one bound but
+    never passed to a loader needs its own ``id=``. ``FieldSpec`` reads a field
+    called ``id`` by default, but whether the records have one is not visible
+    in the code, so the rule asks for the field to be named: ``id="id"`` when
+    that is it. A function passed as ``sample_fields`` builds its own
+    ``Sample()`` calls, which are checked as above.
+
+    ``auto_id`` numbers samples by their position in the unshuffled records.
+    Inspect assigns those ids before shuffling, so they survive shuffles, but
+    not filtering or dataset updates; a field from the records is more stable
+    where one exists.
 
     ## Why is this bad?
     Without a stable id a sample is identified by its position. Shuffling,
@@ -179,38 +294,59 @@ def sample_ids(ctx: LintContext) -> Iterable[Finding]:
     ## Example
     ```python
     Sample(input=record["question"], target=record["answer"])
+    hf_dataset("org/data", sample_fields=FieldSpec(input="question", target="answer"))
     ```
     Use instead:
     ```python
     Sample(input=record["question"], target=record["answer"], id=record["id"])
+    hf_dataset("org/data", sample_fields=FieldSpec(input="question", target="answer", id="qid"))
     ```
     """
     parsed_files = parse_python_files(ctx)
     yield from parse_failures(parsed_files)
 
-    total = 0
+    samples = 0
+    specs = 0
     missing = 0
     for parsed in parsed_files.parsed:
         visitor = SampleIdVisitor()
         visitor.visit(parsed.tree)
-        for (line, has_id), node in zip(visitor.samples, visitor.nodes, strict=True):
-            total += 1
-            if has_id:
-                continue
+        found: list[tuple[ast.Call, str, str]] = []
+        for (_line, has_id), node in zip(visitor.samples, visitor.nodes, strict=True):
+            samples += 1
+            if not has_id:
+                found.append(
+                    (
+                        node,
+                        "Sample() call without id=",
+                        "pass a stable id= so the sample survives shuffles and reruns",
+                    )
+                )
+        for site in field_spec_sites(parsed.tree):
+            specs += 1
+            if not site.has_id and not site.auto_id:
+                found.append(
+                    (
+                        site.node,
+                        "FieldSpec() without id=, and its loader does not pass auto_id=True",
+                        _FIELD_SPEC_HINT,
+                    )
+                )
+        for node, message, hint in sorted(found, key=lambda f: (f[0].lineno, f[0].col_offset)):
             missing += 1
             yield Diagnostic(
-                "Sample() call without id=",
+                message,
                 file=parsed.path,
-                line=line,
+                line=node.lineno,
                 column=column_of(node),
                 end_line=end_line_of(node),
-                hint="pass a stable id= so the sample survives shuffles and reruns",
+                hint=hint,
             )
 
-    if total == 0:
-        yield Outcome("skip", "No Sample() calls found")
+    if samples + specs == 0:
+        yield Outcome("skip", "No Sample() or FieldSpec() calls found")
     elif missing == 0:
-        yield Outcome("pass", f"All {total} Sample() calls include id parameter")
+        yield Outcome("pass", f"All {samples} Sample() and {specs} FieldSpec() calls give an id")
 
 
 class TaskDefaultsVisitor(ast.NodeVisitor):

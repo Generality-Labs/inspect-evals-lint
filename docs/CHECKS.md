@@ -43,7 +43,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the c
 | --------------------------- | ------------------------------- | ------------ | --------------------------------------------------------------------------------------------------- |
 | [IEBP001](rules/IEBP001.md) | `get_model_location`            | eval, helper | get_model() is only called inside @solver, @scorer or @agent functions                              |
 | [IEBP002](rules/IEBP002.md) | `model_role_resolution`         | eval, helper | get_model(role=...) resolves deliberately: an explicit model, default= or required=True             |
-| [IEBP003](rules/IEBP003.md) | `sample_ids`                    | eval, helper | Every Sample() passes id=                                                                           |
+| [IEBP003](rules/IEBP003.md) | `sample_ids`                    | eval, helper | Every Sample() passes id=, and every FieldSpec() names an id field                                  |
 | [IEBP004](rules/IEBP004.md) | `task_overridable_defaults`     | eval, helper | @task parameters naming a solver, scorer, metric, grader or model have defaults                     |
 | [IEBP005](rules/IEBP005.md) | `sandbox_image_pinning`         | eval, helper | Registry images in compose files use an immutable tag or digest                                     |
 | [IEBP006](rules/IEBP006.md) | `gpu_sandbox_check`             | eval         | An evaluation requiring a GPU ships a maintenance sandbox check task                                |

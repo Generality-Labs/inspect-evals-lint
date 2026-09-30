@@ -16,7 +16,7 @@ from inspect_evals_lint.rules.best_practices import (
     model_role_resolution,
 )
 from inspect_evals_lint.suppressions import apply_suppressions, load_suppressions
-from tests.conftest import context_for
+from tests.conftest import context_for, write
 
 
 class TestGetModelVisitor:
@@ -416,3 +416,111 @@ class TestCheckModelRoleResolution:
             results, load_suppressions(context_for(eval_dir)), PRESETS["multi-eval"], tmp_path
         )
         assert [r.status for r in results] == ["suppressed"]
+
+
+class TestSampleIdsFieldSpec:
+    """sample_ids checks FieldSpec-built samples as well as Sample() calls."""
+
+    def run(self, tmp_path: Path, code: str):
+        from inspect_evals_lint.rules.best_practices import sample_ids
+
+        package = tmp_path / "alpha"
+        write(package / "__init__.py", "")
+        write(package / "data.py", code)
+        return list(sample_ids(context_for(package)))
+
+    def test_fieldspec_without_id_fails(self, tmp_path: Path):
+        results = self.run(
+            tmp_path,
+            "from inspect_ai.dataset import FieldSpec, hf_dataset\n"
+            "ds = hf_dataset('x/y', split='test', sample_fields=FieldSpec(input='q', target='a'))\n",
+        )
+        (d,) = results
+        assert d.status == "fail"
+        assert d.line == 2
+        assert d.message == "FieldSpec() without id=, and its loader does not pass auto_id=True"
+        assert 'id="id"' in (d.hint or "")
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            "FieldSpec(input='q', id='qid')",
+            "FieldSpec('q', 'a', 'choices', 'qid')",  # id is the fourth field
+            "FieldSpec(**FIELDS)",  # cannot tell; not reported
+        ],
+    )
+    def test_fieldspec_with_an_id_passes(self, tmp_path: Path, call: str):
+        results = self.run(tmp_path, f"ds = hf_dataset('x/y', sample_fields={call})\n")
+        assert [r.status for r in results] == ["pass"]
+        assert "FieldSpec()" in results[0].message
+
+    @pytest.mark.parametrize("auto_id", ["True", "use_auto_ids"])
+    def test_auto_id_on_the_loader_passes(self, tmp_path: Path, auto_id: str):
+        results = self.run(
+            tmp_path,
+            f"ds = load_csv_dataset('a.csv', sample_fields=FieldSpec(input='q'), auto_id={auto_id})\n",
+        )
+        assert [r.status for r in results] == ["pass"]
+
+    def test_auto_id_false_does_not_count(self, tmp_path: Path):
+        results = self.run(
+            tmp_path, "ds = hf_dataset('x', sample_fields=FieldSpec(input='q'), auto_id=False)\n"
+        )
+        assert [r.status for r in results] == ["fail"]
+
+    def test_module_level_name_is_resolved_to_its_loader(self, tmp_path: Path):
+        results = self.run(
+            tmp_path,
+            "FIELDS = FieldSpec(input='q', target='a')\n\n"
+            "def load():\n"
+            "    return hf_dataset('x', sample_fields=FIELDS, auto_id=True)\n",
+        )
+        assert [r.status for r in results] == ["pass"]
+
+    def test_function_local_name_is_resolved_to_its_loader(self, tmp_path: Path):
+        results = self.run(
+            tmp_path,
+            "def load():\n"
+            "    fields = FieldSpec(input='q', target='a')\n"
+            "    return hf_dataset('x', sample_fields=fields, auto_id=True)\n",
+        )
+        assert [r.status for r in results] == ["pass"]
+
+    def test_a_name_used_by_a_loader_without_auto_id_fails_at_the_fieldspec(self, tmp_path: Path):
+        results = self.run(
+            tmp_path,
+            "FIELDS = FieldSpec(input='q')\n"
+            "a = hf_dataset('x', sample_fields=FIELDS, auto_id=True)\n"
+            "b = hf_dataset('y', sample_fields=FIELDS)\n",
+        )
+        (d,) = results
+        assert (d.status, d.line) == ("fail", 1)
+
+    def test_an_unused_fieldspec_without_id_fails(self, tmp_path: Path):
+        results = self.run(tmp_path, "FIELDS = FieldSpec(input='q')\n")
+        assert [r.status for r in results] == ["fail"]
+
+    def test_a_function_passed_as_sample_fields_is_left_to_its_sample_calls(self, tmp_path: Path):
+        results = self.run(
+            tmp_path,
+            "def to_sample(record):\n"
+            "    return Sample(input=record['q'])\n\n"
+            "ds = hf_dataset('x', sample_fields=to_sample)\n",
+        )
+        assert [(r.status, r.message) for r in results] == [("fail", "Sample() call without id=")]
+
+    def test_status_line_counts_both(self, tmp_path: Path):
+        results = self.run(
+            tmp_path,
+            "a = Sample(input='x', id='1')\n"
+            "b = hf_dataset('x', sample_fields=FieldSpec(input='q', id='qid'))\n",
+        )
+        assert [(r.status, r.message) for r in results] == [
+            ("pass", "All 1 Sample() and 1 FieldSpec() calls give an id")
+        ]
+
+    def test_skip_names_both(self, tmp_path: Path):
+        results = self.run(tmp_path, "x = 1\n")
+        assert [(r.status, r.message) for r in results] == [
+            ("skip", "No Sample() or FieldSpec() calls found")
+        ]

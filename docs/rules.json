@@ -396,7 +396,7 @@
         "helper"
       ],
       "allowlist": false,
-      "summary": "Every Sample() passes id=",
+      "summary": "Every Sample() passes id=, and every FieldSpec() names an id field",
       "url": "https://inspect-evals-lint.generality.org/rules/IEBP003/",
       "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP003.md",
       "references": [
