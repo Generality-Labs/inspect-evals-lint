@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Iterable
+from dataclasses import dataclass, field
+from typing import Literal, cast
 
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
@@ -154,22 +156,442 @@ class SampleIdVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+FIELD_SPEC_ID_POSITION = 3
+"""``FieldSpec(input, target, choices, id, ...)``: a fourth positional argument is the id field."""
+
+
+@dataclass
+class FieldSpecSite:
+    """A ``FieldSpec(...)`` call, whether it names an id field, and the loader calls it is passed to."""
+
+    node: ast.Call
+    has_id: bool
+    loaders: dict[int, ast.Call] = field(default_factory=dict)
+    """Calls passing this FieldSpec as ``sample_fields``, directly or through a name bound to it."""
+
+    @property
+    def auto_id(self) -> bool:
+        """Whether every loader it is passed to numbers its samples with ``auto_id=``."""
+        return bool(self.loaders) and all(_passes_auto_id(call) for call in self.loaders.values())
+
+
+def _field_spec_names(tree: ast.AST) -> set[str]:
+    """``FieldSpec`` and any name a file imports it as."""
+    names = {"FieldSpec"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            names.update(a.asname for a in node.names if a.name == "FieldSpec" and a.asname)
+    return names
+
+
+SAMPLE_FIELDS_POSITION = {
+    "hf_dataset": 5,
+    "csv_dataset": 1,
+    "json_dataset": 1,
+    "file_dataset": 1,
+    "load_csv_dataset": 2,
+    "load_json_dataset": 2,
+}
+"""Where each known loader takes ``sample_fields`` positionally; ``auto_id`` follows it in every one."""
+
+
+def _loader_argument(call: ast.Call, name: str, offset: int) -> ast.expr | None:
+    """``name=``, or the argument ``offset`` places after where a known loader takes ``sample_fields``."""
+    keyword = next((k for k in call.keywords if k.arg == name), None)
+    if keyword is not None:
+        return keyword.value
+    position = SAMPLE_FIELDS_POSITION.get(get_call_name(call) or "")
+    if position is None or len(call.args) <= position + offset:
+        return None
+    if any(isinstance(arg, ast.Starred) for arg in call.args[: position + offset + 1]):
+        return None
+    return call.args[position + offset]
+
+
+def _passes_auto_id(call: ast.Call) -> bool:
+    """``auto_id`` with anything but a false literal; a non-literal is taken as set, as ``required=`` is."""
+    value = _loader_argument(call, "auto_id", 1)
+    if value is None:
+        return any(keyword.arg is None for keyword in call.keywords)  # ``**kwargs`` may hold it
+    return not (isinstance(value, ast.Constant) and not value.value)
+
+
+def _field_spec_has_id(node: ast.Call) -> bool:
+    """``id=``, a fourth positional argument, or ``*args`` or ``**kwargs`` (which may hold one)."""
+    return (
+        len(node.args) > FIELD_SPEC_ID_POSITION
+        or any(isinstance(arg, ast.Starred) for arg in node.args)
+        or any(keyword.arg in ("id", None) for keyword in node.keywords)
+    )
+
+
+Position = tuple[int, int]
+"""``(line, column)`` in the file, for ordering bindings against the calls that use them."""
+
+
+@dataclass
+class _Binding:
+    """One binding of a name: the value bound, where it takes effect, and the statement lists it sits in."""
+
+    value: ast.expr | None
+    """None where the value isn't an expression in the file: a parameter, an import, a loop target."""
+    position: Position
+    blocks: tuple[int, ...]
+    """``id`` of each statement list enclosing the binding, outermost first."""
+
+
+@dataclass
+class _Scope:
+    """A module, function, class or comprehension body, with the names it binds."""
+
+    kind: Literal["module", "function", "class", "comprehension"]
+    parent: _Scope | None
+    bindings: dict[str, list[_Binding]] = field(default_factory=dict)
+    declared: dict[str, Literal["global", "nonlocal"]] = field(default_factory=dict)
+
+
+@dataclass
+class _LoaderCall:
+    """A call passing ``sample_fields``, with where it runs."""
+
+    call: ast.Call
+    sample_fields: ast.expr
+    scope: _Scope
+    blocks: tuple[int, ...]
+
+
+def _position(node: ast.expr | ast.stmt | ast.excepthandler | ast.pattern) -> Position:
+    return (node.lineno, node.col_offset)
+
+
+def _end(node: ast.expr | ast.stmt) -> Position:
+    return (node.end_lineno or node.lineno, node.end_col_offset or node.col_offset)
+
+
+def _unpack(target: ast.expr, value: ast.expr | None) -> Iterable[tuple[ast.Name, ast.expr | None]]:
+    """The names an assignment target binds, each with its part of ``value`` where that can be told."""
+    if isinstance(target, ast.Name):
+        yield target, value
+    elif isinstance(target, ast.Starred):
+        yield from _unpack(target.value, None)
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        parts: list[ast.expr | None] = [None] * len(target.elts)
+        if (
+            isinstance(value, (ast.Tuple, ast.List))
+            and len(value.elts) == len(target.elts)
+            and not any(isinstance(e, ast.Starred) for e in [*target.elts, *value.elts])
+        ):
+            parts = list(value.elts)
+        for element, part in zip(target.elts, parts, strict=True):
+            yield from _unpack(element, part)
+
+
+class _BindingCollector(ast.NodeVisitor):
+    """Record each scope's name bindings and each call passing ``sample_fields``, in one pass over a file."""
+
+    def __init__(self) -> None:
+        self.module = _Scope("module", None)
+        self.scope: _Scope = self.module
+        self.blocks: list[int] = []
+        self.loaders: list[_LoaderCall] = []
+        self._bound: set[int] = set()
+        """``id`` of each ``Name`` target already bound with its value."""
+
+    def _bind(self, name: str, value: ast.expr | None, position: Position) -> None:
+        scope = self.scope
+        while scope.kind == "comprehension" and scope.parent is not None and value is not None:
+            scope = scope.parent  # only a walrus binds a value inside a comprehension
+        declared = scope.declared.get(name)
+        if declared == "global":
+            scope = self.module
+        elif declared == "nonlocal":
+            enclosing = scope.parent
+            while enclosing is not None and enclosing.kind != "function":
+                enclosing = enclosing.parent
+            scope = enclosing or scope
+        scope.bindings.setdefault(name, []).append(_Binding(value, position, tuple(self.blocks)))
+
+    def generic_visit(self, node: ast.AST) -> None:
+        for _, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                self._visit_list(cast(list[object], value))
+            elif isinstance(value, ast.AST):
+                self.visit(value)
+
+    def _visit_list(self, items: list[object]) -> None:
+        block = bool(items) and isinstance(items[0], ast.stmt)
+        if block:
+            self.blocks.append(id(items))
+        for item in items:
+            if isinstance(item, ast.AST):
+                self.visit(item)
+        if block:
+            self.blocks.pop()
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Store) and id(node) not in self._bound:
+            self._bind(node.id, None, _position(node))
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        self.visit(node.value)
+        for target in node.targets:
+            for name, value in _unpack(target, node.value):
+                self._bound.add(id(name))
+                self._bind(name.id, value, _end(node))
+            self.visit(target)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        self.visit(node.annotation)
+        if node.value is None:
+            return
+        self.visit(node.value)
+        for name, value in _unpack(node.target, node.value):
+            self._bound.add(id(name))
+            self._bind(name.id, value, _end(node))
+        self.visit(node.target)
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        self.visit(node.value)
+        self._bound.add(id(node.target))
+        self._bind(node.target.id, node.value, _end(node))
+
+    def visit_Global(self, node: ast.Global) -> None:
+        self.scope.declared.update(dict.fromkeys(node.names, "global"))
+
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        self.scope.declared.update(dict.fromkeys(node.names, "nonlocal"))
+
+    def visit_Import(self, node: ast.Import | ast.ImportFrom) -> None:
+        for alias in node.names:
+            self._bind(alias.asname or alias.name.split(".")[0], None, _position(node))
+
+    visit_ImportFrom = visit_Import  # noqa: N815
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name:
+            self._bind(node.name, None, _position(node))
+        self.generic_visit(node)
+
+    def visit_MatchAs(self, node: ast.MatchAs | ast.MatchStar) -> None:
+        if node.name:
+            self._bind(node.name, None, _position(node))
+        self.generic_visit(node)
+
+    visit_MatchStar = visit_MatchAs  # noqa: N815
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda) -> None:
+        arguments = node.args
+        # Decorators and defaults run in the enclosing scope.
+        decorators = [] if isinstance(node, ast.Lambda) else node.decorator_list
+        for expr in [*decorators, *arguments.defaults, *arguments.kw_defaults]:
+            if expr is not None:
+                self.visit(expr)
+        outer = self.scope
+        self.scope = _Scope("function", outer)
+        parameters = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+        parameters += [a for a in (arguments.vararg, arguments.kwarg) if a is not None]
+        for parameter in parameters:
+            self._bind(parameter.arg, None, _position(node))
+        if isinstance(node, ast.Lambda):
+            self.visit(node.body)
+        else:
+            self._visit_list(list(node.body))
+        self.scope = outer
+        if not isinstance(node, ast.Lambda):
+            self._bind(node.name, None, _end(node))
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # noqa: N815
+    visit_Lambda = visit_FunctionDef  # noqa: N815
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        for expr in [*node.decorator_list, *node.bases, *(k.value for k in node.keywords)]:
+            self.visit(expr)
+        outer = self.scope
+        self.scope = _Scope("class", outer)
+        self._visit_list(list(node.body))
+        self.scope = outer
+        self._bind(node.name, None, _end(node))
+
+    def visit_ListComp(
+        self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp
+    ) -> None:
+        outer = self.scope
+        self.scope = _Scope("comprehension", outer)
+        self.generic_visit(node)
+        self.scope = outer
+
+    visit_SetComp = visit_DictComp = visit_GeneratorExp = visit_ListComp  # noqa: N815
+
+    def visit_Call(self, node: ast.Call) -> None:
+        value = _sample_fields_argument(node)
+        if value is not None:
+            self.loaders.append(_LoaderCall(node, value, self.scope, tuple(self.blocks)))
+        self.generic_visit(node)
+
+
+def _sample_fields_argument(call: ast.Call) -> ast.expr | None:
+    return _loader_argument(call, "sample_fields", 0)
+
+
+def _within(outer: tuple[int, ...], inner: tuple[int, ...]) -> bool:
+    """Whether the statement list at the end of ``outer`` is, or encloses, the one at the end of ``inner``."""
+    return inner[: len(outer)] == outer
+
+
+def _defining_scope(name: str, scope: _Scope) -> tuple[_Scope, bool] | None:
+    """The scope whose bindings of ``name`` a use in ``scope`` sees, and whether that scope's code runs in order up to the use.
+
+    A function body runs after its enclosing code, so any binding there may be the one in force.
+    A class body is skipped once left, as Python does for the functions it defines.
+    """
+    in_order = True
+    current: _Scope | None = scope
+    while current is not None:
+        declared = current.declared.get(name)
+        if declared == "global":
+            while current.parent is not None:
+                current = current.parent
+            return (current, False) if name in current.bindings else None
+        visible = current is scope or current.kind != "class"
+        if declared is None and visible and name in current.bindings:
+            return current, in_order
+        if current.kind == "function":
+            in_order = False
+        current = current.parent
+    return None
+
+
+def _reaching(
+    name: str, scope: _Scope, position: Position, blocks: tuple[int, ...]
+) -> list[_Binding]:
+    """The bindings of ``name`` that may be in force at ``position`` in ``scope``.
+
+    Where the defining scope runs in order up to the use, a binding is in force
+    if it comes earlier and no later binding in the same or an enclosing
+    statement list, one that also encloses the use, replaces it.
+    """
+    found = _defining_scope(name, scope)
+    if found is None:
+        return []
+    owner, in_order = found
+    bindings = owner.bindings[name]
+    if not in_order:
+        return bindings
+    earlier = [b for b in bindings if b.position < position]
+    return [
+        b
+        for b in earlier
+        if not any(
+            later.position > b.position
+            and _within(later.blocks, b.blocks)
+            and _within(later.blocks, blocks)
+            for later in earlier
+        )
+    ]
+
+
+def _field_specs_in(
+    expr: ast.expr,
+    sites: dict[int, FieldSpecSite],
+    scope: _Scope,
+    position: Position,
+    blocks: tuple[int, ...],
+    seen: frozenset[int] = frozenset(),
+) -> Iterable[FieldSpecSite]:
+    """The ``FieldSpec(...)`` calls ``expr`` may evaluate to: the call itself, either branch of a conditional, or what a name is bound to."""
+    if id(expr) in sites:
+        yield sites[id(expr)]
+    elif isinstance(expr, ast.IfExp):
+        for branch in (expr.body, expr.orelse):
+            yield from _field_specs_in(branch, sites, scope, position, blocks, seen)
+    elif isinstance(expr, ast.NamedExpr):
+        yield from _field_specs_in(expr.value, sites, scope, position, blocks, seen)
+    elif isinstance(expr, ast.Name):
+        for binding in _reaching(expr.id, scope, position, blocks):
+            if binding.value is not None and id(binding) not in seen:
+                yield from _field_specs_in(
+                    binding.value,
+                    sites,
+                    scope,
+                    binding.position,
+                    binding.blocks,
+                    seen | {id(binding)},
+                )
+
+
+def field_spec_sites(tree: ast.AST) -> list[FieldSpecSite]:
+    """Every ``FieldSpec(...)`` call in a file, with the loaders it reaches.
+
+    A loader is any call passing ``sample_fields=``, or a known loader (see
+    ``SAMPLE_FIELDS_POSITION``) passing it positionally. The value may be the
+    ``FieldSpec(...)`` call itself or a name bound to one, resolved as Python
+    scopes it: a function's own names, then enclosing functions', then the
+    module's. A function passed as ``sample_fields`` builds its own
+    ``Sample()`` calls, which are checked as such.
+    """
+    names = _field_spec_names(tree)
+    sites = {
+        id(node): FieldSpecSite(node, _field_spec_has_id(node))
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and get_call_name(node) in names
+    }
+    collector = _BindingCollector()
+    collector.visit(tree)
+    for loader in collector.loaders:
+        for site in _field_specs_in(
+            loader.sample_fields, sites, loader.scope, _position(loader.call), loader.blocks
+        ):
+            site.loaders[id(loader.call)] = loader.call
+    return sorted(sites.values(), key=lambda site: (site.node.lineno, site.node.col_offset))
+
+
+_FIELD_SPEC_HINT = (
+    'name the record\'s id field with id= (FieldSpec reads a field called "id" by default, so '
+    'write id="id" if that is the one), or pass auto_id=True to the loader'
+)
+
+
 @rule(
     code="IEBP003",
     name="sample_ids",
     category="best_practices",
     scopes=("eval", "helper"),
-    summary="Every Sample() passes id=",
+    summary="Every Sample() passes id=, and every FieldSpec() names an id field",
     references=(
         inspect_docs("datasets", "Datasets: Dataset Samples", "dataset-samples"),
         inspect_docs("eval-logs", "Log Files: IDs and Shuffling", "ids-and-shuffling"),
     ),
 )
 def sample_ids(ctx: LintContext) -> Iterable[Finding]:
-    """Every ``Sample()`` passes ``id=``.
+    """Every ``Sample()`` passes ``id=``, and every ``FieldSpec()`` names an id field.
 
     ## What it does
     Flags each ``Sample(...)`` call without an ``id=`` keyword.
+
+    Also flags each ``FieldSpec(...)`` without ``id=``, unless every loader call
+    it is passed to as ``sample_fields`` sets ``auto_id=True``. A fourth
+    positional argument counts as ``id``, and ``*args`` or ``**kwargs`` are
+    taken to hold one. ``FieldSpec`` reads a field called ``id`` by default, but
+    whether the records have one is not visible in the code, so the rule asks
+    for the field to be named: ``id="id"`` when that is it. A function passed
+    as ``sample_fields`` builds its own ``Sample()`` calls, which are checked as
+    above.
+
+    The ``FieldSpec`` may reach its loader directly, through either branch of a
+    conditional, or through a name. A name is resolved as Python scopes it: a
+    function's own names, then enclosing functions', then the module's.
+    ``sample_fields`` and ``auto_id`` may be passed by keyword, or positionally
+    to Inspect's ``hf_dataset``, ``csv_dataset``, ``json_dataset`` and
+    ``file_dataset`` and inspect_evals' ``load_csv_dataset`` and
+    ``load_json_dataset``. A loader's ``**kwargs`` is taken to set ``auto_id``.
+    A ``FieldSpec`` the rule can't trace to a loader needs its own ``id=``. That
+    covers one never passed to a loader, and one reached only through a
+    container, an attribute such as ``self.fields``, or another file.
+
+    ``auto_id`` numbers samples by their position in the unshuffled records.
+    Inspect assigns those ids before shuffling, so they survive shuffles, but
+    not filtering or dataset updates; a field from the records is more stable
+    where one exists.
 
     ## Why is this bad?
     Without a stable id a sample is identified by its position. Shuffling,
@@ -179,38 +601,61 @@ def sample_ids(ctx: LintContext) -> Iterable[Finding]:
     ## Example
     ```python
     Sample(input=record["question"], target=record["answer"])
+    hf_dataset("org/data", sample_fields=FieldSpec(input="question", target="answer"))
     ```
     Use instead:
     ```python
     Sample(input=record["question"], target=record["answer"], id=record["id"])
+    hf_dataset("org/data", sample_fields=FieldSpec(input="question", target="answer", id="qid"))
     ```
     """
     parsed_files = parse_python_files(ctx)
     yield from parse_failures(parsed_files)
 
-    total = 0
+    samples = 0
+    specs = 0
     missing = 0
     for parsed in parsed_files.parsed:
         visitor = SampleIdVisitor()
         visitor.visit(parsed.tree)
-        for (line, has_id), node in zip(visitor.samples, visitor.nodes, strict=True):
-            total += 1
-            if has_id:
-                continue
+        found: list[tuple[ast.Call, str, str]] = []
+        for (_line, has_id), node in zip(visitor.samples, visitor.nodes, strict=True):
+            samples += 1
+            if not has_id:
+                found.append(
+                    (
+                        node,
+                        "Sample() call without id=",
+                        "pass a stable id= so the sample survives shuffles and reruns",
+                    )
+                )
+        for site in field_spec_sites(parsed.tree):
+            specs += 1
+            if not site.has_id and not site.auto_id:
+                found.append(
+                    (
+                        site.node,
+                        "FieldSpec() without id=, and its loader does not pass auto_id=True"
+                        if site.loaders
+                        else "FieldSpec() without id=, and no loader call using it was found",
+                        _FIELD_SPEC_HINT,
+                    )
+                )
+        for node, message, hint in sorted(found, key=lambda f: (f[0].lineno, f[0].col_offset)):
             missing += 1
             yield Diagnostic(
-                "Sample() call without id=",
+                message,
                 file=parsed.path,
-                line=line,
+                line=node.lineno,
                 column=column_of(node),
                 end_line=end_line_of(node),
-                hint="pass a stable id= so the sample survives shuffles and reruns",
+                hint=hint,
             )
 
-    if total == 0:
-        yield Outcome("skip", "No Sample() calls found")
+    if samples + specs == 0:
+        yield Outcome("skip", "No Sample() or FieldSpec() calls found")
     elif missing == 0:
-        yield Outcome("pass", f"All {total} Sample() calls include id parameter")
+        yield Outcome("pass", f"All {samples} Sample() and {specs} FieldSpec() calls give an id")
 
 
 class TaskDefaultsVisitor(ast.NodeVisitor):

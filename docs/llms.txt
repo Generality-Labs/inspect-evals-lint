@@ -42,7 +42,7 @@ Every HTML page on this site is also available as raw Markdown at the same path 
 
 - [IEBP001 get_model_location](https://inspect-evals-lint.generality.org/rules/IEBP001.md): get_model() is only called inside @solver, @scorer or @agent functions
 - [IEBP002 model_role_resolution](https://inspect-evals-lint.generality.org/rules/IEBP002.md): get_model(role=...) resolves deliberately: an explicit model, default= or required=True
-- [IEBP003 sample_ids](https://inspect-evals-lint.generality.org/rules/IEBP003.md): Every Sample() passes id=
+- [IEBP003 sample_ids](https://inspect-evals-lint.generality.org/rules/IEBP003.md): Every Sample() passes id=, and every FieldSpec() names an id field
 - [IEBP004 task_overridable_defaults](https://inspect-evals-lint.generality.org/rules/IEBP004.md): @task parameters naming a solver, scorer, metric, grader or model have defaults
 - [IEBP005 sandbox_image_pinning](https://inspect-evals-lint.generality.org/rules/IEBP005.md): Registry images in compose files use an immutable tag or digest
 - [IEBP006 gpu_sandbox_check](https://inspect-evals-lint.generality.org/rules/IEBP006.md): An evaluation requiring a GPU ships a maintenance sandbox check task
