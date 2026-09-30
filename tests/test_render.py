@@ -391,3 +391,24 @@ def test_github_output_names_the_annotation_cap_only_when_a_run_exceeds_it():
 def test_run_to_dict_is_available_on_the_report():
     run = make_run()
     assert run.to_dict() == run_to_dict(run)
+
+
+def test_warnings_by_check_keeps_bracketed_text_in_hints(capsys):
+    """Rich markup is not applied to messages, so a copy-paste ignore comment survives."""
+    code_rule = get_rule("host_code_execution")
+    assert code_rule
+    report = PackageReport("my_eval", "eval")
+    report.add(
+        Diagnostic(
+            "exec()",
+            file=Path("/repo/[x]/t.py"),
+            severity="warning",
+            hint="# ignore[host_code_execution]",
+            rule=code_rule,
+        )
+    )
+    print_final_summary(RunReport(root=Path("/repo"), packages=[report]))
+    out = capsys.readouterr().out
+    assert "Warnings by check:" in out
+    assert "# ignore[host_code_execution]" in out
+    assert "[x]/t.py" in out

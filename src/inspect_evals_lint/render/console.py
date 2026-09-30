@@ -92,7 +92,7 @@ def print_report(
     console.print()
 
     if report.skipped:
-        console.print(f"[dim]Skipped: {report.skipped}[/]")
+        console.print(f"[dim]Skipped: {escape(report.skipped)}[/]")
         return
 
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
@@ -107,7 +107,7 @@ def print_report(
             get_status_text(item.status),
             _rule_cell(item),
             Text(_message(item), style=_MESSAGE_STYLE.get(item.status, "")),
-            _location(item, root),
+            Text(_location(item, root)),
         )
         if item.status == "fail" and item.rule is not None:
             failed_rules.append(item.rule.name)
@@ -237,7 +237,7 @@ def _print_grouped(run: RunReport, status: Status, noun: str, style: str) -> boo
         table.add_column("Message", style=style, overflow="fold")
         table.add_column("Location", style="dim", overflow="fold")
         for label, d in sorted(entries, key=lambda e: e[0]):
-            table.add_row(f"  {label}", _message(d), _location(d, run.root))
+            table.add_row(Text(f"  {label}"), Text(_message(d)), Text(_location(d, run.root)))
         console.print(table)
     console.print()
     return True

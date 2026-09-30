@@ -109,7 +109,7 @@ def test_security_category_in_json_and_markdown(monorepo: tuple[Path, LintConfig
         config.package_dir(root, "alpha") / "compose.yaml",
         "services:\n  default:\n    privileged: true\n",
     )
-    report = lint_package(root, "alpha", replace(config, select=("IESC",)))
+    report = lint_package(root, "alpha", replace(config, select=("IESC001",)))
     run = RunReport(root=root, packages=[report])
     data = run.to_dict()
     assert data["schema_version"] == 3

@@ -10,6 +10,7 @@ from inspect_evals_lint.rules import (
     dependencies,
     dockerfile,
     file_structure,
+    host_code,
     sandbox,
     tests,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "dependencies",
     "dockerfile",
     "file_structure",
+    "host_code",
     "sandbox",
     "tests",
 ]
