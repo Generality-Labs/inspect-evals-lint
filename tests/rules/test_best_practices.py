@@ -649,3 +649,39 @@ class TestSampleIdsFieldSpec:
     def test_a_positional_fieldspec_to_an_unknown_call_is_not_a_loader(self, tmp_path: Path):
         results = self.run(tmp_path, "ds = my_loader('a.csv', FieldSpec(input='q'), True)\n")
         assert [r.status for r in results] == ["fail"]
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "FieldSpec(input='q') if X else FieldSpec(input='r')",
+            "(fields := FieldSpec(input='q'))",
+        ],
+        ids=["conditional", "walrus"],
+    )
+    def test_an_expression_holding_a_fieldspec_is_followed(self, tmp_path: Path, value: str):
+        results = self.run(tmp_path, f"ds = hf_dataset('x', sample_fields={value}, auto_id=True)\n")
+        assert [r.status for r in results] == ["pass"]
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "from inspect_ai.dataset import FieldSpec as FS\n"
+            "ds = hf_dataset('x', sample_fields=FS(input='q'))\n",
+            "from inspect_ai import dataset\n"
+            "ds = dataset.hf_dataset('x', sample_fields=dataset.FieldSpec(input='q'))\n",
+        ],
+        ids=["alias", "attribute"],
+    )
+    def test_fieldspec_is_found_however_it_is_imported(self, tmp_path: Path, code: str):
+        results = self.run(tmp_path, code)
+        assert [(r.status, r.line) for r in results] == [("fail", 2)]
+
+    def test_starred_positional_arguments_may_hold_an_id(self, tmp_path: Path):
+        results = self.run(tmp_path, "ds = hf_dataset('x', sample_fields=FieldSpec(*ARGS))\n")
+        assert [r.status for r in results] == ["pass"]
+
+    def test_loader_kwargs_may_hold_auto_id(self, tmp_path: Path):
+        results = self.run(
+            tmp_path, "ds = hf_dataset('x', sample_fields=FieldSpec(input='q'), **OPTIONS)\n"
+        )
+        assert [r.status for r in results] == ["pass"]

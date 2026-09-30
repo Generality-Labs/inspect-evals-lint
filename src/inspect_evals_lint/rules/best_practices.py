@@ -175,8 +175,13 @@ class FieldSpecSite:
         return bool(self.loaders) and all(_passes_auto_id(call) for call in self.loaders.values())
 
 
-def _is_field_spec(node: ast.AST | None) -> bool:
-    return isinstance(node, ast.Call) and get_call_name(node) == "FieldSpec"
+def _field_spec_names(tree: ast.AST) -> set[str]:
+    """``FieldSpec`` and any name a file imports it as."""
+    names = {"FieldSpec"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            names.update(a.asname for a in node.names if a.name == "FieldSpec" and a.asname)
+    return names
 
 
 SAMPLE_FIELDS_POSITION = {
@@ -207,14 +212,16 @@ def _passes_auto_id(call: ast.Call) -> bool:
     """``auto_id`` with anything but a false literal; a non-literal is taken as set, as ``required=`` is."""
     value = _loader_argument(call, "auto_id", 1)
     if value is None:
-        return False
+        return any(keyword.arg is None for keyword in call.keywords)  # ``**kwargs`` may hold it
     return not (isinstance(value, ast.Constant) and not value.value)
 
 
 def _field_spec_has_id(node: ast.Call) -> bool:
-    """``id=``, a fourth positional argument, or ``**kwargs`` (which may hold one)."""
-    return len(node.args) > FIELD_SPEC_ID_POSITION or any(
-        keyword.arg in ("id", None) for keyword in node.keywords
+    """``id=``, a fourth positional argument, or ``*args`` or ``**kwargs`` (which may hold one)."""
+    return (
+        len(node.args) > FIELD_SPEC_ID_POSITION
+        or any(isinstance(arg, ast.Starred) for arg in node.args)
+        or any(keyword.arg in ("id", None) for keyword in node.keywords)
     )
 
 
@@ -484,16 +491,31 @@ def _reaching(
 
 
 def _field_specs_in(
-    expr: ast.expr, scope: _Scope, position: Position, blocks: tuple[int, ...], seen: frozenset[int]
-) -> Iterable[ast.Call]:
-    """The ``FieldSpec(...)`` calls ``expr`` may evaluate to: the call itself, or what a name is bound to."""
-    if _is_field_spec(expr):
-        yield cast(ast.Call, expr)
+    expr: ast.expr,
+    sites: dict[int, FieldSpecSite],
+    scope: _Scope,
+    position: Position,
+    blocks: tuple[int, ...],
+    seen: frozenset[int] = frozenset(),
+) -> Iterable[FieldSpecSite]:
+    """The ``FieldSpec(...)`` calls ``expr`` may evaluate to: the call itself, either branch of a conditional, or what a name is bound to."""
+    if id(expr) in sites:
+        yield sites[id(expr)]
+    elif isinstance(expr, ast.IfExp):
+        for branch in (expr.body, expr.orelse):
+            yield from _field_specs_in(branch, sites, scope, position, blocks, seen)
+    elif isinstance(expr, ast.NamedExpr):
+        yield from _field_specs_in(expr.value, sites, scope, position, blocks, seen)
     elif isinstance(expr, ast.Name):
         for binding in _reaching(expr.id, scope, position, blocks):
             if binding.value is not None and id(binding) not in seen:
                 yield from _field_specs_in(
-                    binding.value, scope, binding.position, binding.blocks, seen | {id(binding)}
+                    binding.value,
+                    sites,
+                    scope,
+                    binding.position,
+                    binding.blocks,
+                    seen | {id(binding)},
                 )
 
 
@@ -507,18 +529,19 @@ def field_spec_sites(tree: ast.AST) -> list[FieldSpecSite]:
     module's. A function passed as ``sample_fields`` builds its own
     ``Sample()`` calls, which are checked as such.
     """
+    names = _field_spec_names(tree)
     sites = {
         id(node): FieldSpecSite(node, _field_spec_has_id(node))
         for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and _is_field_spec(node)
+        if isinstance(node, ast.Call) and get_call_name(node) in names
     }
     collector = _BindingCollector()
     collector.visit(tree)
     for loader in collector.loaders:
-        for spec in _field_specs_in(
-            loader.sample_fields, loader.scope, _position(loader.call), loader.blocks, frozenset()
+        for site in _field_specs_in(
+            loader.sample_fields, sites, loader.scope, _position(loader.call), loader.blocks
         ):
-            sites[id(spec)].loaders[id(loader.call)] = loader.call
+            site.loaders[id(loader.call)] = loader.call
     return sorted(sites.values(), key=lambda site: (site.node.lineno, site.node.col_offset))
 
 
