@@ -12,13 +12,15 @@ Warns on each `shuffle=` argument that resolves to true when the call passes no 
 
 Any call passing `shuffle=` by keyword is read, and `shuffle` and `seed` may be passed positionally to Inspect's `hf_dataset`, `csv_dataset`, `json_dataset` and `file_dataset` and inspect_evals' `load_csv_dataset` and `load_json_dataset`. A dataset helper that takes `shuffle=` but seeds internally is flagged where it is called without a seed; suppress that finding with the reason. When the value comes from a parameter default, the diagnostic points at the default.
 
-Seeding changes which samples a `--limit` run selects. Removing a `shuffle` task parameter breaks `-T shuffle=...` invocations, so it needs a task version bump.
+The rule asks for a seed, not for the shuffle to go. Shuffling by default is often right: a dataset whose records come grouped by category, subject or source needs it, or a `--limit` run evaluates only the first groups. Whether the records are grouped depends on the data, which the rule does not read. Seeding changes which samples a `--limit` run selects. Removing a `shuffle` task parameter breaks `-T shuffle=...` invocations, so it needs a task version bump.
 
 This is a warning rather than an error: an unseeded shuffle changes only the order of the samples, not the samples themselves.
 
 ## Why is this bad?
 
-Sample order decides which samples `--limit` picks, so two runs with the same limit evaluate different samples, and neither log records the order used. `inspect eval --sample-shuffle <seed>` shuffles at run time and records the seed in the log's eval config, which is why leaving order to it is usually the better fix.
+Sample order decides which samples `--limit` picks. Without a seed, two runs with the same limit evaluate different samples, and neither log records the order used, so their scores can't be compared. A seed keeps the benefit of the shuffle, a `--limit` run that spans the whole dataset, and makes it the same subset each time.
+
+Where the records are in no meaningful order, the shuffle can go instead. `inspect eval --sample-shuffle <seed>` shuffles at run time and records the seed in the log's eval config.
 
 ## Example
 
@@ -32,11 +34,9 @@ Use instead:
 
 ```python
 @task
-def my_eval():
-    return Task(dataset=hf_dataset("org/data", split="test"))
+def my_eval(shuffle: bool = True, seed: int | None = 42):
+    return Task(dataset=hf_dataset("org/data", split="test", shuffle=shuffle, seed=seed))
 ```
-
-and run with `inspect eval my_eval --sample-shuffle 42` when the order should vary.
 
 ## See also
 

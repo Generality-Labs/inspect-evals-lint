@@ -1425,9 +1425,10 @@ def shuffle_choices_seeded(ctx: LintContext) -> Iterable[Finding]:
 
 
 _SHUFFLE_HINT = (
-    "drop the shuffle and leave sample order to `inspect eval --sample-shuffle <seed>`, which "
-    "the log records, or default to a seed with seed=; removing a task parameter needs a task "
-    "version bump"
+    "keep the shuffle and default a seed, e.g. `seed: int | None = 42`, so a --limit run "
+    "samples across a dataset whose records are grouped by category or subject, and does so "
+    "the same way every run; if the records are in no meaningful order, the shuffle can go "
+    "and order be left to `inspect eval --sample-shuffle <seed>`"
 )
 
 
@@ -1460,6 +1461,10 @@ def shuffle_seeded(ctx: LintContext) -> Iterable[Finding]:
     seed; suppress that finding with the reason. When the value comes from a
     parameter default, the diagnostic points at the default.
 
+    The rule asks for a seed, not for the shuffle to go. Shuffling by default is
+    often right: a dataset whose records come grouped by category, subject or
+    source needs it, or a ``--limit`` run evaluates only the first groups. Whether
+    the records are grouped depends on the data, which the rule does not read.
     Seeding changes which samples a ``--limit`` run selects. Removing a
     ``shuffle`` task parameter breaks ``-T shuffle=...`` invocations, so it
     needs a task version bump.
@@ -1468,11 +1473,15 @@ def shuffle_seeded(ctx: LintContext) -> Iterable[Finding]:
     order of the samples, not the samples themselves.
 
     ## Why is this bad?
-    Sample order decides which samples ``--limit`` picks, so two runs with the
-    same limit evaluate different samples, and neither log records the order
-    used. ``inspect eval --sample-shuffle <seed>`` shuffles at run time and
-    records the seed in the log's eval config, which is why leaving order to it
-    is usually the better fix.
+    Sample order decides which samples ``--limit`` picks. Without a seed, two
+    runs with the same limit evaluate different samples, and neither log
+    records the order used, so their scores can't be compared. A seed keeps
+    the benefit of the shuffle, a ``--limit`` run that spans the whole dataset,
+    and makes it the same subset each time.
+
+    Where the records are in no meaningful order, the shuffle can go instead.
+    ``inspect eval --sample-shuffle <seed>`` shuffles at run time and records
+    the seed in the log's eval config.
 
     ## Example
     ```python
@@ -1483,10 +1492,9 @@ def shuffle_seeded(ctx: LintContext) -> Iterable[Finding]:
     Use instead:
     ```python
     @task
-    def my_eval():
-        return Task(dataset=hf_dataset("org/data", split="test"))
+    def my_eval(shuffle: bool = True, seed: int | None = 42):
+        return Task(dataset=hf_dataset("org/data", split="test", shuffle=shuffle, seed=seed))
     ```
-    and run with `inspect eval my_eval --sample-shuffle 42` when the order should vary.
     """
 
     def unseeded(site: _ShuffleCall, resolved: _Resolved, constants: dict[str, ast.expr]) -> bool:
