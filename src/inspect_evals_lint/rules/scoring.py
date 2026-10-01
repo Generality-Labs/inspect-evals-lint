@@ -23,6 +23,7 @@ from inspect_evals_lint.registry import inspect_docs, rule
 from inspect_evals_lint.rules._ast import (
     ParsedFile,
     column_of,
+    end_line_of,
     get_call_name,
     get_decorator_name,
     parse_failures,
@@ -781,4 +782,241 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
             "pass",
             f"No broad except turns a grader or sandbox failure into a score in "
             f"{len(code.reached)} function(s) scorers run",
+        )
+
+
+# grader_model_under_test
+
+
+def _is_state_model(node: ast.expr) -> bool:
+    """``state.model`` or ``str(state.model)``."""
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "str"
+        and len(node.args) == 1
+        and not node.keywords
+    ):
+        node = node.args[0]
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "model"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "state"
+    )
+
+
+def _resolves_to_model_under_test(call: ast.Call) -> bool:
+    """A ``get_model()`` call with no model, role or default, or one given ``state.model``."""
+    if get_call_name(call) != "get_model" or any(isinstance(a, ast.Starred) for a in call.args):
+        return False
+    keywords = {k.arg: k.value for k in call.keywords}
+    if None in keywords or "role" in keywords:
+        return False
+    default = keywords.get("default")
+    if default is not None and not _is_none(default):
+        return False
+    model = call.args[0] if call.args else keywords.get("model")
+    return model is None or _is_none(model) or _is_state_model(model)
+
+
+def _value_holds(value: ast.expr, call: ast.Call) -> bool:
+    """Whether an assigned value is ``call``, or ``call`` as an alternative: ``x or call``, ``call if c else x``."""
+    if value is call:
+        return True
+    if isinstance(value, ast.BoolOp):
+        return any(_value_holds(v, call) for v in value.values)
+    if isinstance(value, ast.IfExp):
+        return _value_holds(value.body, call) or _value_holds(value.orelse, call)
+    return False
+
+
+Position = tuple[int, int]
+
+
+def _position(node: ast.expr | ast.stmt) -> Position:
+    return (node.lineno, node.col_offset)
+
+
+def _generate_calls(body: list[ast.stmt], name: str) -> list[Position]:
+    """Where a body, outside nested functions, calls ``<name>.generate(...)``."""
+    return [
+        _position(node)
+        for node in scope_nodes(body)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "generate"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == name
+    ]
+
+
+def _closures_generate(fn: FunctionNode, name: str, code: ScorerCode) -> bool:
+    """Whether a function nested in ``fn`` that sees ``fn``'s ``name`` calls ``.generate`` on it.
+
+    A nested function that binds the name itself, as a parameter or by
+    assignment, has its own and is not followed.
+    """
+    for nested in code.defined(fn.body).values():
+        if name in code.bound(nested):
+            continue
+        if _generate_calls(nested.body, name) or _closures_generate(nested, name, code):
+            return True
+    return False
+
+
+def _generates_with(call: ast.Call, function: PackageFunction, code: ScorerCode) -> bool:
+    """Whether ``call``'s result is used for ``.generate(...)``.
+
+    Directly (``get_model().generate(...)``), or through a name it is assigned
+    to: ``function`` calls ``.generate`` on the name after the assignment and
+    before the name is next bound, or, when it is not bound again, a function
+    nested in ``function`` that sees the name does.
+    """
+    body = function.node.body
+    for node in scope_nodes(body):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "generate"
+            and node.func.value is call
+        ):
+            return True
+    for node in scope_nodes(body):
+        if isinstance(node, ast.Assign) and _value_holds(node.value, call):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign) and node.value and _value_holds(node.value, call):
+            targets = [node.target]
+        else:
+            continue
+        start = (node.end_lineno or node.lineno, node.end_col_offset or 0)
+        for name in (t.id for t in targets if isinstance(t, ast.Name)):
+            rebound = [
+                _position(n)
+                for n in scope_nodes(body)
+                if isinstance(n, ast.Name)
+                and isinstance(n.ctx, ast.Store)
+                and n.id == name
+                and _position(n) > start
+            ]
+            stop = min(rebound, default=None)
+            if any(
+                start < at and (stop is None or at < stop) for at in _generate_calls(body, name)
+            ):
+                return True
+            if stop is None and _closures_generate(function.node, name, code):
+                return True
+    return False
+
+
+_UNDER_TEST_HINT = (
+    'resolve the grader as get_model(role="grader", default="<provider/model>") or with '
+    "required=True, so it can be chosen at invocation and is never the model under "
+    "evaluation by accident"
+)
+
+
+@rule(
+    code="IEBP013",
+    name="grader_model_under_test",
+    category="best_practices",
+    scopes=("eval", "helper"),
+    summary="A scorer's grader is not silently the model under evaluation",
+    references=(
+        inspect_docs("custom-scorers", "Custom Scorers: Models in Scorers", "models-in-scorers"),
+        inspect_docs("models", "Models: Model Roles", "model-roles"),
+    ),
+)
+def grader_model_under_test(ctx: LintContext) -> Iterable[Finding]:
+    """A scorer's grader is not silently the model under evaluation.
+
+    ## What it does
+    Flags a ``get_model()`` call, in code a scorer runs, that resolves to the
+    model under evaluation and whose result is used for ``.generate(...)``.
+    That is ``get_model()`` with no model, no ``role=`` and no ``default=``
+    (a literal ``None`` counts as none), or ``get_model(state.model)`` or
+    ``get_model(str(state.model))``. The result is used when ``.generate`` is
+    called on the call itself, or on a name it is assigned to, alone or as an
+    alternative (``grader = grader_model or get_model(...)``). The name
+    counts in the same function from the assignment until it is next bound,
+    and, if it is not bound again, in nested functions that see it: one that
+    takes the name as a parameter or assigns it has its own. A call whose
+    result is only read, such as ``get_model().name`` to pick a tokenizer, is
+    not reported.
+
+    Code a scorer runs is found as for ``scorer_failure_scored`` (IEBP012):
+    ``@scorer`` functions, the functions nested in them, and the package
+    functions they call. A call with ``role=`` is left to
+    ``model_role_resolution`` (IEBP002), which asks for a ``default=`` or
+    ``required=True``.
+
+    A deliberate fallback, such as a helper's last resort after an explicit
+    model and a role, can be marked with
+    ``# inspect-evals-lint: ignore[grader_model_under_test] -- <reason>``.
+
+    **Known limits:** ``get_model(model)`` where ``model`` is a parameter that
+    defaults to ``None`` is not reported, since telling it from a guarded call
+    needs the guards read. Nor is a model passed on to another function, such
+    as ``model_graded_qa(model=get_model())``, or one reached through an
+    alias (``grader = m``, ``gen = m.generate``), a walrus or an attribute
+    (``self.grader``). Statement order is read by position, not by control
+    flow.
+
+    ## Why is this bad?
+    The evaluated model grades its own answers, and nothing in the log says
+    so. Self-grading inflates scores, and the result cannot be compared with a
+    run that used an independent grader.
+
+    ## Example
+    ```python
+    @scorer(metrics=[accuracy()])
+    def equivalence():
+        async def score(state, target):
+            result = await get_model().generate(prompt)
+            ...
+    ```
+    Use instead:
+    ```python
+    @scorer(metrics=[accuracy()])
+    def equivalence(model: str | Model | None = None):
+        async def score(state, target):
+            grader = get_model(model, role="grader", default="openai/gpt-4o")
+            result = await grader.generate(prompt)
+            ...
+    ```
+    """
+    parsed_files = parse_python_files(ctx)
+    yield from parse_failures(parsed_files)
+
+    code = ScorerCode.build(ctx, parsed_files.parsed)
+    calls = 0
+    found: list[Diagnostic] = []
+    for function in code.reached:
+        for node in scope_nodes(function.node.body):
+            if not (isinstance(node, ast.Call) and get_call_name(node) == "get_model"):
+                continue
+            calls += 1
+            if _resolves_to_model_under_test(node) and _generates_with(node, function, code):
+                found.append(
+                    Diagnostic(
+                        f"{ast.unparse(node)} in {function.node.name}() resolves to the model "
+                        "under evaluation, which then grades its own output",
+                        file=function.file.path,
+                        line=node.lineno,
+                        column=column_of(node),
+                        end_line=end_line_of(node),
+                        hint=_UNDER_TEST_HINT,
+                    )
+                )
+    yield from sorted(found, key=lambda d: (str(d.file), d.line or 0))
+
+    if found:
+        return
+    if calls == 0:
+        yield Outcome("skip", "No get_model() calls in code a scorer runs")
+    else:
+        yield Outcome(
+            "pass",
+            f"None of {calls} get_model() call(s) in code a scorer runs grades with the model "
+            "under evaluation",
         )
