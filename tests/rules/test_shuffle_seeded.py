@@ -199,3 +199,25 @@ class TestShuffleSeeded:
         )
         results = _run(shuffle_seeded, tmp_path, source)
         assert [(r.status, r.line) for r in results] == [("warn", 1), ("warn", 3)]
+
+    def test_reads_shuffle_and_seed_as_shuffle_choices_is_read(self, tmp_path):
+        source = (
+            "def seeded(shuffle: bool | int = 42):\n"
+            "    should_shuffle, seed = shuffle_and_seed(shuffle)\n"
+            '    return hf_dataset("p", split="t", shuffle=should_shuffle, seed=seed)\n'
+            "def off(shuffle: bool | int = False):\n"
+            "    should_shuffle, seed = utils.shuffle_and_seed(shuffle=shuffle)\n"
+            '    return hf_dataset("p", split="t", shuffle=should_shuffle, seed=seed)\n'
+            "def unseeded(\n"
+            "    shuffle: bool | int = True,\n"
+            "):\n"
+            "    should_shuffle, seed = shuffle_and_seed(shuffle)\n"
+            '    return hf_dataset("p", split="t", shuffle=should_shuffle, seed=seed)\n'
+        )
+        results = _run(shuffle_seeded, tmp_path, source)
+        assert [(r.status, r.line) for r in results] == [("warn", 8)]
+        assert results[0].message == (
+            "shuffle defaults to True, and shuffle_and_seed() on line 10 shuffles the samples "
+            "without a seed"
+        )
+        assert "shuffle_and_seed" in results[0].hint

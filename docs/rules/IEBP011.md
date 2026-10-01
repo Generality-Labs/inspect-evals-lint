@@ -10,7 +10,11 @@ A dataset loader that shuffles samples is given a seed.
 
 Warns on each `shuffle=` argument that resolves to true when the call passes no `seed=`, or a `seed=` that resolves to `None`. Values are resolved as `shuffle_choices_seeded` resolves them, and a value the rule can't resolve is taken at face value. A call with `**kwargs` and no `seed=` is taken to pass one.
 
-Any call passing `shuffle=` by keyword is read, and `shuffle` and `seed` may be passed positionally to Inspect's `hf_dataset`, `csv_dataset`, `json_dataset` and `file_dataset` and inspect_evals' `load_csv_dataset` and `load_json_dataset`. A dataset helper that takes `shuffle=` but seeds internally is flagged where it is called without a seed; suppress that finding with the reason. When the value comes from a parameter default, the diagnostic points at the default.
+Any call passing `shuffle=` by keyword is read, and `shuffle` and `seed` may be passed positionally to Inspect's `hf_dataset`, `csv_dataset`, `json_dataset` and `file_dataset` and inspect_evals' `load_csv_dataset` and `load_json_dataset`.
+
+inspect_evals' `shuffle_and_seed(shuffle)` reads `shuffle` as inspect reads `shuffle_choices`: an int is the seed, `True` is unseeded and `False` is off. A call to it is flagged when its argument resolves to `True`, so `shuffle: bool | int = 42` passes and `= True` does not. The loader it feeds is not flagged again.
+
+A dataset helper that takes `shuffle=` but seeds internally is flagged where it is called without a seed; suppress that finding with the reason. When the value comes from a parameter default, the diagnostic points at the default.
 
 The rule asks for a seed, not for the shuffle to go. Shuffling by default is often right: a dataset whose records come grouped by category, subject or source needs it, or a `--limit` run evaluates only the first groups. Whether the records are grouped depends on the data, which the rule does not read. Seeding changes which samples a `--limit` run selects. Removing a `shuffle` task parameter breaks `-T shuffle=...` invocations, so it needs a task version bump.
 
@@ -34,8 +38,9 @@ Use instead:
 
 ```python
 @task
-def my_eval(shuffle: bool = True, seed: int | None = 42):
-    return Task(dataset=hf_dataset("org/data", split="test", shuffle=shuffle, seed=seed))
+def my_eval(shuffle: bool | int = 42):
+    should_shuffle, seed = shuffle_and_seed(shuffle)
+    return Task(dataset=hf_dataset("org/data", split="test", shuffle=should_shuffle, seed=seed))
 ```
 
 ## See also
