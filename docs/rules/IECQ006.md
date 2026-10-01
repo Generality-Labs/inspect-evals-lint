@@ -16,11 +16,11 @@ The rule applies only where the helper is available: in inspect_evals itself, wh
 
 ## Why is this bad?
 
-Hand-rolled fence patterns disagree on the edge cases: prose before the fence, an unlabelled fence, more than one block, a fence that does not start a line, CRLF line endings. Two evaluations of the same model then extract different code from the same kind of answer, and a bug fixed in one stays in the rest. `extract_code_block(completion, language)` matches only fences at the start of a line, prefers a block labelled with the requested language over an unlabelled one, returns the first matching block, and returns `None` when nothing matches, so the caller decides what an answer without a block means.
+Hand-rolled fence patterns disagree on the edge cases: prose before the fence, an unlabelled fence, more than one block, a fence that does not start a line, CRLF line endings. Two evaluations of the same model then extract different code from the same kind of answer, and a bug fixed in one stays in the rest. `extract_code_block(completion, language)` prefers a block labelled with the requested language over an unlabelled one, returns the first such block, and returns `None` when there is none, so the caller decides what an answer without a block means. A labelled fence may follow prose on the same line, and one that is never closed runs to the end of the text. `extract_code_blocks` returns every such block in order, for an evaluation that takes the last block or all of them.
 
-Migrating changes which text is extracted for some completions: a fence in the middle of a line no longer counts, and the first matching block wins where a pattern may have taken another. Scores can move, so a migration needs a comparability bump to the task version and a changelog entry.
+Keep each evaluation's choice of block. `accept=defines(name)` keeps the first block whenever it defines the function the task asks for, and otherwise takes the first block that does, so it moves results only where the first block could not have passed. Suppress the finding, with a reason that names the rule, only where the evaluation extracts in a way the helpers can't express.
 
-Which block to take is still open. Most upstream harnesses take the first, but that choice has not been tested against how current models answer, and UKGovernmentBEIS/inspect_evals#2454 is re-evaluating it. Until then, keep each evaluation's current choice. Migrate where the helper takes the same block. Where the evaluation takes a different block (the last one, say) or chooses by content, keep its logic and suppress the finding with a reason that names its choice.
+Migrating changes which text is extracted for some completions, so scores can move and a migration needs a comparability bump to the task version and a changelog entry. Compare the old pattern with the helper on the shapes the pattern handled, and keep the old pattern as a fallback for any the helper loses.
 
 ## Example
 
@@ -41,10 +41,19 @@ def find_code(completion: str) -> str:
     return extract_code_block(completion, "python") or completion
 ```
 
-Or, where the upstream benchmark extracts differently:
+Where the evaluation takes another block:
+
+```python
+from inspect_evals.utils.code import extract_code_blocks
+
+blocks = extract_code_blocks(text, "cpp")
+code = next((block for block in reversed(blocks) if "#include" in block), None)
+```
+
+Or, where it extracts in a way the helpers can't express:
 
 ````python
-blocks = re.findall(r"```cpp\n(.*?)```", text, re.DOTALL)  # inspect-evals-lint: ignore[IECQ006] -- upstream takes the last block with #include
+blocks = re.findall(r"```(?:cuda|cpp)\n(.*?)```", text, re.DOTALL)  # inspect-evals-lint: ignore[IECQ006] -- upstream reads CUDA and C++ blocks in one pass
 ````
 
 Suppress on a line with `# inspect-evals-lint: ignore[IECQ006] -- <reason>` or `ignore[shared_code_extraction] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IECQ`.
