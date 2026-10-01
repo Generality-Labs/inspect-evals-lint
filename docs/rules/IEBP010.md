@@ -10,7 +10,13 @@ shuffle_choices is a seed or off, never an unseeded True.
 
 Flags each `shuffle_choices=` argument that resolves to `True`. The value is read literally, through the enclosing function's parameter default, or through a module-level constant the file binds once. A value the rule can't resolve, such as one a function body reassigns, is taken at face value and not flagged. An int is a seed and `False` or `None` turns shuffling off, so neither is flagged.
 
-Any call passing `shuffle_choices=` by keyword is read, so a task passing `True` to its own dataset helper is caught at the call. When the value comes from a parameter default, the diagnostic points at the default, so a suppression can sit beside it, and every call reading that default reports once.
+Any call passing `shuffle_choices=` by keyword is read, so a task passing `True` to its own dataset helper is caught at the call. A helper call that also passes a `seed=` resolving to anything but `None` is taken to seed the shuffle. A loader's `seed=` orders the samples, not the choices, so it does not count for `hf_dataset`, `csv_dataset` and the other known loaders.
+
+A dataset's `.shuffle_choices()` method is read too, and flagged when it passes no seed or one that resolves to `None`.
+
+A call inside an `if` whose test resolves under the defaults to skip it, such as `if shuffle_choices:` with `shuffle_choices=False`, is not flagged. Tests read are names, `not`, `and`, `or` and comparisons with a literal; any other test is taken to let the call run.
+
+When the value comes from a parameter default, the diagnostic points at the default, so a suppression can sit beside it, and every call reading that default reports once.
 
 Fixing a finding changes the order the choices are presented in, and so each sample's target letter. That breaks comparability with earlier runs, so it needs a comparability bump to the task version.
 

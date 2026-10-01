@@ -221,3 +221,80 @@ class TestShuffleSeeded:
             "without a seed"
         )
         assert "shuffle_and_seed" in results[0].hint
+
+
+class TestShuffleChoicesSeededSeedAndMethods:
+    def test_a_helper_passed_a_seed_stands_down_but_a_loader_does_not(self, tmp_path):
+        source = (
+            "def task_a(shuffle_choices: bool = True, seed: int | None = 42):\n"
+            "    return get_dataset(shuffle_choices=shuffle_choices, seed=seed)\n"
+            "def task_b(shuffle_choices: bool = True, seed: int | None = None):\n"
+            "    return get_dataset(shuffle_choices=shuffle_choices, seed=seed)\n"
+            'c = hf_dataset("p", split="t", shuffle_choices=True, seed=42)\n'
+        )
+        results = _run(shuffle_choices_seeded, tmp_path, source)
+        assert [(r.status, r.line) for r in results] == [("fail", 3), ("fail", 5)]
+
+    def test_reads_dataset_shuffle_choices_calls(self, tmp_path):
+        source = (
+            "def seeded(seed: int | None = 42):\n"
+            "    dataset.shuffle_choices(seed=seed)\n"
+            "def unseeded(seed: int | None = None):\n"
+            "    dataset.shuffle_choices(seed=seed)\n"
+            "dataset.shuffle_choices()\n"
+            "dataset.shuffle_choices(7)\n"
+        )
+        results = _run(shuffle_choices_seeded, tmp_path, source)
+        assert [(r.status, r.line) for r in results] == [("fail", 3), ("fail", 5)]
+        assert results[0].message == (
+            "seed defaults to None, and dataset.shuffle_choices() on line 4 shuffles the "
+            "choices without a seed"
+        )
+        assert results[1].message == "dataset.shuffle_choices() shuffles the choices without a seed"
+
+
+class TestShuffleSeededMethods:
+    def test_reads_dataset_shuffle_calls(self, tmp_path):
+        source = (
+            "dataset.shuffle()\n"
+            "dataset.shuffle(seed=1)\n"
+            "dataset.shuffle(1)\n"
+            "dataset.shuffle(**options)\n"
+            "random.shuffle(items)\n"
+            "np.random.shuffle(items)\n"
+        )
+        results = _run(shuffle_seeded, tmp_path, source)
+        assert [(r.status, r.line) for r in results] == [("warn", 1)]
+        assert results[0].message == "dataset.shuffle() shuffles the samples without a seed"
+
+    def test_skips_a_shuffle_the_defaults_never_run(self, tmp_path):
+        source = (
+            "def off(shuffle: bool = False):\n"
+            "    if shuffle:\n"
+            "        dataset.shuffle()\n"
+            "def mode(shuffle: str = ''):\n"
+            "    if shuffle in ('questions', 'all'):\n"
+            "        dataset.shuffle()\n"
+            "def negated(keep_order: bool = True):\n"
+            "    if not keep_order:\n"
+            "        dataset.shuffle()\n"
+            "def other_branch(shuffle: bool = True):\n"
+            "    if shuffle:\n"
+            "        pass\n"
+            "    else:\n"
+            "        dataset.shuffle()\n"
+        )
+        results = _run(shuffle_seeded, tmp_path, source)
+        assert [r.status for r in results] == ["pass"]
+
+    def test_warns_on_a_shuffle_the_defaults_run_or_an_unknown_guard(self, tmp_path):
+        source = (
+            "def on(shuffle: bool = True):\n"
+            "    if shuffle:\n"
+            "        dataset.shuffle()\n"
+            "def unknown(shuffle: bool):\n"
+            "    if shuffle and config.enabled:\n"
+            "        dataset.shuffle()\n"
+        )
+        results = _run(shuffle_seeded, tmp_path, source)
+        assert [(r.status, r.line) for r in results] == [("warn", 3), ("warn", 6)]
