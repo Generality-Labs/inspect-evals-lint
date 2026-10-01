@@ -44,7 +44,7 @@ HELPER_RULES = {r.name for r in rules() if "helper" in r.scopes}
 
 def test_all_check_names_are_registered() -> None:
     assert rule_names() == sorted(r.name for r in rules())
-    assert len(rule_names()) == 29
+    assert len(rule_names()) == 31
 
 
 def test_every_check_has_a_category() -> None:
