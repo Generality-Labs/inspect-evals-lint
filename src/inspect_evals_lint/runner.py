@@ -73,6 +73,48 @@ def _apply_allowlist(rule: Rule, context: LintContext, findings: list[Finding]) 
     ]
 
 
+def _report_once(packages: list[PackageReport]) -> list[PackageReport]:
+    """Keep a shared diagnostic that several packages report identically on the first of them.
+
+    Only diagnostics a rule marks ``shared`` are compared: a finding about the
+    one ruff configuration every evaluation in a monorepo uses would otherwise
+    repeat once per package. Each later package records a skip for the rule,
+    naming the package that holds the finding. Every other diagnostic belongs to
+    its package, even when its text matches another package's.
+    """
+    owners: dict[tuple[object, ...], PackageReport] = {}
+    for package in packages:
+        kept: list[Diagnostic] = []
+        moved: dict[str, tuple[Rule, PackageReport]] = {}
+        for diagnostic in package.diagnostics:
+            rule = diagnostic.rule
+            if not diagnostic.shared or rule is None:
+                kept.append(diagnostic)
+                continue
+            key = (
+                rule.name,
+                diagnostic.file,
+                diagnostic.line,
+                diagnostic.column,
+                diagnostic.message,
+                diagnostic.status,
+            )
+            owner = owners.setdefault(key, package)
+            if owner is package:
+                kept.append(diagnostic)
+            else:
+                moved.setdefault(rule.name, (rule, owner))
+        package.diagnostics = kept
+        for rule, owner in moved.values():
+            where = (
+                f"the first package named '{owner.name}' in this run"
+                if owner.name == package.name
+                else f"'{owner.name}'"
+            )
+            package.add(Outcome("skip", f"Reported under {where}, which shares it", rule=rule))
+    return packages
+
+
 def lint_package(
     repo_root: Path,
     name: str,
@@ -126,13 +168,18 @@ def lint_repository(
     names: list[str] | None = None,
     check: str | None = None,
 ) -> RunReport:
-    """Lint every evaluation and helper package in the repository (or just ``names``)."""
+    """Lint every evaluation and helper package in the repository (or just ``names``).
+
+    A shared diagnostic several packages report identically is listed once, under the first of them.
+    """
     config = config or load_config(repo_root)
     if names is None:
         names = [*evaluation_names(repo_root, config), *helper_names(repo_root, config)]
     return RunReport(
         root=repo_root,
-        packages=[lint_package(repo_root, name, config, check=check) for name in names],
+        packages=_report_once(
+            [lint_package(repo_root, name, config, check=check) for name in names]
+        ),
     )
 
 
@@ -160,7 +207,7 @@ def lint_task_files(
         lint_package(repo_root, layout.eval_name, layout.config(base), check=check)
         for layout in task_layouts(repo_root, task_paths)
     ]
-    return RunReport(root=repo_root, packages=packages)
+    return RunReport(root=repo_root, packages=_report_once(packages))
 
 
 __all__ = [
