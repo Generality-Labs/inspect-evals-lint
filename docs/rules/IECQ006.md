@@ -20,7 +20,7 @@ Hand-rolled fence patterns disagree on the edge cases: prose before the fence, a
 
 Migrating changes which text is extracted for some completions: a fence in the middle of a line no longer counts, and the first matching block wins where a pattern may have taken another. Scores can move, so a migration needs a comparability bump to the task version and a changelog entry.
 
-The first matching block is the house default. Where an evaluation's upstream benchmark takes a different block (the last one, say) or applies its own extraction rules, keep its logic so results stay comparable with the paper, and suppress the finding with a reason that cites the upstream code.
+Which block to take is still open. Most upstream harnesses take the first, but that choice has not been tested against how current models answer, and UKGovernmentBEIS/inspect_evals#2454 is re-evaluating it. Until then, keep each evaluation's current choice. Migrate where the helper takes the same block. Where the evaluation takes a different block (the last one, say) or chooses by content, keep its logic and suppress the finding with a reason that names its choice.
 
 ## Example
 
