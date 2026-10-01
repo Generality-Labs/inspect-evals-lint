@@ -36,6 +36,9 @@ dev = [
     "types-PyYAML",
     "mdformat>=1.0.0",
     "mdformat-gfm>=1.0.0",
+    # The ruff_rules_enabled tests run the real ruff. Same version as the
+    # ruff-pre-commit hook, so `uv run ruff` and pre-commit agree.
+    "ruff==0.15.20",
 ]
 docs = [
     "mdformat>=1.0.0",
