@@ -130,6 +130,7 @@ def test_select_and_ignore_flags(tmp_path: Path, capsys: pytest.CaptureFixture[s
         "registry",
         "eval_yaml",
         "readme_task_args",
+        "readme_dependency_groups",
     }
 
 

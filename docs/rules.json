@@ -131,6 +131,19 @@
       ]
     },
     {
+      "code": "IEFS008",
+      "name": "readme_dependency_groups",
+      "category": "file_structure",
+      "scopes": [
+        "eval"
+      ],
+      "allowlist": false,
+      "summary": "Every extra and dependency group a README command installs exists in the governing pyproject.toml",
+      "url": "https://inspect-evals-lint.generality.org/rules/IEFS008/",
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS008.md",
+      "references": []
+    },
+    {
       "code": "IECQ001",
       "name": "private_api_imports",
       "category": "code_quality",
