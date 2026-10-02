@@ -17,7 +17,7 @@ The first tagged release creates the PyPI project and converts the pending publi
 ## Each release
 
 1. Bump `__version__` in `src/inspect_evals_lint/__init__.py` (single source of truth — `pyproject.toml` reads it).
-2. Move the `## [Unreleased]` entries in `CHANGELOG.md` under a new `## [X.Y.Z] - YYYY-MM-DD` heading.
+2. Run `uv run scriv collect`. It reads the new version, writes the fragments in `changelog.d/` into `CHANGELOG.md` under `## [X.Y.Z] - YYYY-MM-DD`, and deletes them. Then write a short summary paragraph directly under the new heading, above the first `###` section: what the release is about, and anything a consumer must do before moving their pin. scriv writes only the categorised entries.
 3. Commit, then tag and push:
    ```bash
    git tag vX.Y.Z

@@ -60,6 +60,14 @@ repos:
       # correction needs a human to approve it, so --write-changes is dropped.
       - id: typos # spell-check code, comments, and docs
         args: [--force-exclude]
+        # .copier-answers.yml is generated, and its `_commit` is whatever ref
+        # the last update resolved to. Between releases that is a git describe
+        # string rather than a plain tag, so it carries a run of raw hex -- and
+        # a short hex run is a coin flip away from spelling something typos
+        # reads as a misspelled word. Nothing in the file is prose, so checking
+        # it can only ever produce false positives, on a schedule nobody
+        # controls. (Quoting a real example here would trip the same hook.)
+        exclude: ^\.copier-answers\.yml$
 
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
     rev: e3eebf65325ccc992422292cb7a4baee967cf815 # v1.26.1
