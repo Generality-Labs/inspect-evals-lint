@@ -28,6 +28,7 @@ dev = [
     "pytest-cov>=7.0.0",
     "basedpyright>=1.39",
     "pre-commit>=4.0.0",
+    "scriv>=1.8",
     "types-PyYAML",
     "mdformat>=1.0.0",
     "mdformat-gfm>=1.0.0",
@@ -43,6 +44,20 @@ path = "src/inspect_evals_lint/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/inspect_evals_lint"]
+
+[tool.scriv]
+# One fragment per pull request in changelog.d/, collected into CHANGELOG.md
+# at release time, so concurrent PRs never edit the same lines of the changelog.
+format = "md"
+fragment_directory = "changelog.d"
+categories = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"]
+skip_fragments = "[A-Z]*" # TEMPLATE.md
+new_fragment_template = "file: TEMPLATE.md"
+entry_title_template = "[{{ version }}] - {{ date.strftime('%Y-%m-%d') }}"
+md_header_level = "2"
+md_html_anchors = false
+version = "literal: src/inspect_evals_lint/__init__.py: __version__"
+
 [tool.ruff]
 line-length = 100
 src = ["src"]
