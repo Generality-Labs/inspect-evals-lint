@@ -1,13 +1,17 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+# uv's own backend. It builds src/inspect_evals_lint/ with no further config.
+# Keep the upper bound at the next uv minor, as `uv init` writes it, and raise
+# both bounds when moving to a new uv minor.
+requires = ["uv_build>=0.12.22,<0.13.0"]
+build-backend = "uv_build"
 
 [project]
 name = "inspect-evals-lint"
-dynamic = ["version"]
+version = "0.9.0"
 description = "Static checks for Inspect AI evaluations: structure, tests, best practices and sandbox pinning"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"] # uv_build ships only the license files named here
 authors = [{ name = "Matt Fisher", email = "m@ttfisher.com" }]
 requires-python = ">=3.11"
 dependencies = [
@@ -39,11 +43,6 @@ docs = [
     "mkdocs-material>=9.5",
 ]
 
-[tool.hatch.version]
-path = "src/inspect_evals_lint/__init__.py"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/inspect_evals_lint"]
 
 [tool.scriv]
 # One fragment per pull request in changelog.d/, collected into CHANGELOG.md
@@ -59,7 +58,9 @@ md_html_anchors = false
 # Without this, two fragments in one category leave a blank line between them,
 # which makes the list loose and fails mdformat on the release commit.
 compact_fragments = true
-version = "literal: src/inspect_evals_lint/__init__.py: __version__"
+# The version's single source is [project] version above, which
+# `uv version --bump` (and the Prepare release workflow) rewrites.
+version = "literal: pyproject.toml: project.version"
 
 [tool.ruff]
 line-length = 100

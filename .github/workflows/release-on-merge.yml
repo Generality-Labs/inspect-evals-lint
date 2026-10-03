@@ -1,0 +1,30 @@
+name: Release on merge
+
+# When a "Release vX.Y.Z" pull request from prepare-release.yml merges, tag
+# the merge commit and create its GitHub release from the CHANGELOG.md
+# section, then start publish.yml to upload it to PyPI.
+# Other pull requests are ignored. The steps live in the template's reusable
+# workflow.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+# Keyed on the branch: every closed pull request starts this workflow, and a
+# shared group would let an unrelated one cancel a pending release run.
+concurrency:
+  group: release-on-merge-${{ github.event.pull_request.head.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Moving major tag on purpose, as in ci.yml (see .github/zizmor.yml).
+    uses: Generality-Labs/python-project-template/.github/workflows/release-on-merge.yml@v1
+    permissions:
+      contents: write # create the tag and the release
+      actions: write # start publish.yml
+    with:
+      dispatch-workflow: publish.yml

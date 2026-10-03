@@ -1,5 +1,7 @@
 """Static checks for Inspect AI evaluations: structure, tests, best practices and sandbox pinning."""
 
+from importlib.metadata import PackageNotFoundError, version
+
 from inspect_evals_lint.config import (
     DEFAULT_PRESET,
     PRESET_ALIASES,
@@ -42,7 +44,12 @@ from inspect_evals_lint.registry import (
 )
 from inspect_evals_lint.runner import lint_package, lint_repository, lint_task_files
 
-__version__ = "0.9.0"
+# The version is set once, in pyproject.toml; this reads it back from the
+# installed package metadata.
+try:
+    __version__ = version("inspect-evals-lint")
+except PackageNotFoundError:  # a source tree that was never installed
+    __version__ = "unknown"
 
 __all__ = [
     "CATEGORIES",
