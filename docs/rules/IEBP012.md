@@ -27,7 +27,13 @@ It is an error when the `try` guards a grader call. It is a warning when it guar
 
 ## Why is this bad?
 
-A judge API error or a sandbox outage then reads as a real verdict: "not refused", "wrong answer", 0.0. The run looks healthy and the metric moves with the outage rate. Letting the error propagate fails the sample, which is visible and can be retried; `Score.unscored()` keeps a sample the scorer could not judge out of the metric instead of counting it wrong.
+A judge API error or a sandbox outage then reads as a real verdict: "not refused", "wrong answer", 0.0. The run looks healthy and the metric moves with the outage rate. Letting the error propagate fails the sample, which is visible and can be retried.
+
+What to do instead depends on what failed:
+
+- **The grader call raised** (an API error): let it propagate.
+- **The grader replied but gave no usable verdict**: retry the grader alone a bounded number of times, holding the model's output fixed (a retry with the same prompt and `cache=True` never reaches the grader), then return `Score.unscored(reason="grader_failed")`. This holds when the grader is the model under test too, as in a self-judging defence. If the grader feeds one key of a dict score and the other keys are valid results, set that key to NaN instead of unscoring the sample.
+- **A sandbox call raised**: let it propagate; the sandbox broke. Score what a result shows instead: a non-zero exit is the model's code failing, and a missing file the agent was told to write is a verdict (`reason="no_response"`). A deterministic failure never becomes `Score.unscored()`.
 
 ## Example
 
@@ -47,6 +53,16 @@ try:
     return Score(value=parse_verdict(result.completion))
 except ValueError:
     return Score.unscored(reason="grader_failed", explanation=result.completion)
+```
+
+Or, where the grader feeds one key of a dict score:
+
+```python
+try:
+    refused = parse_verdict(result.completion)
+except ValueError:
+    refused = float("nan")  # this key is ungraded; the other keys stand
+return Score(value={"score": task_score, "refused": refused})
 ```
 
 ## See also
