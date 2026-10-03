@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "v*"
+  # Started by release-on-merge.yml on the tag it creates. A tag created with
+  # the default Actions token triggers no workflows, and PyPI trusted
+  # publishing can't run from a reusable workflow, so this one is dispatched
+  # and still runs as publish.yml, the workflow the publisher names.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,8 +34,32 @@ jobs:
           python-version: "3.11"
           enable-cache: false # no caching in the privileged publish job (cache-poisoning surface)
 
+      - name: Refuse anything but a version tag
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/v*) ;;
+            *)
+              echo "::error::publish runs only on a v* tag, not ${GITHUB_REF}" >&2
+              exit 1
+              ;;
+          esac
+
       - name: Build sdist + wheel
         run: uv build
+
+      - name: Check the tag matches the package version
+        run: |
+          shopt -s nullglob
+          set -- dist/*.whl
+          if [ "$#" -ne 1 ]; then
+            echo "::error::expected one wheel in dist/, found $#" >&2
+            exit 1
+          fi
+          pkg_version=$(basename "$1" | cut -d- -f2)
+          if [ "$pkg_version" != "${GITHUB_REF_NAME#v}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package version ${pkg_version}" >&2
+            exit 1
+          fi
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

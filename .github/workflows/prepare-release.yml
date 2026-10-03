@@ -1,0 +1,44 @@
+name: Prepare release
+
+# Run this from the Actions tab to cut a release. It bumps the version in
+# pyproject.toml, collects changelog.d/ into CHANGELOG.md, and opens a
+# "Release vX.Y.Z" pull request; merging it tags the release (see
+# release-on-merge.yml). The steps live in the template's reusable workflow,
+# so fixes arrive when the template's v1 tag moves.
+#
+# One-time setup: Settings > Actions > General > "Allow GitHub Actions to
+# create and approve pull requests". On the release pull request, click
+# "Approve workflows to run" to start its CI.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: >-
+          Version bump. auto picks minor when a fragment adds, changes,
+          deprecates or removes something, and patch when fragments only fix.
+          auto never picks major.
+        type: choice
+        default: auto
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    # Moving major tag on purpose, as in ci.yml (see .github/zizmor.yml).
+    uses: Generality-Labs/python-project-template/.github/workflows/prepare-release.yml@v1
+    permissions:
+      contents: write # push the release branch
+      pull-requests: write # open the release pull request
+    with:
+      bump: ${{ inputs.bump }}
