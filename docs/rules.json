@@ -620,6 +620,29 @@
       ]
     },
     {
+      "code": "IEBP013",
+      "name": "grader_model_under_test",
+      "category": "best_practices",
+      "scopes": [
+        "eval",
+        "helper"
+      ],
+      "allowlist": false,
+      "summary": "A scorer's grader is not silently the model under evaluation",
+      "url": "https://inspect-evals-lint.generality.org/rules/IEBP013/",
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP013.md",
+      "references": [
+        {
+          "title": "Custom Scorers: Models in Scorers",
+          "url": "https://inspect.aisi.org.uk/custom-scorers.html#models-in-scorers"
+        },
+        {
+          "title": "Models: Model Roles",
+          "url": "https://inspect.aisi.org.uk/models.html#model-roles"
+        }
+      ]
+    },
+    {
       "code": "IESC001",
       "name": "sandbox_privileges",
       "category": "security",
