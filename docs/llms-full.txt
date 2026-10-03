@@ -191,6 +191,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the c
 | [IECQ003](rules/IECQ003.md) | `unscored_reason`       | eval, helper | Score.unscored() passes a reason= and the legacy unscored_reason metadata key is gone |
 | [IECQ004](rules/IECQ004.md) | `external_dependencies` | eval, helper | Third-party imports are declared in pyproject.toml                                    |
 | [IECQ005](rules/IECQ005.md) | `suppression_syntax`    | eval, helper | Every suppression marker is one the linter reads, and says why                        |
+| [IECQ007](rules/IECQ007.md) | `ruff_rules_enabled`    | eval, helper | The ruff configuration enables the curated ruff rules                                 |
 
 ## Tests
 
@@ -229,7 +230,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the c
 
 ## Helper packages
 
-Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`, `shuffle_choices_seeded`, `shuffle_seeded`, `sandbox_privileges`, `host_code_execution`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
+Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `ruff_rules_enabled`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`, `shuffle_choices_seeded`, `shuffle_seeded`, `sandbox_privileges`, `host_code_execution`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
 
 ## Categories
 
@@ -316,7 +317,7 @@ One document per run. `RunReport.to_dict()` produces the same mapping from the P
 | `packages[].skipped`       | Why the package was not linted at all (listed in `ignore-dirs`), else `null`.                                                                                                                                                                                                                                                                                                                                                                                               |
 | `packages[].score`         | The package's own score, in the same shape as the run's.                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `packages[].rules[]`       | One entry per rule that ran, in execution order, at the worst status it reported (`fail`, `warn`, `suppressed`, `pass`, `skip`). `diagnostics` is a list of indexes into this package's `diagnostics` array; a pass or skip with no findings has `[]`. Counting these by `status` reproduces `packages[].score`. This field was added in schema version 1 and remains in versions 2 and 3.                                                                                  |
-| `packages[].outcomes[]`    | One per rule that ran and had nothing to point at: `status` is `pass` or `skip`, `message` says why.                                                                                                                                                                                                                                                                                                                                                                        |
+| `packages[].outcomes[]`    | One per rule that ran and had nothing to point at: `status` is `pass` or `skip`, `message` says why. A diagnostic a rule marks as shared, such as one about the ruff configuration several packages use, is listed once when several packages report it identically, under the first of them; each of the others has a `skip` naming that package.                                                                                                                          |
 | `packages[].diagnostics[]` | One per finding. `severity` is `error` or `warning`; `status` is `fail`, `warn` or `suppressed`. `line` and `column` are 1-based and `null` when the finding is about a file or directory as a whole. `hint` is what to do about it, or `null`.                                                                                                                                                                                                                             |
 
 `category` is one of `file_structure`, `code_quality`, `tests`, `best_practices`, and `security`. Schema version 2 adds `security` and the `IESC` rule prefix. Existing codes, categories, fields, and score calculations are unchanged. Consumers must accept both versions during migration, add the category to validation and displays, and accept `IESC` codes. Adding or changing categories requires a schema version update.
@@ -743,6 +744,55 @@ from inspect_ai.model._model import thing  # inspect-evals-lint: ignore[private_
 ```
 
 Suppress on a line with `# inspect-evals-lint: ignore[IECQ005] -- <reason>` or `ignore[suppression_syntax] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IECQ`.
+
+
+---
+
+# IECQ007: ruff_rules_enabled
+
+The ruff configuration enables the curated ruff rules.
+
+**Category:** code_quality · **Applies to:** eval, helper
+
+## What it does
+
+Warns for each rule in the curated set below that ruff, configured as it is for the package, would not report. The finding names the configuration file and how many violations ruff would report under the source root if the rule were on, so a maintainer can tell a one-line change from a cleanup.
+
+The check asks ruff rather than reading its configuration. It lints a snippet the rule reports as though it were a file in the package, so `select`, `extend-select`, `ignore`, `extend`, `per-file-ignores`, `preview` and `explicit-preview-rules` all apply exactly as ruff applies them. A preview rule that a prefix such as `PLW` selects while preview is off counts as not enabled, because ruff never reports it. A repository with no ruff configuration gets ruff's defaults, which enable none of the curated rules.
+
+It uses the ruff installed alongside the linter, else `ruff` on `PATH`, and skips when there is neither, or when ruff cannot load the configuration, with ruff's reason. That ruff may be a different version from the one the repository pins. Packages that share a configuration share one finding: a run reports it under the first of them, and the rest skip.
+
+## Why is this bad?
+
+Each curated rule catches a defect that has reached an evaluation. Ruff reports it in the author's editor and pre-commit hook, before review, which a custom rule here could not. A preview rule selected only by a prefix is silently inert: ruff warns that a selection has no effect only when the code is named, so a reader of the configuration would believe it is on.
+
+## Curated rules
+
+| Rule                                                                                        | Why                                                                                                                                                                                                               | Evidence                                                                                                                                                                                                 |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`PLW1514`](https://docs.astral.sh/ruff/rules/unspecified-encoding/) `unspecified-encoding` | `open()` and `Path.read_text()` without `encoding=` decode with the host's locale, so a dataset or prompt file that loads on a UTF-8 machine fails or is misread elsewhere. A preview rule in ruff 0.15 and 0.16. | [UKGovernmentBEIS/inspect_evals#2475](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2475): agentdojo read its suite YAML without an encoding. 77 sites in 30 evaluations on inspect_evals main. |
+
+## Example
+
+```toml
+[tool.ruff.lint]
+select = ["E", "F", "PLW"]
+```
+
+Use instead:
+
+```toml
+[tool.ruff.lint]
+select = ["E", "F", "PLW"]
+extend-select = ["PLW1514"]
+preview = true
+```
+
+## Options
+
+- `ruff_rules_enabled.declined`: a table from curated rule code to the reason the repository does not enable it, e.g. `declined = { PLW1514 = "every file is ASCII" }`. A declined rule that is not enabled is reported as suppressed, with the reason.
+
+Suppress on a line with `# inspect-evals-lint: ignore[IECQ007] -- <reason>` or `ignore[ruff_rules_enabled] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IECQ`.
 
 
 ---
