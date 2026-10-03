@@ -51,6 +51,7 @@ Every HTML page on this site is also available as raw Markdown at the same path 
 - [IEBP009 known_broken_reported](https://inspect-evals-lint.generality.org/rules/IEBP009.md): Every drop_known_broken() entry maps a sample id to the URL of its upstream report
 - [IEBP010 shuffle_choices_seeded](https://inspect-evals-lint.generality.org/rules/IEBP010.md): shuffle_choices is a seed or off, never an unseeded True
 - [IEBP011 shuffle_seeded](https://inspect-evals-lint.generality.org/rules/IEBP011.md): A dataset loader that shuffles samples is given a seed
+- [IEBP014 metric_epoch_safety](https://inspect-evals-lint.generality.org/rules/IEBP014.md): Custom metrics read scores as the epoch reducer leaves them and do not modify them
 
 ## Security
 
