@@ -52,6 +52,7 @@ Every HTML page on this site is also available as raw Markdown at the same path 
 - [IEBP010 shuffle_choices_seeded](https://inspect-evals-lint.generality.org/rules/IEBP010.md): shuffle_choices is a seed or off, never an unseeded True
 - [IEBP011 shuffle_seeded](https://inspect-evals-lint.generality.org/rules/IEBP011.md): A dataset loader that shuffles samples is given a seed
 - [IEBP012 scorer_failure_scored](https://inspect-evals-lint.generality.org/rules/IEBP012.md): A scorer does not turn a grader or sandbox failure into a score
+- [IEBP013 grader_model_under_test](https://inspect-evals-lint.generality.org/rules/IEBP013.md): A scorer's grader is not silently the model under evaluation
 
 ## Security
 
