@@ -403,7 +403,7 @@ def persistence():
         (d,) = diagnostics(results)
         assert (d.status, d.line) == ("warn", 10)
         assert "sandbox exec()/read_file() in _persisted()" in d.message
-        assert 'Score.unscored(reason="scoring_failed")' in (d.hint or "")
+        assert "non-zero exit is the model's code failing" in (d.hint or "")
 
     def test_score_returned_inside_a_scorer_still_warns(self, tmp_path):
         results = run(
