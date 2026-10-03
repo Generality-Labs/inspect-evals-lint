@@ -52,6 +52,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the c
 | [IEBP009](rules/IEBP009.md) | `known_broken_reported`         | eval, helper | Every drop_known_broken() entry maps a sample id to the URL of its upstream report                  |
 | [IEBP010](rules/IEBP010.md) | `shuffle_choices_seeded`        | eval, helper | shuffle_choices is a seed or off, never an unseeded True                                            |
 | [IEBP011](rules/IEBP011.md) | `shuffle_seeded`                | eval, helper | A dataset loader that shuffles samples is given a seed                                              |
+| [IEBP012](rules/IEBP012.md) | `scorer_failure_scored`         | eval, helper | A scorer does not turn a grader or sandbox failure into a score                                     |
 
 ## Security
 
@@ -62,7 +63,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the c
 
 ## Helper packages
 
-Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`, `shuffle_choices_seeded`, `shuffle_seeded`, `sandbox_privileges`, `host_code_execution`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
+Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`, `shuffle_choices_seeded`, `shuffle_seeded`, `scorer_failure_scored`, `sandbox_privileges`, `host_code_execution`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
 
 ## Categories
 
