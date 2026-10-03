@@ -362,6 +362,34 @@ def _load_pyproject_optional_deps(repo_root: Path) -> dict[str, frozenset[str]]:
     return optional_deps
 
 
+def declared_dependencies(repo_root: Path) -> frozenset[str]:
+    """Every distribution the root ``pyproject.toml`` declares outside ``dev``, normalised.
+
+    ``[project].dependencies``, every optional extra and every dependency group
+    other than ``dev``: what some installation of the project can import. A table
+    of the wrong shape counts as empty, since every package of every repository
+    reads this.
+    """
+    pyproject_path = repo_root / "pyproject.toml"
+    if not pyproject_path.exists():
+        return frozenset()
+    data = _load_toml(pyproject_path)
+    project = data.get("project")
+    project_table = cast(dict[str, object], project) if isinstance(project, dict) else {}
+    declared = _names(project_table.get("dependencies"))
+    tables = [
+        (project_table.get("optional-dependencies"), False),
+        (data.get("dependency-groups"), True),
+    ]
+    for table, skip_dev in tables:
+        if not isinstance(table, dict):
+            continue
+        for group_name, deps in cast(dict[str, object], table).items():
+            if not (skip_dev and group_name == "dev"):
+                declared |= _names(deps)
+    return frozenset(declared)
+
+
 def _load_isolated_package_deps(pyproject_path: Path) -> frozenset[str] | None:
     """Every dependency declared by an isolated eval package, or None if it has no pyproject."""
     if not pyproject_path.exists():

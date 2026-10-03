@@ -27,6 +27,7 @@ Every HTML page on this site is also available as raw Markdown at the same path 
 - [IECQ003 unscored_reason](https://inspect-evals-lint.generality.org/rules/IECQ003.md): Score.unscored() passes a reason= and the legacy unscored_reason metadata key is gone
 - [IECQ004 external_dependencies](https://inspect-evals-lint.generality.org/rules/IECQ004.md): Third-party imports are declared in pyproject.toml
 - [IECQ005 suppression_syntax](https://inspect-evals-lint.generality.org/rules/IECQ005.md): Every suppression marker is one the linter reads, and says why
+- [IECQ006 shared_code_extraction](https://inspect-evals-lint.generality.org/rules/IECQ006.md): Code is extracted from a completion with inspect_evals' extract_code_block, not a hand-rolled fence pattern
 
 ## Tests
 
