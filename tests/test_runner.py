@@ -42,9 +42,29 @@ def first(report, name: str):
 HELPER_RULES = {r.name for r in rules() if "helper" in r.scopes}
 
 
-def test_all_check_names_are_registered() -> None:
-    assert rule_names() == sorted(r.name for r in rules())
-    assert len(rule_names()) == 31
+def test_every_rule_module_registers_rules() -> None:
+    # Rule modules are imported automatically (rules/__init__.py), so a new
+    # one needs no registration. This catches a module that defines no rules,
+    # for example one whose @rule decorators never ran.
+    import pkgutil
+
+    import inspect_evals_lint.rules as rules_package
+
+    public = {
+        f"{rules_package.__name__}.{m.name}"
+        for m in pkgutil.iter_modules(rules_package.__path__)
+        if not m.name.startswith("_")
+    }
+    assert public, "no rule modules found"
+    assert {r.run.__module__ for r in rules()} == public
+
+
+def test_rule_names_and_codes_are_unique() -> None:
+    names = [r.name for r in rules()]
+    codes = [r.code for r in rules()]
+    assert len(names) == len(set(names))
+    assert len(codes) == len(set(codes))
+    assert rule_names() == sorted(names)
 
 
 def test_every_check_has_a_category() -> None:
