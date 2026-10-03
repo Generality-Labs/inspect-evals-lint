@@ -19,7 +19,7 @@ One more one-time step: _Settings → Actions → General_ → enable **Allow Gi
 ## Each release
 
 1. _Actions_ → **Prepare release** → _Run workflow_, choosing the bump. `auto` picks minor when a changelog fragment adds, changes, deprecates or removes something, and patch when fragments only fix; it never picks major. The workflow bumps `version` in `pyproject.toml`, collects `changelog.d/` into `CHANGELOG.md`, and opens a **Release vX.Y.Z** pull request.
-2. On the pull request's Checks tab, click **Approve workflows to run**. A pull request opened by Actions starts its CI in an approval-required state. Review the pull request, and add a summary paragraph under the new heading if the release needs one.
+2. On the pull request's Checks tab, click **Approve workflows to run**. A pull request opened by Actions starts its CI in an approval-required state. Review the pull request, then push a summary paragraph under the new heading, above the first `###` section: what the release is about, and anything a consumer must do before moving their pin (a new JSON schema version, rules that newly fail). The GitHub release notes are taken from this section when the pull request merges. This repo always writes one; the template leaves it optional.
 3. Merge it. `release-on-merge.yml` tags the merge commit `vX.Y.Z`, creates the GitHub release from the changelog section, and starts `publish.yml`, which checks the tag against the built wheel and uploads to PyPI.
 
 To do the same by hand: `uv version --bump minor` (or `patch` / `major`), `uv run scriv collect`, open and merge a pull request, then `git tag vX.Y.Z && git push origin vX.Y.Z` on the merge commit. The tag push starts `publish.yml`.
