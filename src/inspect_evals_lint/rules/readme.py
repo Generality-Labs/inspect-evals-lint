@@ -242,11 +242,11 @@ def readme_task_args(ctx: LintContext) -> Iterable[Finding]:
 
     ## Why is this bad?
     Inspect drops a ``-T`` argument the task does not take and only logs a
-    warning. A README that shows ``-T max_messages=75`` for a task whose
-    parameter is ``message_limit`` runs with the default, and readers copy these
-    commands. A
-    README generator that rewrites a generated parameter list does not read the
-    hand-written examples around it, so a renamed parameter leaves them behind.
+    warning. Readers copy README commands, so one that shows
+    ``-T max_messages=75`` for a task whose parameter is ``message_limit`` runs
+    with the default. Nothing else checks hand-written examples: a renamed
+    parameter leaves them behind, even in a repository whose README generator
+    keeps a parameter list up to date.
 
     ## Example
     ```python
