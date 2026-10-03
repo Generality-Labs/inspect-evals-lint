@@ -20,6 +20,7 @@ Every HTML page on this site is also available as raw Markdown at the same path 
 - [IEFS005 eval_yaml](https://inspect-evals-lint.generality.org/rules/IEFS005.md): eval.yaml exists, is a mapping, and defines the required fields
 - [IEFS006 readme](https://inspect-evals-lint.generality.org/rules/IEFS006.md): README.md exists and has no TODO markers
 - [IEFS007 readme_task_args](https://inspect-evals-lint.generality.org/rules/IEFS007.md): Every -T argument in a README command names a parameter of the task it runs
+- [IEFS008 readme_dependency_groups](https://inspect-evals-lint.generality.org/rules/IEFS008.md): Every extra and dependency group a README command installs exists in the governing pyproject.toml
 
 ## Code quality
 

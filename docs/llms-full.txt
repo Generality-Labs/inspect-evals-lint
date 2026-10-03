@@ -173,15 +173,16 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the c
 
 ## File structure
 
-| Code                        | Rule               | Applies to   | Summary                                                                     |
-| --------------------------- | ------------------ | ------------ | --------------------------------------------------------------------------- |
-| [IEFS001](rules/IEFS001.md) | `package_location` | eval, helper | The package exists at <source-root>/<name>/ with an __init__.py             |
-| [IEFS002](rules/IEFS002.md) | `main_file`        | eval         | Some module defines a @task function, preferably <name>.py or tasks.py      |
-| [IEFS003](rules/IEFS003.md) | `init_exports`     | eval         | __init__.py exports every @task function in the package                     |
-| [IEFS004](rules/IEFS004.md) | `registry`         | eval         | The evaluation is registered so inspect eval can find its tasks             |
-| [IEFS005](rules/IEFS005.md) | `eval_yaml`        | eval         | eval.yaml exists, is a mapping, and defines the required fields             |
-| [IEFS006](rules/IEFS006.md) | `readme`           | eval         | README.md exists and has no TODO markers                                    |
-| [IEFS007](rules/IEFS007.md) | `readme_task_args` | eval         | Every -T argument in a README command names a parameter of the task it runs |
+| Code                        | Rule                       | Applies to   | Summary                                                                                           |
+| --------------------------- | -------------------------- | ------------ | ------------------------------------------------------------------------------------------------- |
+| [IEFS001](rules/IEFS001.md) | `package_location`         | eval, helper | The package exists at <source-root>/<name>/ with an __init__.py                                   |
+| [IEFS002](rules/IEFS002.md) | `main_file`                | eval         | Some module defines a @task function, preferably <name>.py or tasks.py                            |
+| [IEFS003](rules/IEFS003.md) | `init_exports`             | eval         | __init__.py exports every @task function in the package                                           |
+| [IEFS004](rules/IEFS004.md) | `registry`                 | eval         | The evaluation is registered so inspect eval can find its tasks                                   |
+| [IEFS005](rules/IEFS005.md) | `eval_yaml`                | eval         | eval.yaml exists, is a mapping, and defines the required fields                                   |
+| [IEFS006](rules/IEFS006.md) | `readme`                   | eval         | README.md exists and has no TODO markers                                                          |
+| [IEFS007](rules/IEFS007.md) | `readme_task_args`         | eval         | Every -T argument in a README command names a parameter of the task it runs                       |
+| [IEFS008](rules/IEFS008.md) | `readme_dependency_groups` | eval         | Every extra and dependency group a README command installs exists in the governing pyproject.toml |
 
 ## Code quality
 
@@ -230,7 +231,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the c
 
 ## Helper packages
 
-Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`, `shuffle_choices_seeded`, `shuffle_seeded`, `sandbox_privileges`, `host_code_execution`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `readme_task_args`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
+Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`, `shuffle_choices_seeded`, `shuffle_seeded`, `sandbox_privileges`, `host_code_execution`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `readme_task_args`, `readme_dependency_groups`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
 
 ## Categories
 
@@ -592,6 +593,43 @@ inspect eval my_eval/my_eval -T message_limit=75
 - [Tasks: Parameters](https://inspect.aisi.org.uk/tasks.html#parameters)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEFS007] -- <reason>` or `ignore[readme_task_args] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+
+
+---
+
+# IEFS008: readme_dependency_groups
+
+Every extra and dependency group a README command installs exists in the governing pyproject.toml.
+
+**Category:** file_structure · **Applies to:** eval
+
+## What it does
+
+Reads the commands in the README's fenced code blocks and inline code. In a `uv` command, every `--extra X` must name an extra under `[project.optional-dependencies]` and every `--group X` a group under `[dependency-groups]`. In a `pip install` (also `pip3` and `uv pip`) or `uv add` command, every `project[X]` must name an extra of that project, when the project is this repository's or `.`. Fails once per missing name.
+
+The governing `pyproject.toml` is the repository's, or, with `isolated-packages-dir` set, `<isolated-packages-dir>/<name>/pyproject.toml` when the evaluation has one. A `uv` command with `--project`, `--directory` or `--package` points elsewhere and is not checked, and neither is any command after a `cd` in the same code block. A `pyproject.toml` that is not valid TOML skips the rule.
+
+## Why is this bad?
+
+`uv sync --extra X` fails outright when there is no extra `X`, and the reader is left to guess what to install. An evaluation that moves to its own package, or loses its extra, keeps the old install line, because nothing else checks hand-written install instructions, even in a repository whose README generator keeps its own sections up to date.
+
+## Example
+
+```bash
+uv sync --extra my_eval  # pyproject.toml has no my_eval extra
+```
+
+Use instead:
+
+```bash
+uv sync
+```
+
+## Options
+
+- `isolated-packages-dir`
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS008] -- <reason>` or `ignore[readme_dependency_groups] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEFS`.
 
 
 ---
