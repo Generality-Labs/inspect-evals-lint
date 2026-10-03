@@ -910,9 +910,10 @@ def _generates_with(call: ast.Call, function: PackageFunction, code: ScorerCode)
 
 
 _UNDER_TEST_HINT = (
-    'resolve the grader as get_model(role="grader", default="<provider/model>") or with '
-    "required=True, so it can be chosen at invocation and is never the model under "
-    "evaluation by accident"
+    'resolve the grader as get_model(role="grader", default=...), where the default is the '
+    "grader the upstream benchmark used, or, where the benchmark grades without a model, a "
+    "default this port picks and names in its README (required=True also works); then it "
+    "can be chosen at invocation and is never the model under evaluation by accident"
 )
 
 
@@ -951,8 +952,14 @@ def grader_model_under_test(ctx: LintContext) -> Iterable[Finding]:
     ``required=True``.
 
     A deliberate fallback, such as a helper's last resort after an explicit
-    model and a role, can be marked with
+    model and a role, or a grader that is the model under test by design, such
+    as a self-judging defence, can be marked with
     ``# inspect-evals-lint: ignore[grader_model_under_test] -- <reason>``.
+
+    The default grader is the one the upstream benchmark used, ideally as a
+    ``Model`` carrying its generation settings. Where the benchmark grades
+    without a model and the port adds a grader, the port picks the default and
+    its README says so.
 
     **Known limits:** ``get_model(model)`` where ``model`` is a parameter that
     defaults to ``None`` is not reported, since telling it from a guarded call
@@ -977,10 +984,12 @@ def grader_model_under_test(ctx: LintContext) -> Iterable[Finding]:
     ```
     Use instead:
     ```python
+    UPSTREAM_GRADER = "openai/gpt-4o-2024-08-06"  # the grader the benchmark's paper used
+
     @scorer(metrics=[accuracy()])
     def equivalence(model: str | Model | None = None):
         async def score(state, target):
-            grader = get_model(model, role="grader", default="openai/gpt-4o")
+            grader = get_model(model, role="grader", default=UPSTREAM_GRADER)
             result = await grader.generate(prompt)
             ...
     ```
