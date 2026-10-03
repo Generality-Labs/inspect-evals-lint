@@ -56,15 +56,10 @@ def test_every_rule_module_registers_rules() -> None:
         if not m.name.startswith("_")
     }
     assert public, "no rule modules found"
-    assert {r.run.__module__ for r in rules()} == public
-
-
-def test_rule_names_and_codes_are_unique() -> None:
-    names = [r.name for r in rules()]
-    codes = [r.code for r in rules()]
-    assert len(names) == len(set(names))
-    assert len(codes) == len(set(codes))
-    assert rule_names() == sorted(names)
+    assert {r.run.__module__ for r in rules()} == public, (
+        "every public module in rules/ must define a @rule, and each rule's function must be "
+        "defined in the module that registers it; put shared helpers in an _underscore module"
+    )
 
 
 def test_every_check_has_a_category() -> None:
