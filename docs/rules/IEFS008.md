@@ -14,7 +14,7 @@ The governing `pyproject.toml` is the repository's, or, with `isolated-packages-
 
 ## Why is this bad?
 
-`uv sync --extra X` fails outright when there is no extra `X`, and the reader is left to guess what to install. An evaluation that moves to its own package, or loses its extra, keeps the old install line, because a README generator that rewrites its own sections does not read the hand-written instructions around them.
+`uv sync --extra X` fails outright when there is no extra `X`, and the reader is left to guess what to install. An evaluation that moves to its own package, or loses its extra, keeps the old install line, because nothing else checks hand-written install instructions, even in a repository whose README generator keeps its own sections up to date.
 
 ## Example
 
