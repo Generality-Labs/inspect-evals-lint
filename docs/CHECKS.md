@@ -6,14 +6,15 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the c
 
 ## File structure
 
-| Code                        | Rule               | Applies to   | Summary                                                                |
-| --------------------------- | ------------------ | ------------ | ---------------------------------------------------------------------- |
-| [IEFS001](rules/IEFS001.md) | `package_location` | eval, helper | The package exists at <source-root>/<name>/ with an __init__.py        |
-| [IEFS002](rules/IEFS002.md) | `main_file`        | eval         | Some module defines a @task function, preferably <name>.py or tasks.py |
-| [IEFS003](rules/IEFS003.md) | `init_exports`     | eval         | __init__.py exports every @task function in the package                |
-| [IEFS004](rules/IEFS004.md) | `registry`         | eval         | The evaluation is registered so inspect eval can find its tasks        |
-| [IEFS005](rules/IEFS005.md) | `eval_yaml`        | eval         | eval.yaml exists, is a mapping, and defines the required fields        |
-| [IEFS006](rules/IEFS006.md) | `readme`           | eval         | README.md exists and has no TODO markers                               |
+| Code                        | Rule               | Applies to   | Summary                                                                     |
+| --------------------------- | ------------------ | ------------ | --------------------------------------------------------------------------- |
+| [IEFS001](rules/IEFS001.md) | `package_location` | eval, helper | The package exists at <source-root>/<name>/ with an __init__.py             |
+| [IEFS002](rules/IEFS002.md) | `main_file`        | eval         | Some module defines a @task function, preferably <name>.py or tasks.py      |
+| [IEFS003](rules/IEFS003.md) | `init_exports`     | eval         | __init__.py exports every @task function in the package                     |
+| [IEFS004](rules/IEFS004.md) | `registry`         | eval         | The evaluation is registered so inspect eval can find its tasks             |
+| [IEFS005](rules/IEFS005.md) | `eval_yaml`        | eval         | eval.yaml exists, is a mapping, and defines the required fields             |
+| [IEFS006](rules/IEFS006.md) | `readme`           | eval         | README.md exists and has no TODO markers                                    |
+| [IEFS007](rules/IEFS007.md) | `readme_task_args` | eval         | Every -T argument in a README command names a parameter of the task it runs |
 
 ## Code quality
 
@@ -62,7 +63,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the c
 
 ## Helper packages
 
-Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`, `shuffle_choices_seeded`, `shuffle_seeded`, `sandbox_privileges`, `host_code_execution`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
+Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`, `shuffle_choices_seeded`, `shuffle_seeded`, `sandbox_privileges`, `host_code_execution`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `readme_task_args`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
 
 ## Categories
 

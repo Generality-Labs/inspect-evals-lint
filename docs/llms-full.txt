@@ -173,14 +173,15 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the c
 
 ## File structure
 
-| Code                        | Rule               | Applies to   | Summary                                                                |
-| --------------------------- | ------------------ | ------------ | ---------------------------------------------------------------------- |
-| [IEFS001](rules/IEFS001.md) | `package_location` | eval, helper | The package exists at <source-root>/<name>/ with an __init__.py        |
-| [IEFS002](rules/IEFS002.md) | `main_file`        | eval         | Some module defines a @task function, preferably <name>.py or tasks.py |
-| [IEFS003](rules/IEFS003.md) | `init_exports`     | eval         | __init__.py exports every @task function in the package                |
-| [IEFS004](rules/IEFS004.md) | `registry`         | eval         | The evaluation is registered so inspect eval can find its tasks        |
-| [IEFS005](rules/IEFS005.md) | `eval_yaml`        | eval         | eval.yaml exists, is a mapping, and defines the required fields        |
-| [IEFS006](rules/IEFS006.md) | `readme`           | eval         | README.md exists and has no TODO markers                               |
+| Code                        | Rule               | Applies to   | Summary                                                                     |
+| --------------------------- | ------------------ | ------------ | --------------------------------------------------------------------------- |
+| [IEFS001](rules/IEFS001.md) | `package_location` | eval, helper | The package exists at <source-root>/<name>/ with an __init__.py             |
+| [IEFS002](rules/IEFS002.md) | `main_file`        | eval         | Some module defines a @task function, preferably <name>.py or tasks.py      |
+| [IEFS003](rules/IEFS003.md) | `init_exports`     | eval         | __init__.py exports every @task function in the package                     |
+| [IEFS004](rules/IEFS004.md) | `registry`         | eval         | The evaluation is registered so inspect eval can find its tasks             |
+| [IEFS005](rules/IEFS005.md) | `eval_yaml`        | eval         | eval.yaml exists, is a mapping, and defines the required fields             |
+| [IEFS006](rules/IEFS006.md) | `readme`           | eval         | README.md exists and has no TODO markers                                    |
+| [IEFS007](rules/IEFS007.md) | `readme_task_args` | eval         | Every -T argument in a README command names a parameter of the task it runs |
 
 ## Code quality
 
@@ -229,7 +230,7 @@ Every rule has a code (`IEFS`, `IECQ`, `IETS`, `IEBP`, `IESC` prefixes for the c
 
 ## Helper packages
 
-Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`, `shuffle_choices_seeded`, `shuffle_seeded`, `sandbox_privileges`, `host_code_execution`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
+Directories listed in `helper-dirs` (by default `utils`) hold code that evaluations import rather than an evaluation. They run the rules about behaviour and not the ones about an evaluation's structure and registration. Run: `package_location`, `private_api_imports`, `score_constants`, `unscored_reason`, `external_dependencies`, `suppression_syntax`, `tests_init`, `custom_solver_tests`, `custom_scorer_tests`, `custom_tool_tests`, `get_model_location`, `model_role_resolution`, `sample_ids`, `task_overridable_defaults`, `sandbox_image_pinning`, `duplicate_filter_acknowledged`, `known_broken_reported`, `shuffle_choices_seeded`, `shuffle_seeded`, `sandbox_privileges`, `host_code_execution`. Not run: `main_file`, `init_exports`, `registry`, `eval_yaml`, `readme`, `readme_task_args`, `tests_exist`, `e2e_test`, `record_to_sample_test`, `gpu_sandbox_check`, `dockerfile_locking`. Every rule declares its scopes in its `@rule` decorator, so a new rule decides up front whether shared code is in scope.
 
 ## Categories
 
@@ -549,6 +550,48 @@ The README is the evaluation's front door. A missing one leaves users guessing a
 - `readme-location`
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEFS006] -- <reason>` or `ignore[readme] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEFS`.
+
+
+---
+
+# IEFS007: readme_task_args
+
+Every -T argument in a README command names a parameter of the task it runs.
+
+**Category:** file_structure · **Applies to:** eval
+
+## What it does
+
+Reads the `inspect eval` and `inspect eval-set` commands in the README's fenced code blocks and inline code, with or without a `uv run` prefix and across line continuations. Each task the command names is resolved against the package's `@task` functions: `<namespace>/<task>`, a bare `<task>`, or `path/to/file.py@task`. Every `-T name=value` must then name a parameter of every resolved task. Fails once per argument and task.
+
+Tasks that resolve to nothing in the package, such as another package's tasks or a placeholder like `my_eval_XX`, are not checked. Neither is a task that takes `**kwargs`.
+
+## Why is this bad?
+
+Inspect drops a `-T` argument the task does not take and only logs a warning. A README that shows `-T max_messages=75` for a task whose parameter is `message_limit` runs with the default, and readers copy these commands. A README generator that rewrites a generated parameter list does not read the hand-written examples around it, so a renamed parameter leaves them behind.
+
+## Example
+
+```python
+@task
+def my_eval(message_limit: int = 50) -> Task: ...
+```
+
+```bash
+inspect eval my_eval/my_eval -T max_messages=75
+```
+
+Use instead:
+
+```bash
+inspect eval my_eval/my_eval -T message_limit=75
+```
+
+## See also
+
+- [Tasks: Parameters](https://inspect.aisi.org.uk/tasks.html#parameters)
+
+Suppress on a line with `# inspect-evals-lint: ignore[IEFS007] -- <reason>` or `ignore[readme_task_args] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEFS`.
 
 
 ---
