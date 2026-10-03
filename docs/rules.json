@@ -113,6 +113,24 @@
       "references": []
     },
     {
+      "code": "IEFS007",
+      "name": "readme_task_args",
+      "category": "file_structure",
+      "scopes": [
+        "eval"
+      ],
+      "allowlist": false,
+      "summary": "Every -T argument in a README command names a parameter of the task it runs",
+      "url": "https://inspect-evals-lint.generality.org/rules/IEFS007/",
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEFS007.md",
+      "references": [
+        {
+          "title": "Tasks: Parameters",
+          "url": "https://inspect.aisi.org.uk/tasks.html#parameters"
+        }
+      ]
+    },
+    {
       "code": "IECQ001",
       "name": "private_api_imports",
       "category": "code_quality",
