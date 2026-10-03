@@ -597,6 +597,29 @@
       ]
     },
     {
+      "code": "IEBP012",
+      "name": "scorer_failure_scored",
+      "category": "best_practices",
+      "scopes": [
+        "eval",
+        "helper"
+      ],
+      "allowlist": false,
+      "summary": "A scorer does not turn a grader or sandbox failure into a score",
+      "url": "https://inspect-evals-lint.generality.org/rules/IEBP012/",
+      "markdown": "https://inspect-evals-lint.generality.org/rules/IEBP012.md",
+      "references": [
+        {
+          "title": "Scoring Policy: Malfunctions",
+          "url": "https://inspect.aisi.org.uk/scoring-policy.html#malfunctions"
+        },
+        {
+          "title": "Custom Scorers: Unscored Samples",
+          "url": "https://inspect.aisi.org.uk/custom-scorers.html#unscored-samples"
+        }
+      ]
+    },
+    {
       "code": "IESC001",
       "name": "sandbox_privileges",
       "category": "security",
