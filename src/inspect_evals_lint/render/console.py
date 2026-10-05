@@ -25,7 +25,7 @@ from inspect_evals_lint.render.paths import relative_to_root
 console = Console()
 stderr_console = Console(stderr=True)
 
-CHECKS_DOC_URL = "https://github.com/Generality-Labs/inspect-evals-lint/blob/main/docs/CHECKS.md"
+CHECKS_DOC_URL = "https://inspect-evals-lint.generality.org/CHECKS/"
 
 _STATUS_MARKUP = {
     "pass": "[bold green]PASS[/]",
