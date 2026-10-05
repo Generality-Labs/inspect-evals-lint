@@ -45,9 +45,8 @@ CURATED_RULES: tuple[CuratedRule, ...] = (
             "misread elsewhere. A preview rule in ruff 0.15 and 0.16."
         ),
         evidence=(
-            "[UKGovernmentBEIS/inspect_evals#2475](https://github.com/UKGovernmentBEIS/inspect_evals/pull/2475): "
-            "agentdojo read its suite YAML without an encoding. 77 sites in 30 evaluations "
-            "on inspect_evals main."
+            "Evaluations read YAML, JSON and prompt files with a bare ``open()``; those loads "
+            "break under a C or non-UTF-8 locale, as on some CI runners and Windows."
         ),
         probe='open("data.txt")\n',
     ),
