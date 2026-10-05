@@ -129,7 +129,7 @@ The comment is namespaced with the tool's name rather than reusing ruff's `# noq
 
 ## Checks
 
-The [rule index](https://inspect-evals-lint.generality.org/CHECKS/) lists every rule by category and links to a page per rule. The pages are in [docs/rules/](docs/rules/), generated from each rule's docstring by `python -m inspect_evals_lint.docs`; `inspect-evals-lint --explain <code>` prints the same text. Each rule is a decorated function in `src/inspect_evals_lint/rules/`: adding one means adding the function, its docstring, its `references` (the [Inspect documentation](https://inspect.aisi.org.uk/) sections that explain the convention, shown under *See also* on the rule's page and listed in `rules.json`; a rule with no upstream home for its convention has none) and its tests, and regenerating the docs (pre-commit checks they are current; the docs workflow also checks every reference resolves).
+The [rule index](docs/CHECKS.md) lists every rule by category and links to a page per rule. The pages are in [docs/rules/](docs/rules/), generated from each rule's docstring by `python -m inspect_evals_lint.docs`; `inspect-evals-lint --explain <code>` prints the same text. Each rule is a decorated function in `src/inspect_evals_lint/rules/`: adding one means adding the function, its docstring, its `references` (the [Inspect documentation](https://inspect.aisi.org.uk/) sections that explain the convention, shown under *See also* on the rule's page and listed in `rules.json`; a rule with no upstream home for its convention has none) and its tests, and regenerating the docs (pre-commit checks they are current; the docs workflow also checks every reference resolves).
 
 ## Python API
 
