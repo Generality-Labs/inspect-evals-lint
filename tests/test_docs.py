@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from inspect_evals_lint import docs
 from inspect_evals_lint.registry import get_rule, rules
 
@@ -91,7 +93,6 @@ def test_site_index_rewrites_links_for_the_site(tmp_path: Path) -> None:
 def test_site_builds_the_pages_that_list_every_rule() -> None:
     pages = docs.site_files(REPO)
     assert set(pages) == {"CHECKS.md", "index.md", "llms.txt", "llms-full.txt", "rules.json"}
-    assert pages["CHECKS.md"] == docs.formatted(docs.index_page())
     assert docs.GENERATED_NOTE in pages["index.md"]
     for path in pages:
         if path != "CHECKS.md":
@@ -102,7 +103,22 @@ def test_committed_rule_index_points_at_the_site() -> None:
     """Releases up to 0.10.0 print a link to docs/CHECKS.md on GitHub."""
     pointer = (REPO / "docs" / "CHECKS.md").read_text(encoding="utf-8")
     assert f"{docs.SITE_URL}CHECKS/" in pointer
-    assert "| Code |" not in pointer
+    assert "rules/IEFS001.md" not in pointer
+    assert "## Helper packages" in pointer  # inspect_evals links to this anchor
+
+
+def test_site_build_replaces_the_pointer_with_the_generated_pages(tmp_path: Path) -> None:
+    """Runs where the docs group is installed: docs.yml, or `uv run --group docs pytest`."""
+    pytest.importorskip("mkdocs")
+    from mkdocs.commands.build import build
+    from mkdocs.config import load_config  # pyright: ignore[reportUnknownVariableType]
+
+    build(load_config(config_file=str(REPO / "mkdocs.yml"), site_dir=str(tmp_path)))
+    for path, content in docs.site_files(REPO).items():
+        assert (tmp_path / path).read_text(encoding="utf-8") == content
+    assert (tmp_path / "CHECKS" / "index.md").read_text(encoding="utf-8") == docs.formatted(
+        docs.index_page()
+    )
 
 
 def test_site_url_matches_mkdocs() -> None:

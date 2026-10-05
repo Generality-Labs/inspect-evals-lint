@@ -11,6 +11,11 @@ repo_name: Generality-Labs/inspect-evals-lint
 edit_uri: ""
 docs_dir: docs
 strict: true
+# The hooks build the front page and the rule index from these, so `mkdocs
+# serve` rebuilds when they change.
+watch:
+  - README.md
+  - src/inspect_evals_lint
 
 # Adds the pages that list every rule, and copies each page's Markdown source
 # into the site next to its HTML, for agents.

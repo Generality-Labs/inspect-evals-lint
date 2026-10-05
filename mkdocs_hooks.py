@@ -6,7 +6,9 @@ The rule index (``CHECKS.md``), the front page (``index.md``), ``llms.txt``,
 ``docs/``. Every new rule changes them, so committed copies would make any two
 pull requests that add rules conflict. The committed ``docs/CHECKS.md`` only
 points at the site, for the links older releases print, and the generated
-index replaces it.
+index replaces it. They are computed in a fresh interpreter on every build, so
+``mkdocs serve`` shows a rule edit without a restart; ``watch`` in mkdocs.yml
+covers the README and the rules.
 
 Agents and tools prefer Markdown to rendered HTML. Every page's Markdown is
 written to ``site/<path>.md`` and, for pages served as a directory, to
@@ -17,10 +19,28 @@ written to ``site/<path>.md`` and, for pages served as a directory, to
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
-from inspect_evals_lint.docs import site_files
+_SITE_FILES = (
+    "import json, sys; from pathlib import Path; "
+    "from inspect_evals_lint.docs import site_files; "
+    "json.dump(site_files(Path(sys.argv[1])), sys.stdout)"
+)
+
+
+def site_files(root: Path) -> dict[str, str]:
+    """``inspect_evals_lint.docs.site_files(root)``, from a process that imports the rules as they are now."""
+    result = subprocess.run(
+        [sys.executable, "-c", _SITE_FILES, str(root)],
+        stdout=subprocess.PIPE,
+        check=True,
+        encoding="utf-8",
+    )
+    return json.loads(result.stdout)
 
 
 def on_files(files: Any, config: Any) -> Any:
