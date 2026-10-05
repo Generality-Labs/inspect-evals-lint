@@ -253,15 +253,15 @@ class TestReadmeDependencyGroups:
 
     def test_fails_at_each_missing_name(self, tmp_path):
         readme = _fence(
-            "uv sync --extra fortress",
+            "uv sync --extra gpu",
             "uv run \\",
             "  --group alpha inspect eval my_evals/alpha",
             "pip install my_evals[dev]",
         )
         results = _deps(tmp_path, readme)
         assert [(r.status, r.line) for r in results] == [("fail", 4), ("fail", 6), ("fail", 7)]
-        assert "--extra fortress" in results[0].message
-        assert "pyproject.toml defines no extra 'fortress'" in results[0].message
+        assert "--extra gpu" in results[0].message
+        assert "pyproject.toml defines no extra 'gpu'" in results[0].message
         assert "drop it" in (results[0].hint or "")
         assert "use --extra alpha" in (results[1].hint or "")
         assert "my_evals[dev]" in results[2].message
