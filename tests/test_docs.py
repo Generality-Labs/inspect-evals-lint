@@ -1,4 +1,4 @@
-"""Generated documentation: pages come from the registry and the committed copies are current."""
+"""Generated documentation: pages come from the registry, the committed copies are current, and the site builds the rest."""
 
 from __future__ import annotations
 
@@ -88,9 +88,21 @@ def test_site_index_rewrites_links_for_the_site(tmp_path: Path) -> None:
     assert "[same](#anchor)" in index
 
 
-def test_committed_site_index_matches_readme() -> None:
-    assert (REPO / "docs" / "index.md").exists()
-    assert docs.stale_files(REPO) == []
+def test_site_builds_the_pages_that_list_every_rule() -> None:
+    pages = docs.site_files(REPO)
+    assert set(pages) == {"CHECKS.md", "index.md", "llms.txt", "llms-full.txt", "rules.json"}
+    assert pages["CHECKS.md"] == docs.formatted(docs.index_page())
+    assert docs.GENERATED_NOTE in pages["index.md"]
+    for path in pages:
+        if path != "CHECKS.md":
+            assert not (REPO / "docs" / path).exists(), f"docs/{path} is built with the site"
+
+
+def test_committed_rule_index_points_at_the_site() -> None:
+    """Releases up to 0.10.0 print a link to docs/CHECKS.md on GitHub."""
+    pointer = (REPO / "docs" / "CHECKS.md").read_text(encoding="utf-8")
+    assert f"{docs.SITE_URL}CHECKS/" in pointer
+    assert "| Code |" not in pointer
 
 
 def test_site_url_matches_mkdocs() -> None:
@@ -132,23 +144,26 @@ def test_llms_full_concatenates_every_page() -> None:
     assert docs.GENERATED_NOTE not in text
 
 
-def test_post_build_hook_publishes_raw_markdown(tmp_path: Path) -> None:
+def test_post_page_hook_publishes_raw_markdown(tmp_path: Path) -> None:
     import importlib.util
+    from types import SimpleNamespace
 
     spec = importlib.util.spec_from_file_location("mkdocs_hooks", REPO / "mkdocs_hooks.py")
     assert spec
     assert spec.loader
     hooks = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(hooks)
-    docs_dir, site_dir = tmp_path / "docs", tmp_path / "site"
-    (docs_dir / "rules").mkdir(parents=True)
-    (docs_dir / "index.md").write_text("# home\n")
-    (docs_dir / "CHECKS.md").write_text("# rules\n")
-    (docs_dir / "rules" / "IEFS001.md").write_text("# IEFS001\n")
-    site_dir.mkdir()
-    hooks.on_post_build({"docs_dir": str(docs_dir), "site_dir": str(site_dir)})
-    assert (site_dir / "index.md").read_text() == "# home\n"
-    assert (site_dir / "CHECKS.md").read_text() == "# rules\n"
-    assert (site_dir / "CHECKS" / "index.md").read_text() == "# rules\n"
-    assert (site_dir / "rules" / "IEFS001.md").read_text() == "# IEFS001\n"
-    assert (site_dir / "rules" / "IEFS001" / "index.md").read_text() == "# IEFS001\n"
+    config = {"site_dir": str(tmp_path)}
+    for path, content in (
+        ("index.md", "# home\n"),
+        ("CHECKS.md", "# rules\n"),
+        ("rules/IEFS001.md", "# IEFS001\n"),
+    ):
+        page = SimpleNamespace(file=SimpleNamespace(src_uri=path, content_string=content))
+        assert hooks.on_post_page("<html>", page, config) == "<html>"
+    assert (tmp_path / "index.md").read_text() == "# home\n"
+    assert not (tmp_path / "index" / "index.md").exists()
+    assert (tmp_path / "CHECKS.md").read_text() == "# rules\n"
+    assert (tmp_path / "CHECKS" / "index.md").read_text() == "# rules\n"
+    assert (tmp_path / "rules" / "IEFS001.md").read_text() == "# IEFS001\n"
+    assert (tmp_path / "rules" / "IEFS001" / "index.md").read_text() == "# IEFS001\n"
