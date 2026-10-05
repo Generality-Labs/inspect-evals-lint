@@ -1,14 +1,17 @@
 """Generate the rule documentation from the registry, so it cannot drift from the code.
 
 ``python -m inspect_evals_lint.docs`` writes ``docs/rules/<code>.md`` (one page
-per rule, from its docstring), ``docs/CHECKS.md`` (the index, grouped by
-category), ``docs/index.md`` (the README as the site's front page), the
-configuration table in ``README.md`` (from
-:class:`~inspect_evals_lint.config.LintConfig` field metadata), and the
-agent-facing ``docs/llms.txt``, ``docs/llms-full.txt`` and ``docs/rules.json``. The ``docs/``
-directory is published with mkdocs by ``.github/workflows/docs.yml``. ``--check``
+per rule, from its docstring) and the configuration table in ``README.md``
+(from :class:`~inspect_evals_lint.config.LintConfig` field metadata). ``--check``
 exits non-zero when a committed file differs from what would be generated;
 pre-commit runs it so the docs are always current.
+
+The pages that list every rule are built with the site instead, by
+``mkdocs_hooks.py`` from :func:`site_files`: the index (``CHECKS.md``, grouped by
+category), the front page (``index.md``, the README) and the agent-facing
+``llms.txt``, ``llms-full.txt`` and ``rules.json``. Every new rule changes them,
+so committed copies would make any two pull requests that add rules conflict.
+The ``docs/`` directory is published with mkdocs by ``.github/workflows/docs.yml``.
 """
 
 from __future__ import annotations
@@ -97,7 +100,7 @@ def rule_page(rule: Rule) -> str:
 
 
 def index_page() -> str:
-    """``docs/CHECKS.md``: every rule by category, with links to the pages."""
+    """``CHECKS.md``: every rule by category, with links to the pages."""
     lines = [
         "# Rule index",
         "",
@@ -223,7 +226,7 @@ _LINK = re.compile(r"\]\(([^)#][^)]*)\)")
 
 
 def site_index(readme: str, docs_dir: Path) -> str:
-    """``docs/index.md``: the README as the site's front page.
+    """``index.md``: the README as the site's front page.
 
     Links into ``docs/`` lose the prefix, ``docs/rules/`` points at the rules
     index, and links to other repository files go to GitHub, since the site
@@ -328,25 +331,39 @@ def llms_full_txt(root: Path, readme: str | None) -> str:
     return "\n\n---\n\n".join(p.strip() + "\n" for p in parts)
 
 
+def _readme(root: Path) -> str | None:
+    """The README with its configuration table regenerated; None without a README."""
+    readme = root / "README.md"
+    if not readme.exists():
+        return None
+    return formatted(readme_with_table(readme.read_text(encoding="utf-8")))
+
+
 def generated_files(root: Path) -> dict[Path, str]:
-    """Every generated file and its intended content, formatted as the mdformat hook would leave it."""
-    out: dict[Path, str] = {root / "docs" / "CHECKS.md": formatted(index_page())}
+    """Every committed generated file and its intended content, formatted as the mdformat hook would leave it."""
+    out: dict[Path, str] = {}
     for rule in rules():
         out[root / "docs" / "rules" / f"{rule.code}.md"] = formatted(rule_page(rule))
-    readme = root / "README.md"
-    updated_readme: str | None = None
-    if readme.exists():
-        updated_readme = formatted(readme_with_table(readme.read_text(encoding="utf-8")))
-        out[readme] = updated_readme
-        out[root / "docs" / "index.md"] = formatted(site_index(updated_readme, root / "docs"))
-    out[root / "docs" / "llms.txt"] = llms_txt()
-    out[root / "docs" / "llms-full.txt"] = llms_full_txt(root, updated_readme)
-    out[root / "docs" / "rules.json"] = rules_json()
+    readme = _readme(root)
+    if readme is not None:
+        out[root / "README.md"] = readme
+    return out
+
+
+def site_files(root: Path) -> dict[str, str]:
+    """The pages built with the site rather than committed, by path under ``docs/``."""
+    readme = _readme(root)
+    out = {"CHECKS.md": formatted(index_page())}
+    if readme is not None:
+        out["index.md"] = formatted(site_index(readme, root / "docs"))
+    out["llms.txt"] = llms_txt()
+    out["llms-full.txt"] = llms_full_txt(root, readme)
+    out["rules.json"] = rules_json()
     return out
 
 
 def stale_files(root: Path) -> list[Path]:
-    """Generated files whose committed content differs from what would be generated."""
+    """Committed generated files whose content differs from what would be generated."""
     stale: list[Path] = []
     for path, content in generated_files(root).items():
         if not path.exists() or path.read_text(encoding="utf-8") != content:
