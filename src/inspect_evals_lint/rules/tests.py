@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterable
+import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from inspect_evals_lint.config import ConfigError
 from inspect_evals_lint.context import LintContext
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
 from inspect_evals_lint.registry import inspect_docs, rule
@@ -394,6 +396,133 @@ def custom_tool_tests(ctx: LintContext) -> Iterable[Finding]:
     signature changes.
     """
     yield from _custom_component_tests(ctx, ("tool",), "tools")
+
+
+METRIC_HELPER_MODULE = "metric_epochs"
+"""The module, in ``tests/utils/``, that runs a metric through the real epoch reducer."""
+
+_METRIC_TESTS_RULE = "custom_metric_tests"
+
+
+def metric_helper_module(options: Mapping[str, object]) -> str:
+    """The ``helper-module`` option from the rule's table, validated.
+
+    Raises:
+        ConfigError: the table has an unknown key or the value is not a module name.
+    """
+    table = f"[tool.inspect-evals-lint.{_METRIC_TESTS_RULE}]"
+    unknown = sorted(set(options) - {"helper_module"})
+    if unknown:
+        raise ConfigError(
+            f"{table}: unknown option(s) {unknown}; the only option is 'helper-module'"
+        )
+    value = options.get("helper_module", METRIC_HELPER_MODULE)
+    if not isinstance(value, str) or not value.isidentifier():
+        raise ConfigError(f"{table}: 'helper-module' must be a module name, got {value!r}")
+    return value
+
+
+def _imports_module(path: Path, module: str) -> bool:
+    """Whether the file imports ``module``, as the last part of a dotted name or by itself."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    name = re.escape(module)
+    return (
+        re.search(
+            rf"^\s*(from\s+[\w.]*\b{name}\s+import|import\s+[\w.]*\b{name}\b)", text, re.MULTILINE
+        )
+        is not None
+    )
+
+
+@rule(
+    code="IETS008",
+    name=_METRIC_TESTS_RULE,
+    category="tests",
+    scopes=("eval", "helper"),
+    summary="Every @metric function is tested through the real epoch reducer",
+    references=(
+        inspect_docs("metrics", "Metrics: Reducing Epochs", "reducing-epochs"),
+        inspect_docs("metrics", "Metrics: Custom Metrics", "custom-metrics"),
+    ),
+)
+def custom_metric_tests(ctx: LintContext) -> Iterable[Finding]:
+    """Every ``@metric`` function is tested through the real epoch reducer.
+
+    ## What it does
+    Finds functions decorated with ``@metric`` in the package and checks each
+    name appears in a test file that imports the epoch helper module, by
+    default ``metric_epochs`` (``tests/utils/metric_epochs.py`` in
+    inspect_evals and the evaluation template). A metric registered under
+    another name with ``@metric(name=...)`` is also satisfied by that name. For
+    an evaluation the search covers ``tests/<name>/``; for a helper package,
+    the whole tests root. One warning per metric. This is a presence check: the
+    test's assertions are the author's.
+
+    ## Why is this bad?
+    A metric receives the score the epoch reducer leaves, not the one the
+    scorer returned. The default ``mean`` turns ``"C"`` into ``1.0`` even at
+    ``epochs=1``, and two passes in three epochs into 0.667. A unit test that
+    hands the metric hand-built scores skips that step, so it passes while the
+    eval reports the wrong number. The helper runs the metric through a real
+    eval: ``assert_agreeing_epochs_change_nothing`` checks equal epochs change
+    nothing, and ``run_metrics`` takes disagreeing epochs and an expected value.
+
+    ## Example
+    ```python
+    # tests/my_eval/test_my_eval.py: hand-built scores only
+    def test_win_rate():
+        assert win_rate()([SampleScore(score=Score(value="C"))]) == 1.0
+    ```
+    Use instead:
+    ```python
+    from tests.utils.metric_epochs import assert_agreeing_epochs_change_nothing, run_metrics
+
+    def test_win_rate_through_the_reducer():
+        assert_agreeing_epochs_change_nothing([win_rate()], [CORRECT, INCORRECT])
+        assert run_metrics([win_rate()], [[CORRECT, CORRECT, INCORRECT]])["win_rate"] == pytest.approx(2 / 3)
+    ```
+
+    ## Options
+    - `custom_metric_tests.helper-module`: the module a test must import, by its last dotted part. Default `metric_epochs`.
+    """
+    helper = metric_helper_module(ctx.config.rule_options.get(_METRIC_TESTS_RULE, {}))
+    if ctx.test_search_path is None:
+        yield _no_test_dir(ctx)
+        return
+
+    functions, failed = _find_decorated_functions(ctx, ("metric",))
+    yield from failed
+    if not functions:
+        yield Outcome("skip", "No custom metrics found")
+        return
+
+    helper_tests = [
+        path for path in sorted(ctx.test_search_path.rglob("*.py")) if _imports_module(path, helper)
+    ]
+    untested = 0
+    for function in functions:
+        if any(_first_mention(helper_tests, needle) is not None for needle in function.mentions):
+            continue
+        untested += 1
+        registered = (
+            f" (registered as {function.registered_name!r})" if len(function.mentions) > 1 else ""
+        )
+        yield Diagnostic(
+            f"@metric {function.name}(){registered} is not run through the epoch reducer by any test",
+            file=function.file,
+            line=function.line,
+            column=function.column,
+            severity="warning",
+            hint=(
+                f"add a test that imports {helper} and runs {function.name}() with "
+                "assert_agreeing_epochs_change_nothing and run_metrics"
+            ),
+        )
+    if not untested:
+        yield Outcome("pass", f"All {len(functions)} custom metric(s) are tested through {helper}")
 
 
 EXCLUDED_TEST_DIRS = {"__pycache__", ".mypy_cache", ".pytest_cache"}
