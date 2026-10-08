@@ -63,8 +63,10 @@ class Diagnostic:
     """What an allowlist entry for this finding would name (a role, an image); None for rules without one."""
     rule: Rule | None = None
     """Set by the runner."""
+    shared: bool = False
+    """Whether the finding is about something several packages share, such as a repository-wide configuration file. A run lists an identical shared finding once, under the first package that reports it."""
     suppressed: bool = False
-    """Set by the runner when a suppression comment or configuration covers the site."""
+    """Set by the runner when a suppression comment or configuration covers the site, or by a rule whose own options decline the finding."""
 
     @property
     def status(self) -> Status:
