@@ -62,7 +62,7 @@ def test_fails_on_as_int_and_as_bool(tmp_path):
     assert ".as_int()" in results[0].message
     assert ".as_bool()" in results[1].message
     assert results[0].hint is not None
-    assert "as_float()" in results[0].hint
+    assert "value_to_float()" in results[0].hint
 
 
 def test_fails_on_int_of_anything_computed_from_a_score_value(tmp_path):
