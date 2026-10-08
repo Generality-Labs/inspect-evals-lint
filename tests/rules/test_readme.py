@@ -4,7 +4,11 @@ from pathlib import Path
 
 from inspect_evals_lint import lint_package
 from inspect_evals_lint.rules import readme as readme_module
-from inspect_evals_lint.rules.readme import readme_commands, readme_task_args
+from inspect_evals_lint.rules.readme import (
+    readme_commands,
+    readme_dependency_groups,
+    readme_task_args,
+)
 from tests.conftest import context_for, make_monorepo, make_register_repo, write
 
 TASKS = """
@@ -204,3 +208,143 @@ class TestReadmeTaskArgs:
         report = lint_package(tmp_path, "alpha", config, check="readme_task_args")
         assert [(d.status, d.line) for d in report.diagnostics] == [("fail", 4)]
         assert "solver_name" in report.diagnostics[0].message
+
+
+PYPROJECT = """
+[project]
+name = "my_evals"
+
+[project.optional-dependencies]
+alpha = ["requests"]
+bfcl_v4 = ["numpy"]
+
+[dependency-groups]
+dev = ["pytest"]
+"""
+
+
+def _deps(tmp_path: Path, readme: str, pyproject: str = PYPROJECT):
+    eval_dir = tmp_path / "alpha"
+    write(eval_dir / "__init__.py", "")
+    write(eval_dir / "README.md", readme)
+    if pyproject:
+        write(tmp_path / "pyproject.toml", pyproject)
+    return list(readme_dependency_groups(context_for(eval_dir)))
+
+
+class TestReadmeDependencyGroups:
+    def test_skips_without_readme_pyproject_or_references(self, tmp_path):
+        eval_dir = tmp_path / "alpha"
+        write(eval_dir / "__init__.py", "")
+        assert [r.status for r in readme_dependency_groups(context_for(eval_dir))] == ["skip"]
+        assert [r.status for r in _deps(tmp_path, _fence("uv sync --extra x"), "")] == ["skip"]
+        assert [r.status for r in _deps(tmp_path, _fence("uv sync"))] == ["skip"]
+
+    def test_passes_when_every_name_exists(self, tmp_path):
+        readme = _fence(
+            "uv sync --extra alpha --group=dev",
+            "uv sync --extra bfcl-v4",
+            "pip install my-evals[alpha,bfcl_v4]",
+            'uv pip install -e ".[alpha]"',
+        )
+        results = _deps(tmp_path, readme + "Or `pip install my_evals[alpha]`.\n")
+        assert [r.status for r in results] == ["pass"]
+        assert "7 extra(s)" in results[0].message
+
+    def test_fails_at_each_missing_name(self, tmp_path):
+        readme = _fence(
+            "uv sync --extra gpu",
+            "uv run \\",
+            "  --group alpha inspect eval my_evals/alpha",
+            "pip install my_evals[dev]",
+        )
+        results = _deps(tmp_path, readme)
+        assert [(r.status, r.line) for r in results] == [("fail", 4), ("fail", 6), ("fail", 7)]
+        assert "--extra gpu" in results[0].message
+        assert "pyproject.toml defines no extra 'gpu'" in results[0].message
+        assert "drop it" in (results[0].hint or "")
+        assert "use --extra alpha" in (results[1].hint or "")
+        assert "my_evals[dev]" in results[2].message
+        assert "uv sync --group dev" in (results[2].hint or "")
+
+    def test_ignores_other_projects_and_placeholders(self, tmp_path):
+        readme = _fence(
+            "pip install openai[realtime]",
+            "uv --project other sync --extra nope",
+            "uv sync --directory=other --group nope",
+            "uv sync --package other --extra nope",
+            "uv sync --extra <eval_name>",
+            "echo my_evals[nope]",
+            "git add my_evals[nope].txt",
+            "pip show my_evals[nope]",
+        )
+        assert [r.status for r in _deps(tmp_path, readme)] == ["skip"]
+
+    def test_reads_every_pip_spelling_and_uv_add(self, tmp_path):
+        readme = _fence(
+            "pip3 install my_evals[a]",
+            "python -m pip install --upgrade my_evals[b]",
+            "uv pip install my_evals[c]",
+            "uv add my_evals[d]",
+        )
+        assert [(r.status, r.line) for r in _deps(tmp_path, readme)] == [
+            ("fail", 4),
+            ("fail", 5),
+            ("fail", 6),
+            ("fail", 7),
+        ]
+
+    def test_stops_reading_a_block_at_cd(self, tmp_path):
+        readme = (
+            _fence(
+                "git clone https://github.com/x/harness && cd harness && pip install -e '.[all]'"
+            )
+            + _fence("uv sync --extra alpha", "cd ../harness", "uv sync --extra gpu")
+            + _fence("uv sync --extra nope")
+        )
+        results = _deps(tmp_path, readme)
+        assert [(r.status, r.line) for r in results] == [("fail", 16)]
+
+    def test_skips_a_pyproject_that_is_not_toml(self, tmp_path):
+        results = _deps(tmp_path, _fence("uv sync --extra alpha"), "[project\n")
+        assert [r.status for r in results] == ["skip"]
+        assert "Could not parse pyproject.toml" in results[0].message
+
+    def test_skips_a_readme_that_is_not_utf8(self, tmp_path):
+        eval_dir = tmp_path / "alpha"
+        write(eval_dir / "__init__.py", "")
+        write(tmp_path / "pyproject.toml", PYPROJECT)
+        (eval_dir / "README.md").write_bytes(b"# Latin-1 \xe9\n")
+        results = list(readme_dependency_groups(context_for(eval_dir)))
+        assert [r.status for r in results] == ["skip"]
+        assert "Could not read README.md" in results[0].message
+
+    def test_isolated_package_governs_its_evaluation(self, tmp_path):
+        config = make_monorepo(tmp_path)
+        write(
+            tmp_path / "packages/alpha/pyproject.toml",
+            '[project]\nname = "inspect-evals-alpha"\n\n[dependency-groups]\ndev = ["pytest"]\n',
+        )
+        write(
+            config.package_dir(tmp_path, "alpha") / "README.md",
+            _fence(
+                "uv sync --group dev",
+                "uv run --group alpha inspect eval inspect_evals/alpha",
+                "pip install inspect_evals[nope]",
+            ),
+        )
+        report = lint_package(tmp_path, "alpha", config, check="readme_dependency_groups")
+        isolated, root = report.diagnostics
+        assert (isolated.status, isolated.line) == ("fail", 5)
+        assert "packages/alpha/pyproject.toml, which governs this evaluation" in isolated.message
+        assert "uv sync` in packages/alpha/" in (isolated.hint or "")
+        # The root project's extras are the root's business, not the isolated package's.
+        assert (root.status, root.line) == ("fail", 6)
+        assert "but pyproject.toml defines no extra 'nope'" in root.message
+        assert "packages/alpha" not in root.message + (root.hint or "")
+
+    def test_standalone_repo_reads_the_root_readme_and_pyproject(self, tmp_path):
+        config = make_register_repo(tmp_path)
+        write(tmp_path / "README.md", _fence("uv sync --extra test"))
+        report = lint_package(tmp_path, "alpha", config, check="readme_dependency_groups")
+        assert [(d.status, d.line) for d in report.diagnostics] == [("fail", 4)]
