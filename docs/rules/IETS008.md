@@ -8,7 +8,9 @@ Every @metric function is tested through the real epoch reducer.
 
 ## What it does
 
-Finds functions decorated with `@metric` in the package and checks each name appears in a test file that imports the epoch helper module, by default `metric_epochs` (`tests/utils/metric_epochs.py` in inspect_evals and the evaluation template). A metric registered under another name with `@metric(name=...)` is also satisfied by that name. For an evaluation the search covers `tests/<name>/`; for a helper package, the whole tests root. One warning per metric. This is a presence check: the test's assertions are the author's.
+Finds functions decorated with `@metric` in the package and checks each is named in a test file that imports the epoch helper module, by default `metric_epochs` (`tests/utils/metric_epochs.py` in inspect_evals and the evaluation template). Any import counts: `from tests.utils.metric_epochs import ...`, `from tests.utils import metric_epochs` or `import tests.utils.metric_epochs`. The name must appear as a whole word, so a test for `category_win_rate` does not cover `win_rate`. A metric registered under another name with `@metric(name=...)` is also covered by that name. For an evaluation the search covers `tests/<name>/`; for a helper package, the whole tests root. One warning per metric. This is a presence check: the test's assertions are the author's.
+
+A hand-written test that runs `eval()` with `epochs=` does exercise the reducer, but only for the reducer and values it chose. It is not counted. Moving it to the helper adds the check that equal epochs under `mean` and `mode` match the scorer's own values; otherwise suppress with a reason.
 
 ## Why is this bad?
 
@@ -34,7 +36,7 @@ def test_win_rate_through_the_reducer():
 
 ## Options
 
-- `custom_metric_tests.helper-module`: the module a test must import, by its last dotted part. Default `metric_epochs`.
+- `custom_metric_tests.helper-module`: the module a test must import. A dotted path is matched by its last part. Default `metric_epochs`.
 
 ## See also
 
