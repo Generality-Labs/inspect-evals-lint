@@ -435,6 +435,22 @@ def eval_yaml(ctx: LintContext) -> Iterable[Finding]:
         yield Outcome("pass", "eval.yaml has all required fields")
 
 
+def _readme_fallback(ctx: LintContext) -> Path | None:
+    return ctx.root / "README.md" if ctx.config.readme_location == "repo-root" else None
+
+
+def readme_path(ctx: LintContext) -> Path:
+    """The package's ``README.md``, or the repository's when ``readme-location = "repo-root"`` and the package has none.
+
+    The path may not exist; ``readme`` is the rule that reports that.
+    """
+    readme_file = ctx.path / "README.md"
+    fallback = _readme_fallback(ctx)
+    if not readme_file.exists() and fallback is not None and fallback.exists():
+        return fallback
+    return readme_file
+
+
 @rule(
     code="IEFS006",
     name="readme",
@@ -457,10 +473,8 @@ def readme(ctx: LintContext) -> Iterable[Finding]:
     ## Options
     - `readme-location`
     """
-    readme_file = ctx.path / "README.md"
-    fallback = ctx.root / "README.md" if ctx.config.readme_location == "repo-root" else None
-    if not readme_file.exists() and fallback is not None and fallback.exists():
-        readme_file = fallback
+    readme_file = readme_path(ctx)
+    fallback = _readme_fallback(ctx)
     if not readme_file.exists():
         message = "Missing README.md"
         if fallback is not None:

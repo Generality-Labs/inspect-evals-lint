@@ -123,7 +123,15 @@ def test_select_and_ignore_flags(tmp_path: Path, capsys: pytest.CaptureFixture[s
     data = json.loads(capsys.readouterr().out)
     (package,) = data["packages"]
     ran = {o["rule"] for o in package["outcomes"]} | {d["rule"] for d in package["diagnostics"]}
-    assert ran == {"package_location", "main_file", "init_exports", "registry", "eval_yaml"}
+    assert ran == {
+        "package_location",
+        "main_file",
+        "init_exports",
+        "registry",
+        "eval_yaml",
+        "readme_task_args",
+        "readme_dependency_groups",
+    }
 
 
 def test_preset_flag_overrides_table(tmp_path: Path) -> None:
