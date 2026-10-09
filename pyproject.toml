@@ -7,7 +7,7 @@ build-backend = "uv_build"
 
 [project]
 name = "inspect-evals-lint"
-version = "0.10.0"
+version = "0.11.0"
 description = "Static checks for Inspect AI evaluations: structure, tests, best practices and sandbox pinning"
 readme = "README.md"
 license = "MIT"
