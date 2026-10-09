@@ -34,7 +34,7 @@ def test_skips_when_there_are_no_metrics_or_reducers(tmp_path):
     assert [r.status for r in results] == ["skip"]
 
 
-def test_passes_metrics_that_read_reduced_scores_safely(tmp_path):
+def test_passes_shapes_the_rule_does_not_flag(tmp_path):
     source = _metric(
         "        values = [s.score.as_float() for s in scores]\n"
         "        n = int(len(values))\n"
@@ -62,7 +62,7 @@ def test_fails_on_as_int_and_as_bool(tmp_path):
     assert ".as_int()" in results[0].message
     assert ".as_bool()" in results[1].message
     assert results[0].hint is not None
-    assert "as_float()" in results[0].hint
+    assert "value_to_float()" in results[0].hint
 
 
 def test_fails_on_int_of_anything_computed_from_a_score_value(tmp_path):
@@ -133,6 +133,7 @@ def test_warns_on_single_type_isinstance_of_a_score_value(tmp_path):
     )
     results = _run(tmp_path, source)
     assert _lines(results) == [("warn", 4), ("warn", 8)]
+    assert "drop the type filter" in (results[0].hint or "")
     assert "isinstance(..., int)" in results[0].message
     assert "isinstance(..., float)" in results[1].message
     assert all(r.severity == "warning" for r in results)
@@ -303,3 +304,4 @@ def test_a_shallow_copy_shares_the_objects_it_holds(tmp_path):
     )
     results = _run(tmp_path, source)
     assert _lines(results) == [("fail", 6), ("fail", 8), ("fail", 15)]
+    assert "model_copy(deep=True)" in (results[0].hint or "")

@@ -471,17 +471,27 @@ def _single_type(node: ast.expr) -> str | None:
 
 
 _NARROWING_HINT = (
-    "read the value with as_float() and compare it to a threshold, or declare "
-    '@metric(scores="unreduced") if the metric needs each epoch\'s own value'
+    "use the float as it is: a sample that passed two epochs of three counts as 0.667. "
+    "To convert a raw value, call to_float = value_to_float() once and then to_float(v), "
+    'as accuracy() and mean() do; Score.as_float() raises on "C". If the metric needs '
+    "one pass or fail per sample, set the task's reducer (at_least, mode) instead, or "
+    'declare @metric(scores="unreduced") if it needs each epoch\'s own value'
 )
 _ISINSTANCE_HINT = (
-    "accept both types, isinstance(v, (int, float)): the reducer decides which one arrives"
+    "drop the type filter and convert each value with to_float = value_to_float(), then "
+    "to_float(v). Under mean the filter does nothing, and under mode or max it drops "
+    "samples. A guard that raises because the task pins its reducer can stay, "
+    "suppressed with a reason"
 )
 _DROPPED_HINT = (
     "put what the metric needs in Score.value, which every reducer combines, or declare "
     '@metric(scores="unreduced")'
 )
-_MUTATION_HINT = "build new objects, e.g. sample_score.model_copy(update=...), instead of writing to the ones passed in"
+_MUTATION_HINT = (
+    "build new objects instead of writing to the ones passed in: "
+    "sample_score.model_copy(update=...) to replace a field, or model_copy(deep=True) "
+    "before changing one in place"
+)
 
 
 def _scope_findings(scope: _Scope) -> Iterator[tuple[ast.AST, str, Severity, str]]:
@@ -567,7 +577,9 @@ def metric_epoch_safety(ctx: LintContext) -> Iterable[Finding]:
       ``int()`` of a comparison are not flagged. ``isinstance(v, int)`` or
       ``isinstance(v, float)`` applied directly to a score value is a warning;
       ``isinstance(v, (int, float))`` and the NaN check
-      ``isinstance(v, float) and math.isnan(v)`` are not flagged.
+      ``isinstance(v, float) and math.isnan(v)`` are not flagged. The two-type
+      check is always true under ``mean``, but used as a filter it still drops
+      the raw strings ``mode`` or ``max`` pass through, so converting is better.
     - Reading ``<x>.score.answer``, ``.explanation`` or ``.reason`` in a metric
       (error).
     - Writing to the scores a metric or reducer was handed (error): an attribute
@@ -585,21 +597,31 @@ def metric_epoch_safety(ctx: LintContext) -> Iterable[Finding]:
     metric calls is not read.
 
     ## Why is this bad?
-    Inspect runs the epoch reducer before any metric, even at ``epochs=1``
-    (``_reduced_score`` in ``inspect_ai/scorer/_reducer/reducer.py``). The score
+    By default, Inspect runs the epoch reducer before every metric, even at
+    ``epochs=1`` (``_reduced_score`` in ``inspect_ai/scorer/_reducer/reducer.py``);
+    ``@metric(scores="unreduced")`` and ``--epochs N --no-epochs-reducer`` skip
+    it. The score
     a metric receives is a new one, and its ``value`` is whatever the reducer
     made of the epochs, so a metric cannot assume the shape the scorer wrote.
     The default ``mean``, and ``median``, ``pass_at`` and ``pass_k``, compute a
     float through ``value_to_float``, so under ``mean`` it can be a fraction
-    such as 0.667. ``at_least`` gives 1 or 0. ``mode``, ``majority``, ``max``
-    and ``collect`` keep the raw values. ``answer``, ``explanation`` and ``reason`` are kept only when they
-    are equal across all epochs, and are otherwise ``None``. ``metadata`` comes
-    from the first epoch.
+    such as 0.667. ``at_least`` gives 1 or 0. ``mode``, ``majority`` and ``max``
+    keep a raw value, such as ``"C"``, and ``collect`` gives a list of them.
+    ``answer``, ``explanation`` and ``reason`` are kept only when they are equal
+    across all epochs, and are otherwise ``None``. ``metadata`` comes from the
+    first epoch.
 
     So ``int()`` and ``.as_int()`` round a sample that passed two epochs out of
     three down to 0, ``.as_bool()`` rounds it up to ``True``, and a single-type
     ``isinstance`` check is true or false depending on which reducer the run
-    used. A metric that counts ``score.answer == "win"`` counts a sample that won
+    used. A type filter does nothing under ``mean`` and drops samples under
+    ``mode`` or ``max``. The conversion that holds under every reducer except
+    ``collect`` is the function ``value_to_float()`` returns, which
+    ``accuracy()`` and ``mean()`` use. It leaves a float unchanged and maps
+    ``"C"`` to 1.0. ``Score.as_float()`` raises on ``"C"`` instead. The
+    converter gives 0.0, with only a logged warning, for a list (what
+    ``collect`` gives), a dict, or a string outside its set such as ``"win"``.
+    A metric that counts ``score.answer == "win"`` counts a sample that won
     one epoch and lost another as neither. All of these pass a single-epoch test
     and go wrong with ``--epochs``. Writing to the scores is a different hazard:
     Inspect hands the same score objects to every metric on a scorer, and
