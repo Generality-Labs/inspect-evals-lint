@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -12,6 +13,7 @@ import pytest
 
 from inspect_evals_lint import LintConfig
 from inspect_evals_lint.cli import main
+from inspect_evals_lint.registry import Rule, rules
 from tests.conftest import EVAL_YAML, make_template_repo, write
 
 
@@ -46,10 +48,31 @@ def test_explain_by_code_and_name(capsys: pytest.CaptureFixture[str]) -> None:
     data = json.loads(capsys.readouterr().out)
     assert data["code"] == "IEFS006"
     assert "TODO" in data["doc"]
+
+
+def _rendered(markdown: str) -> str:
+    from rich.console import Console
+    from rich.markdown import Markdown
+
+    out = io.StringIO()
+    Console(file=out, width=100, color_system=None).print(Markdown(markdown))
+    return out.getvalue()
+
+
+@pytest.mark.parametrize("rule", rules(), ids=lambda rule: rule.code)
+def test_explain_without_mdformat(
+    rule: Rule, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--explain`` works where mdformat isn't installed, and reads like the docs page (#77)."""
     from inspect_evals_lint.docs import GENERATED_NOTE
 
-    page = Path("docs/rules/IEFS006.md").read_text(encoding="utf-8")
-    assert data["doc"] == page.replace(GENERATED_NOTE + "\n\n", "")
+    monkeypatch.setitem(sys.modules, "mdformat", None)  # makes `import mdformat` raise ImportError
+    assert run("--explain", rule.code) == 0
+    assert "Why is this bad?" in capsys.readouterr().out
+    assert run("--explain", rule.name, "--output-format", "json") == 0
+    doc = json.loads(capsys.readouterr().out)["doc"]
+    page = Path(f"docs/rules/{rule.code}.md").read_text(encoding="utf-8")
+    assert _rendered(doc) == _rendered(page.replace(GENERATED_NOTE + "\n\n", ""))
 
 
 def test_explain_unknown_rule_is_usage_error() -> None:
