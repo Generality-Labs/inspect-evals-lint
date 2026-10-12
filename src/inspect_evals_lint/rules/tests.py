@@ -7,6 +7,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from inspect_evals_lint.config import ConfigError
 from inspect_evals_lint.context import LintContext
@@ -403,17 +404,22 @@ def custom_tool_tests(ctx: LintContext) -> Iterable[Finding]:
     yield from _custom_component_tests(ctx, ("tool",), "tools")
 
 
-METRIC_HELPER_MODULE = "metric_epochs"
-"""The module, in ``tests/utils/``, that runs a metric through the real epoch reducer."""
+METRIC_HELPER_MODULES = ("pytest_inspect_evals.metrics", "metric_epochs")
+"""The modules that run a metric through the real epoch reducer.
+
+``pytest_inspect_evals.metrics`` is the packaged helper; ``metric_epochs`` is
+``tests/utils/metric_epochs.py``, which inspect_evals keeps as a deprecated shim
+and the evaluation template ships.
+"""
 
 _METRIC_TESTS_RULE = "custom_metric_tests"
 
 
-def metric_helper_module(options: Mapping[str, object]) -> str:
-    """The ``helper-module`` option from the rule's table, validated.
+def metric_helper_modules(options: Mapping[str, object]) -> tuple[str, ...]:
+    """The ``helper-module`` option from the rule's table, validated: one module name or a list.
 
     Raises:
-        ConfigError: the table has an unknown key or the value is not a module name.
+        ConfigError: the table has an unknown key or a value is not a module name.
     """
     table = f"[tool.inspect-evals-lint.{_METRIC_TESTS_RULE}]"
     unknown = sorted(set(options) - {"helper_module"})
@@ -421,26 +427,43 @@ def metric_helper_module(options: Mapping[str, object]) -> str:
         raise ConfigError(
             f"{table}: unknown option(s) {unknown}; the only option is 'helper-module'"
         )
-    value = options.get("helper_module", METRIC_HELPER_MODULE)
-    if not isinstance(value, str) or not all(part.isidentifier() for part in value.split(".")):
-        raise ConfigError(f"{table}: 'helper-module' must be a module name, got {value!r}")
-    return value.rsplit(".", 1)[-1]
+    value = options.get("helper_module", METRIC_HELPER_MODULES)
+    names = cast(Iterable[object], [value] if isinstance(value, str) else value)
+    names = list(names) if isinstance(value, (str, list, tuple)) else []
+    if not names or not all(
+        isinstance(name, str) and all(part.isidentifier() for part in name.split("."))
+        for name in names
+    ):
+        raise ConfigError(
+            f"{table}: 'helper-module' must be a module name or a list of them, got {value!r}"
+        )
+    return tuple(str(name) for name in names)
 
 
-def _imports_module(path: Path, module: str) -> bool:
-    """Whether the file imports ``module``: as part of a dotted name, or by name from its package."""
+def _contains_run(path: list[str], run: list[str]) -> bool:
+    """Whether ``run`` appears as consecutive parts of ``path``."""
+    return any(path[i : i + len(run)] == run for i in range(len(path) - len(run) + 1))
+
+
+def _imports_module(path: Path, modules: Iterable[str]) -> bool:
+    """Whether the file imports one of ``modules``, each matched as consecutive parts of an import path.
+
+    ``metric_epochs`` matches ``tests.utils.metric_epochs``; ``pytest_inspect_evals.metrics``
+    matches ``from pytest_inspect_evals import metrics`` but not ``from x import metrics``.
+    """
     parsed = safe_parse_file(path)
     if not isinstance(parsed, ParsedFile):
         return False
+    runs = [module.split(".") for module in modules]
     for node in ast.walk(parsed.tree):
+        paths: list[list[str]] = []
         if isinstance(node, ast.Import):
-            if any(module in alias.name.split(".") for alias in node.names):
-                return True
+            paths = [alias.name.split(".") for alias in node.names]
         elif isinstance(node, ast.ImportFrom):
-            if node.module and module in node.module.split("."):
-                return True
-            if any(alias.name == module for alias in node.names):
-                return True
+            base = node.module.split(".") if node.module else []
+            paths = [base] + [base + alias.name.split(".") for alias in node.names]
+        if any(_contains_run(p, run) for p in paths for run in runs):
+            return True
     return False
 
 
@@ -460,11 +483,13 @@ def custom_metric_tests(ctx: LintContext) -> Iterable[Finding]:
 
     ## What it does
     Finds functions decorated with ``@metric`` in the package and checks each
-    is named in a test file that imports the epoch helper module, by default
-    ``metric_epochs`` (``tests/utils/metric_epochs.py`` in inspect_evals and
-    the evaluation template). Any import counts:
-    ``from tests.utils.metric_epochs import ...``,
-    ``from tests.utils import metric_epochs`` or ``import tests.utils.metric_epochs``.
+    is named in a test file that imports the epoch helper: by default
+    ``pytest_inspect_evals.metrics``, or ``metric_epochs``
+    (``tests/utils/metric_epochs.py``, a deprecated shim in inspect_evals and
+    shipped by the evaluation template). Any import form counts, such as
+    ``from pytest_inspect_evals.metrics import ...``,
+    ``from pytest_inspect_evals import metrics`` or
+    ``from tests.utils.metric_epochs import ...``.
     The name must appear as a whole word, so a test for ``category_win_rate``
     does not cover ``win_rate``. A metric registered under another name with
     ``@metric(name=...)`` is also covered by that name. For an evaluation the
@@ -494,7 +519,7 @@ def custom_metric_tests(ctx: LintContext) -> Iterable[Finding]:
     ```
     Use instead:
     ```python
-    from tests.utils.metric_epochs import assert_agreeing_epochs_change_nothing, run_metrics
+    from pytest_inspect_evals.metrics import assert_agreeing_epochs_change_nothing, run_metrics
 
     def test_win_rate_through_the_reducer():
         assert_agreeing_epochs_change_nothing([win_rate()], [CORRECT, INCORRECT])
@@ -502,9 +527,10 @@ def custom_metric_tests(ctx: LintContext) -> Iterable[Finding]:
     ```
 
     ## Options
-    - `custom_metric_tests.helper-module`: the module a test must import. A dotted path is matched by its last part. Default `metric_epochs`.
+    - `custom_metric_tests.helper-module`: the module a test must import, or a list of them. A dotted name must appear as consecutive parts of the import path. Default `["pytest_inspect_evals.metrics", "metric_epochs"]`.
     """
-    helper = metric_helper_module(ctx.config.rule_options.get(_METRIC_TESTS_RULE, {}))
+    helpers = metric_helper_modules(ctx.config.rule_options.get(_METRIC_TESTS_RULE, {}))
+    helper = helpers[0]
     functions, failed = _find_decorated_functions(ctx, ("metric",))
     yield from failed
     if not functions:
@@ -515,7 +541,7 @@ def custom_metric_tests(ctx: LintContext) -> Iterable[Finding]:
         [
             path
             for path in sorted(ctx.test_search_path.rglob("*.py"))
-            if _imports_module(path, helper)
+            if _imports_module(path, helpers)
         ]
         if ctx.test_search_path is not None
         else []
