@@ -12,9 +12,9 @@ Flags a `get_model()` call, in code a scorer runs, that resolves to the model un
 
 Code a scorer runs is found as for `scorer_failure_scored` (IEBP012): `@scorer` functions, the functions nested in them, and the package functions they call. A call with `role=` is left to `model_role_resolution` (IEBP002), which asks for a `default=` or `required=True`.
 
-A deliberate fallback, such as a helper's last resort after an explicit model and a role, or a grader that is the model under test by design, such as a self-judging defence, can be marked with `# inspect-evals-lint: ignore[grader_model_under_test] -- <reason>`.
+Self-grading is not a default. Where it is right by design, mark the call with `# inspect-evals-lint: ignore[grader_model_under_test] -- <reason>` and say so in the README too. That covers a scoring-only task, where `--model` is the grader because the task scores another run's output (PaperBench's `paperbench_score`), a self-judging defence, and a helper's last resort after an explicit model and a role.
 
-The default grader is the one the upstream benchmark used, ideally as a `Model` carrying its generation settings. Where the benchmark grades without a model and the port adds a grader, the port picks the default and its README says so.
+The default grader is the one the upstream benchmark used. Preferably it is a `Model` carrying the generation settings the paper or upstream code specifies; a model name string is enough. Where the benchmark grades without a model and the port adds a grader, the port picks the default and its README says so. Changing a default grader moves scores, so it needs a comparability version bump.
 
 **Known limits:** `get_model(model)` where `model` is a parameter that defaults to `None` is not reported, since telling it from a guarded call needs the guards read. Nor is a model passed on to another function, such as `model_graded_qa(model=get_model())`, or one reached through an alias (`grader = m`, `gen = m.generate`), a walrus or an attribute (`self.grader`). Statement order is read by position, not by control flow.
 
