@@ -428,8 +428,13 @@ def metric_helper_modules(options: Mapping[str, object]) -> tuple[str, ...]:
             f"{table}: unknown option(s) {unknown}; the only option is 'helper-module'"
         )
     value = options.get("helper_module", METRIC_HELPER_MODULES)
-    names = cast(Iterable[object], [value] if isinstance(value, str) else value)
-    names = list(names) if isinstance(value, (str, list, tuple)) else []
+    names: list[object]
+    if isinstance(value, str):
+        names = [value]
+    elif isinstance(value, (list, tuple)):
+        names = list(cast(Iterable[object], value))
+    else:
+        names = []
     if not names or not all(
         isinstance(name, str) and all(part.isidentifier() for part in name.split("."))
         for name in names
@@ -489,7 +494,9 @@ def custom_metric_tests(ctx: LintContext) -> Iterable[Finding]:
     shipped by the evaluation template). Any import form counts, such as
     ``from pytest_inspect_evals.metrics import ...``,
     ``from pytest_inspect_evals import metrics`` or
-    ``from tests.utils.metric_epochs import ...``.
+    ``from tests.utils.metric_epochs import ...``. Only import statements are
+    read: ``import pytest_inspect_evals`` followed by
+    ``pytest_inspect_evals.metrics.run_metrics(...)`` does not count.
     The name must appear as a whole word, so a test for ``category_win_rate``
     does not cover ``win_rate``. A metric registered under another name with
     ``@metric(name=...)`` is also covered by that name. For an evaluation the
