@@ -9,7 +9,7 @@ import pytest
 
 from inspect_evals_lint import LintConfig, lint_package
 from inspect_evals_lint.config import ConfigError, config_from_table
-from inspect_evals_lint.rules.tests import metric_helper_module
+from inspect_evals_lint.rules.tests import metric_helper_modules
 from tests.conftest import make_eval, make_helper, make_monorepo, make_template_repo, write
 
 METRICS = """
@@ -32,7 +32,7 @@ def loss_rate() -> Metric:
     return m
 """
 
-HELPER_IMPORT = "from tests.utils.metric_epochs import assert_agreeing_epochs_change_nothing\n"
+HELPER_IMPORT = "from pytest_inspect_evals.metrics import assert_agreeing_epochs_change_nothing\n"
 
 
 def _results(root: Path, config: LintConfig) -> list[tuple[str, str]]:
@@ -58,7 +58,10 @@ def test_warns_for_each_metric_no_helper_test_names(repo: tuple[Path, LintConfig
     root, config = repo
     results = _results(root, config)
     assert [severity for severity, _ in results] == ["warning", "warning"]
-    assert "@metric win_rate() is not named by any test that imports metric_epochs" in results[0][1]
+    assert (
+        "@metric win_rate() is not named by any test that imports pytest_inspect_evals.metrics"
+        in results[0][1]
+    )
     assert "(registered as 'loss_rate_v2')" in results[1][1]
 
 
@@ -80,7 +83,7 @@ def test_a_helper_test_naming_each_metric_passes(repo: tuple[Path, LintConfig]) 
         HELPER_IMPORT + "from alpha.metrics import win_rate\n\nloss_rate_v2 = None\n",
     )
     assert _results(root, config) == [
-        ("pass", "All 2 custom metric(s) are tested through metric_epochs")
+        ("pass", "All 2 custom metric(s) are tested through pytest_inspect_evals.metrics")
     ]
 
 
@@ -98,6 +101,11 @@ def test_the_helper_module_name_is_configurable(repo: tuple[Path, LintConfig]) -
 @pytest.mark.parametrize(
     ("import_line", "counts"),
     [
+        ("from pytest_inspect_evals.metrics import run_metrics", True),
+        ("from pytest_inspect_evals import metrics", True),
+        ("import pytest_inspect_evals.metrics as m", True),
+        ("from inspect_evals.foo import metrics", False),
+        ("from pytest_inspect_evals.assertions import assert_eval_success", False),
         ("from tests.utils.metric_epochs import run_metrics", True),
         ("import tests.utils.metric_epochs as m", True),
         ("from tests.utils import metric_epochs", True),
@@ -155,7 +163,14 @@ def test_without_a_tests_dir_metrics_warn_and_none_skip(tmp_path: Path) -> None:
 
 def test_the_option_loads_from_pyproject_in_kebab_case() -> None:
     config = config_from_table({"custom_metric_tests": {"helper-module": "tests.utils.epochs"}})
-    assert metric_helper_module(config.rule_options["custom_metric_tests"]) == "epochs"
+    assert metric_helper_modules(config.rule_options["custom_metric_tests"]) == (
+        "tests.utils.epochs",
+    )
+
+
+def test_the_option_takes_a_list() -> None:
+    assert metric_helper_modules({"helper_module": ["a.b", "c"]}) == ("a.b", "c")
+    assert metric_helper_modules({}) == ("pytest_inspect_evals.metrics", "metric_epochs")
 
 
 @pytest.mark.parametrize(
@@ -165,8 +180,10 @@ def test_the_option_loads_from_pyproject_in_kebab_case() -> None:
         ({"helper_module": "not a module"}, "must be a module name"),
         ({"helper_module": "tests..epochs"}, "must be a module name"),
         ({"helper_module": 3}, "must be a module name"),
+        ({"helper_module": []}, "must be a module name"),
+        ({"helper_module": ["ok", "not ok"]}, "must be a module name"),
     ],
 )
 def test_bad_options_are_config_errors(options: dict[str, object], message: str) -> None:
     with pytest.raises(ConfigError, match=message):
-        metric_helper_module(options)
+        metric_helper_modules(options)
