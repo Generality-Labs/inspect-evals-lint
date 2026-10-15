@@ -216,6 +216,6 @@ class TestWhatIsNotRead:
         results = list(fence_tolerant_json(LintContext.build(tmp_path, "alpha", config)))
         assert [r.status for r in results] == ["pass"]
 
-    def test_unparseable_file_is_reported(self, tmp_path):
+    def test_unparsable_file_is_reported(self, tmp_path):
         results = _run(tmp_path, _monorepo(tmp_path), "def broken(:\n")
         assert "fail" in [r.status for r in results]
