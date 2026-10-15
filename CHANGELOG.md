@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [0.12.0] - 2026-10-15
 
+IESC001 now applies the mount checks that inspect_ai's Docker sandbox enforces in releases after 0.3.279, so a Compose file the sandbox would refuse fails the lint first. This can fail a package that passed 0.11.0. Any writable host bind mount fails, even an allowlisted one, and so does any `volumes_from`. Before moving a pin, add `:ro` to bind mounts the sandbox only reads, or set the `x-inspect_docker_sandbox.unsafe_allow_writable_host_mounts` opt-out and allowlist it after review. The JSON report schema is unchanged. IETS008 now also accepts the packaged `pytest_inspect_evals.metrics` helper, and `--explain` works from a wheel without mdformat.
+
 ### Changed
 
 - `custom_metric_tests` (IETS008) now accepts the packaged epoch helper by default. A test counts when it imports `pytest_inspect_evals.metrics` or the deprecated `tests/utils/metric_epochs.py` shim. Before, only `metric_epochs` counted, so a test written the recommended way was still warned about. `helper-module` now takes a list as well as one name. A dotted name must appear as consecutive parts of the import path: `pytest_inspect_evals.metrics` matches `from pytest_inspect_evals import metrics` but not `from inspect_evals.foo import metrics`. Before, a dotted name matched by its last part alone.
