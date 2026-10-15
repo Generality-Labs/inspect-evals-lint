@@ -170,14 +170,19 @@ def fence_tolerant_json(ctx: LintContext) -> Iterable[Finding]:
     ``response_schema`` without enforcing it. On OpenRouter, the Mistral and
     Fireworks hosts are listed as supporting structured outputs for GLM 5.3, yet
     in October 2026 they fenced 25.5% and 16.5% of its replies to a
-    ``response_schema``, while DeepInfra, BaseTen and Baidu fenced none.
-    OpenRouter picks the host per request, so the same model and config can
-    return bare JSON on one call and fenced JSON on the next. A strict parser
-    rejects the fenced reply, so a correct grade is thrown away and the sample
-    is scored as a grader failure, or as whatever the fallback is.
-    ``strip_json_fence(text)`` returns the JSON inside one fence, labelled
-    ``json`` or unlabelled, that wraps the whole reply, and returns any other
-    text unchanged, so a reply with prose around the JSON still fails as before.
+    ``response_schema``, while DeepInfra, BaseTen and Baidu fenced none. Unless
+    the provider is pinned, OpenRouter picks the host per request, so the same
+    model and config can return bare JSON on one call and fenced JSON on the
+    next. A strict parser rejects the fenced reply, so a correct grade is thrown
+    away and the sample is scored as a grader failure, or as whatever the
+    fallback is. ``strip_json_fence(text)`` returns the JSON inside one fence,
+    labelled ``json`` or unlabelled, that wraps the whole reply, and returns any
+    other text unchanged, so a reply with prose around the JSON still fails as
+    before.
+
+    Pin an OpenRouter grader to hosts that enforce the schema, through its
+    ``provider`` model argument (for example ``{"only": ["deepinfra"]}``). Strip
+    the fence as well, since a user can swap in a grader the pin does not cover.
 
     Stripping the fence can turn a failed parse into a grade, so scores can
     move, and a fix needs a comparability bump to the task version and a
