@@ -551,11 +551,37 @@ def test_sandbox_privileges_allowlist_is_scoped_to_service_field_and_value(
         ("default:cap_add:SYS_PTRACE", "warn"),
         ("default:cap_add:ALL", "fail"),
         ("default:volumes:./data", "warn"),
+        (None, "fail"),
         ("default:volumes:/var/run/docker.sock", "fail"),
+        (None, "fail"),
         ("other:privileged", "fail"),
     ]
     assert report.diagnostics[0].message.startswith("Allowlisted:")
     assert "'default:cap_add:ALL'" in (report.diagnostics[2].hint or "")
+    # A privileged service could remount its read-only bind writable, so inspect_ai refuses it.
+    assert "remounting" in report.diagnostics[4].message
+
+
+def test_sandbox_privileges_allowlist_accepts_the_writable_mount_opt_out(
+    monorepo: tuple[Path, LintConfig],
+) -> None:
+    root, config = monorepo
+    write(
+        config.package_dir(root, "alpha") / "compose.yaml",
+        "x-inspect_docker_sandbox:\n  unsafe_allow_writable_host_mounts: true\n"
+        "services:\n  default:\n    volumes: ['./data:/data']\n",
+    )
+    with (root / "pyproject.toml").open("a") as f:
+        f.write(
+            "\n[tool.inspect-evals-lint.allowlists.sandbox_privileges]\n"
+            'alpha = ["x-inspect_docker_sandbox.unsafe_allow_writable_host_mounts", '
+            '"default:volumes:./data"]\n'
+        )
+    report = lint_package(root, "alpha", check="IESC001")
+    assert [(d.key, d.status, d.line) for d in report.diagnostics] == [
+        ("x-inspect_docker_sandbox.unsafe_allow_writable_host_mounts", "warn", 2),
+        ("default:volumes:./data", "warn", 5),
+    ]
 
 
 def test_host_code_execution_allowlist_is_keyed_by_file_and_sink(
