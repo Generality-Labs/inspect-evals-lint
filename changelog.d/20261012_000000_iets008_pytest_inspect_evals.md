@@ -1,3 +1,0 @@
-### Changed
-
-- `custom_metric_tests` (IETS008) now accepts the packaged epoch helper by default. A test counts when it imports `pytest_inspect_evals.metrics` or the deprecated `tests/utils/metric_epochs.py` shim. Before, only `metric_epochs` counted, so a test written the recommended way was still warned about. `helper-module` now takes a list as well as one name. A dotted name must appear as consecutive parts of the import path: `pytest_inspect_evals.metrics` matches `from pytest_inspect_evals import metrics` but not `from inspect_evals.foo import metrics`. Before, a dotted name matched by its last part alone.
