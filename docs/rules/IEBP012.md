@@ -21,7 +21,7 @@ These do not count as a result:
 
 Code a scorer runs is every `@scorer` function, the functions nested in it, and the package functions they call, to any depth. A call is followed when its target is a function defined in an enclosing scope or at the top of the file, or a function imported from another module of the package (directly, as an attribute of an imported module, or through a re-export). A parameter or assignment of the same name in an enclosing function hides the definition. `@tool` functions are not followed: a tool returning an error string to the model is correct. Code no scorer calls, such as a solver or a health check, is not read.
 
-It is an error when the `try` guards a grader call. It is a warning when it guards only a sandbox call, whatever the handler returns, since some of those failures are the model's own: the agent never wrote the file it was asked to, or its code ran into the timeout. A handler narrowed to the error the model causes, such as `except FileNotFoundError`, is not broad and is not reported. Mark a reviewed site with `# inspect-evals-lint: ignore[scorer_failure_scored] -- <reason>` on the `except` line.
+It is an error when the `try` guards a grader call. It is a warning when it guards only a sandbox call, whatever the handler returns, since some of those failures are the model's own: the agent never wrote the file it was asked to, or its code ran past a deadline the scorer set. A handler narrowed to the error the model causes, such as `except FileNotFoundError`, is not broad and is not reported. Mark a reviewed site with `# inspect-evals-lint: ignore[scorer_failure_scored] -- <reason>` on the `except` line.
 
 **Known limits:** a constant that reaches the result only through a derived value (`refused = "yes" in response` with `response` not set in the `try`) is not traced, nor is one bound through an alias, a walrus or an attribute. Method calls are not followed, so a judge class's `check()` called on an instance or a parameter (`refusal_judge.check_refusal(...)`) is not read; following those is a later step. Calls wrapped in `asyncio.gather()` or `wait_for()` are not seen as awaited. Nothing outside the package is followed.
 
@@ -33,7 +33,11 @@ What to do instead depends on what failed:
 
 - **The grader call raised** (an API error): let it propagate.
 - **The grader replied but gave no usable verdict**: retry the grader alone a bounded number of times, holding the model's output fixed (a retry with the same prompt and `cache=True` never reaches the grader), then return `Score.unscored(reason="grader_failed")`. This holds when the grader is the model under test too, as in a self-judging defence. If the grader feeds one key of a dict score and the other keys are valid results, set that key to NaN instead of unscoring the sample.
-- **A sandbox call raised**: let it propagate; the sandbox broke. Score what a result shows instead: a non-zero exit is the model's code failing, and a missing file the agent was told to write is a verdict (`reason="no_response"`). A deterministic failure never becomes `Score.unscored()`.
+- **A sandbox call raised**: let it propagate; the sandbox broke. Score what a result shows instead: a non-zero exit is the model's code failing, and a missing file the agent was told to write is a verdict (`reason="no_response"`). Catch only `FileNotFoundError`, and only around that read.
+- **A sandbox call timed out**: a command that overruns and a sandbox that stops answering raise the same `TimeoutError` from `exec(timeout=...)`, so let it propagate. To score an overrun, run the code with streamed `exec_remote()` inside `anyio.move_on_after()` and score it only when that scope fires.
+- **The eval's own code raised** (a parser or comparator on input it didn't expect): let it propagate. Catch only the errors the model's answer can cause.
+
+A failed call never becomes `Score.unscored()`. That is only for an instrument that ran and gave no usable reading.
 
 ## Example
 

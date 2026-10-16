@@ -608,8 +608,9 @@ _FAILURE_HINT = {
         "let an exception from exec()/read_file() propagate: it means the sandbox broke, so the "
         "sample errors and can be retried; score what a result shows instead: a non-zero exit "
         "is the model's code failing, and a missing file the agent was told to write is a "
-        "verdict (reason no_response); don't turn a sandbox failure into a score or "
-        "Score.unscored()"
+        "verdict (reason no_response); a TimeoutError from exec(timeout=...) can be either, "
+        "so let it propagate unless the scorer owns the deadline (streamed exec_remote() inside "
+        "anyio.move_on_after()); don't turn a sandbox failure into a score or Score.unscored()"
     ),
 }
 
@@ -676,8 +677,8 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
     It is an error when the ``try`` guards a grader call. It is a warning
     when it guards only a sandbox call, whatever the handler returns, since
     some of those failures are the model's own: the agent never wrote the
-    file it was asked to, or its code ran into the timeout. A handler
-    narrowed to the error the model causes, such as
+    file it was asked to, or its code ran past a deadline the scorer set. A
+    handler narrowed to the error the model causes, such as
     ``except FileNotFoundError``, is not broad and is not reported. Mark a
     reviewed site with
     ``# inspect-evals-lint: ignore[scorer_failure_scored] -- <reason>`` on the
@@ -711,8 +712,19 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
     - **A sandbox call raised**: let it propagate; the sandbox broke. Score
       what a result shows instead: a non-zero exit is the model's code
       failing, and a missing file the agent was told to write is a verdict
-      (``reason="no_response"``). A deterministic failure never becomes
-      ``Score.unscored()``.
+      (``reason="no_response"``). Catch only ``FileNotFoundError``, and only
+      around that read.
+    - **A sandbox call timed out**: a command that overruns and a sandbox
+      that stops answering raise the same ``TimeoutError`` from
+      ``exec(timeout=...)``, so let it propagate. To score an overrun, run the
+      code with streamed ``exec_remote()`` inside ``anyio.move_on_after()``
+      and score it only when that scope fires.
+    - **The eval's own code raised** (a parser or comparator on input it
+      didn't expect): let it propagate. Catch only the errors the model's
+      answer can cause.
+
+    A failed call never becomes ``Score.unscored()``. That is only for an
+    instrument that ran and gave no usable reading.
 
     ## Example
     ```python
