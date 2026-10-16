@@ -609,8 +609,9 @@ _FAILURE_HINT = {
         "sample errors and can be retried; score what a result shows instead: a non-zero exit "
         "is the model's code failing, and a missing file the agent was told to write is a "
         "verdict (reason no_response); a TimeoutError from exec(timeout=...) can be either, "
-        "so let it propagate unless the scorer owns the deadline (streamed exec_remote() inside "
-        "anyio.move_on_after()); don't turn a sandbox failure into a score or Score.unscored()"
+        "so let it propagate unless the scorer owns the deadline (iterate a streamed "
+        "exec_remote() inside anyio.move_on_after()); don't turn a sandbox failure into a "
+        "score or Score.unscored()"
     ),
 }
 
@@ -712,13 +713,14 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
     - **A sandbox call raised**: let it propagate; the sandbox broke. Score
       what a result shows instead: a non-zero exit is the model's code
       failing, and a missing file the agent was told to write is a verdict
-      (``reason="no_response"``). Catch only ``FileNotFoundError``, and only
-      around that read.
+      (``reason="no_response"``). Catch only errors the model's own output
+      causes, such as that ``FileNotFoundError`` or an
+      ``OutputLimitExceededError``, and only where they can occur.
     - **A sandbox call timed out**: a command that overruns and a sandbox
       that stops answering raise the same ``TimeoutError`` from
-      ``exec(timeout=...)``, so let it propagate. To score an overrun, run the
-      code with streamed ``exec_remote()`` inside ``anyio.move_on_after()``
-      and score it only when that scope fires.
+      ``exec(timeout=...)``, so let it propagate. To score an overrun, start
+      the code with streamed ``exec_remote()``, iterate its events inside
+      ``anyio.move_on_after()``, and score it only when that scope fires.
     - **The eval's own code raised** (a parser or comparator on input it
       didn't expect): let it propagate. Catch only the errors the model's
       answer can cause.

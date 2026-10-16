@@ -33,8 +33,8 @@ What to do instead depends on what failed:
 
 - **The grader call raised** (an API error): let it propagate.
 - **The grader replied but gave no usable verdict**: retry the grader alone a bounded number of times, holding the model's output fixed (a retry with the same prompt and `cache=True` never reaches the grader), then return `Score.unscored(reason="grader_failed")`. This holds when the grader is the model under test too, as in a self-judging defence. If the grader feeds one key of a dict score and the other keys are valid results, set that key to NaN instead of unscoring the sample.
-- **A sandbox call raised**: let it propagate; the sandbox broke. Score what a result shows instead: a non-zero exit is the model's code failing, and a missing file the agent was told to write is a verdict (`reason="no_response"`). Catch only `FileNotFoundError`, and only around that read.
-- **A sandbox call timed out**: a command that overruns and a sandbox that stops answering raise the same `TimeoutError` from `exec(timeout=...)`, so let it propagate. To score an overrun, run the code with streamed `exec_remote()` inside `anyio.move_on_after()` and score it only when that scope fires.
+- **A sandbox call raised**: let it propagate; the sandbox broke. Score what a result shows instead: a non-zero exit is the model's code failing, and a missing file the agent was told to write is a verdict (`reason="no_response"`). Catch only errors the model's own output causes, such as that `FileNotFoundError` or an `OutputLimitExceededError`, and only where they can occur.
+- **A sandbox call timed out**: a command that overruns and a sandbox that stops answering raise the same `TimeoutError` from `exec(timeout=...)`, so let it propagate. To score an overrun, start the code with streamed `exec_remote()`, iterate its events inside `anyio.move_on_after()`, and score it only when that scope fires.
 - **The eval's own code raised** (a parser or comparator on input it didn't expect): let it propagate. Catch only the errors the model's answer can cause.
 
 A failed call never becomes `Score.unscored()`. That is only for an instrument that ran and gave no usable reading.
