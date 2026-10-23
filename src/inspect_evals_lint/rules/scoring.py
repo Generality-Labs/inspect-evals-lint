@@ -609,8 +609,8 @@ _FAILURE_HINT = {
         "sample errors and can be retried; score what a result shows instead: a non-zero exit "
         "is the model's code failing, and a missing file the agent was told to write is a "
         "verdict (reason no_response); a TimeoutError from exec(timeout=...) can be either, "
-        "so let it propagate unless the scorer owns the deadline (iterate a streamed "
-        "exec_remote() inside anyio.move_on_after()); don't turn a sandbox failure into a "
+        "so let it propagate unless the time limit is part of the task, and then read the "
+        "exit code of a timeout run inside the sandbox; don't turn a sandbox failure into a "
         "score or Score.unscored()"
     ),
 }
@@ -678,7 +678,8 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
     It is an error when the ``try`` guards a grader call. It is a warning
     when it guards only a sandbox call, whatever the handler returns, since
     some of those failures are the model's own: the agent never wrote the
-    file it was asked to, or its code ran past a deadline the scorer set. A
+    file it was asked to, or its code ran past a time limit that is part of
+    the task. A
     handler narrowed to the error the model causes, such as
     ``except FileNotFoundError``, is not broad and is not reported. Mark a
     reviewed site with
@@ -718,9 +719,11 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
       ``OutputLimitExceededError``, and only where they can occur.
     - **A sandbox call timed out**: a command that overruns and a sandbox
       that stops answering raise the same ``TimeoutError`` from
-      ``exec(timeout=...)``, so let it propagate. To score an overrun, start
-      the code with streamed ``exec_remote()``, iterate its events inside
-      ``anyio.move_on_after()``, and score it only when that scope fires.
+      ``exec(timeout=...)``, so let it propagate, unless the time limit is
+      part of the task. Then run the code under a ``timeout`` inside the
+      sandbox and score the overrun from its exit code. Timing it from the
+      host doesn't work: ``exec_remote()`` polls at least 5 s apart, so a
+      program that finished just before its deadline is seen after it.
     - **The eval's own code raised** (a parser or comparator on input it
       didn't expect): let it propagate. Catch only the errors the model's
       answer can cause.
