@@ -380,6 +380,36 @@ class TestMutableImageAndSourceInputs:
         assert _statuses(results) == ["warn"]
         assert "git clone" in results[0].message
 
+    @pytest.mark.parametrize(
+        "run",
+        [
+            f"git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo checkout {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo reset --hard {COMMIT}",
+            "git clone --no-checkout https://github.com/org/repo /opt/repo && cd /opt/repo"
+            f" && git fetch --depth 1 origin {COMMIT} && git checkout FETCH_HEAD",
+            f"git clone --revision={COMMIT} https://github.com/org/repo /opt/repo",
+        ],
+    )
+    def test_git_clone_then_full_commit_checkout_passes(self, tmp_path: Path, run: str) -> None:
+        root, eval_path = _single_dockerfile(tmp_path, f"FROM python:3.12{DIGEST}\nRUN {run}\n")
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["pass"], _texts(results)
+
+    @pytest.mark.parametrize(
+        "run",
+        [
+            "git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout main",
+            "git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout 2451bcb",
+            f"git -C /opt/other checkout {COMMIT} && git clone https://github.com/org/repo /opt/repo",
+        ],
+    )
+    def test_git_clone_then_moving_checkout_warns(self, tmp_path: Path, run: str) -> None:
+        root, eval_path = _single_dockerfile(tmp_path, f"FROM python:3.12{DIGEST}\nRUN {run}\n")
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["warn"]
+        assert "git clone" in results[0].message
+
     def test_installer_script_piped_to_shell_warns(self, tmp_path: Path) -> None:
         root, eval_path = _single_dockerfile(
             tmp_path,

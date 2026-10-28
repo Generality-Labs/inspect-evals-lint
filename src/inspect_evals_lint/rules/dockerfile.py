@@ -487,8 +487,27 @@ def _uv_command(command: list[str], line: int, state: _BuildState) -> None:
         )
 
 
+def _pins_commit(command: list[str]) -> bool:
+    """True for a git checkout, switch, reset or fetch of a full commit."""
+    tokens = _normalise(command)
+    if tokens[:1] != ["git"]:
+        return False
+    tokens = tokens[1:]
+    while len(tokens) >= 2 and tokens[0] in ("-C", "-c"):
+        tokens = tokens[2:]
+    return (
+        bool(tokens)
+        and tokens[0] in ("checkout", "switch", "reset", "fetch")
+        and any(_FULL_COMMIT.match(t) for t in tokens[1:])
+    )
+
+
 def _classify(
-    command: list[str], previous: list[str] | None, line: int, state: _BuildState
+    command: list[str],
+    previous: list[str] | None,
+    later: list[list[str]],
+    line: int,
+    state: _BuildState,
 ) -> None:
     command = _normalise(command)
     if not command:
@@ -522,7 +541,8 @@ def _classify(
         name == "git"
         and len(command) > 1
         and command[1] == "clone"
-        and not any(_FULL_COMMIT.match(t) for t in command)
+        and not any(_FULL_COMMIT.match(t.rpartition("=")[2]) for t in command)
+        and not any(_pins_commit(c) for c in later)
     ):
         state.warn(
             line,
@@ -589,8 +609,9 @@ def _analyse(
                 if options.get("type") == "bind" and options.get("source"):
                     _register_source(options["source"], instruction.line, state, "bind mount")
             previous: list[str] | None = None
-            for command in split_shell_commands(instruction.args):
-                _classify(command, previous, instruction.line, state)
+            commands = split_shell_commands(instruction.args)
+            for index, command in enumerate(commands):
+                _classify(command, previous, commands[index + 1 :], instruction.line, state)
                 previous = command
 
     if coupling == "warn":
