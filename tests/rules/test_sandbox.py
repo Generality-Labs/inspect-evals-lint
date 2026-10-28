@@ -143,6 +143,11 @@ class TestSandboxImagePinning:
         assert [r.status for r in results] == ["warn"]
 
 
+def keyed(results):
+    """The findings an allowlist entry can name, without inspect_ai's mount refusals."""
+    return [r for r in results if r.key is not None]
+
+
 class TestSandboxPrivileges:
     def run_check(self, tmp_path, service, *, volumes=None):
         compose = {"services": {"default": service}}
@@ -174,7 +179,7 @@ class TestSandboxPrivileges:
         ],
     )
     def test_service_privilege_fails_with_allowlist_key(self, tmp_path, field, value, key):
-        (result,) = self.run_check(tmp_path, {field: value})
+        (result,) = keyed(self.run_check(tmp_path, {field: value}))
         assert result.status == "fail"
         assert result.key == f"default:{key}"
         assert result.file == tmp_path / "compose.yaml"
@@ -232,7 +237,7 @@ class TestSandboxPrivileges:
         ],
     )
     def test_host_mounts(self, tmp_path, mount):
-        (result,) = self.run_check(tmp_path, {"volumes": [mount]})
+        (result,) = keyed(self.run_check(tmp_path, {"volumes": [mount]}))
         assert result.status == "fail"
         assert result.key is not None
         assert result.key.startswith("default:volumes:")
@@ -254,12 +259,12 @@ class TestSandboxPrivileges:
         ],
     )
     def test_engine_socket_is_identified(self, tmp_path, mount):
-        (result,) = self.run_check(tmp_path, {"volumes": [mount]})
+        (result,) = keyed(self.run_check(tmp_path, {"volumes": [mount]}))
         assert result.status == "fail"
         assert "container engine API socket" in result.message
 
     def test_ordinary_bind_mount_has_no_engine_callout(self, tmp_path):
-        (result,) = self.run_check(tmp_path, {"volumes": ["/var/log:/logs"]})
+        (result,) = keyed(self.run_check(tmp_path, {"volumes": ["/var/log:/logs"]}))
         assert result.status == "fail"
         assert "engine" not in result.message
 
@@ -268,10 +273,12 @@ class TestSandboxPrivileges:
     )
     @pytest.mark.parametrize("mode", ["bind", "ro,bind", "rbind"])
     def test_named_volume_backed_by_host_bind(self, tmp_path, mount, mode):
-        (result,) = self.run_check(
-            tmp_path,
-            {"volumes": [mount]},
-            volumes={"data": {"driver_opts": {"type": "none", "o": mode, "device": "/host"}}},
+        (result,) = keyed(
+            self.run_check(
+                tmp_path,
+                {"volumes": [mount]},
+                volumes={"data": {"driver_opts": {"type": "none", "o": mode, "device": "/host"}}},
+            )
         )
         assert result.status == "fail"
         assert result.key == "default:volumes:/host"
@@ -335,7 +342,6 @@ class TestSandboxPrivileges:
                     "data:/data",
                     {"type": "volume", "source": "data", "target": "/data"},
                 ],
-                "volumes_from": ["worker:ro"],
                 "post_start": [{"command": "true", "privileged": False}],
                 "deploy": {
                     "resources": {
@@ -367,7 +373,7 @@ class TestSandboxPrivileges:
         ],
     )
     def test_unresolved_interpolation_warns(self, tmp_path, field, value):
-        (result,) = self.run_check(tmp_path, {field: value})
+        (result,) = keyed(self.run_check(tmp_path, {field: value}))
         assert result.status == "warn"
         assert "cannot be checked" in result.message
 
@@ -389,7 +395,9 @@ class TestSandboxPrivileges:
             ("default:security_opt:apparmor:unconfined", "fail"),
             ("default:security_opt:${OPTION}", "warn"),
             ("default:volumes:/a", "fail"),
+            (None, "fail"),
             ("default:volumes:/b", "fail"),
+            (None, "fail"),
         ]
 
     def test_findings_point_at_the_line_of_the_setting(self, tmp_path):
@@ -415,6 +423,7 @@ class TestSandboxPrivileges:
             ("default:cap_add:SYS_ADMIN", 2),
             ("default:post_start.privileged", 13),
             ("default:volumes:/var/run/docker.sock", 10),
+            (None, 10),
             (None, 14),
         ]
         (pinning,) = sandbox_image_pinning(context_for(tmp_path))
@@ -484,6 +493,187 @@ class TestSandboxPrivileges:
     def test_no_compose_files_skips(self, tmp_path):
         (result,) = list(sandbox_privileges(context_for(tmp_path)))
         assert result.status == "skip"
+
+
+class TestRefusedMounts:
+    """Mounts inspect_ai's Docker sandbox refuses unless the Compose file opts out."""
+
+    def run_check(self, tmp_path, service, *, volumes=None, settings=None):
+        compose = {"services": {"default": service}}
+        if volumes is not None:
+            compose["volumes"] = volumes
+        if settings is not None:
+            compose["x-inspect_docker_sandbox"] = settings
+        (tmp_path / "compose.yaml").write_text(yaml.safe_dump(compose))
+        return list(sandbox_privileges(context_for(tmp_path)))
+
+    @pytest.mark.parametrize(
+        ("service", "reason"),
+        [
+            ({"volumes": ["./data:/data"]}, "writable host bind"),
+            ({"volumes": ["./data:/data:rw"]}, "writable host bind"),
+            ({"volumes": ["./data:/data:z"]}, "writable host bind"),
+            ({"volumes": ["${HOME}/.ssh:/root/.ssh"]}, "writable host bind"),
+            (
+                {"volumes": [{"type": "bind", "source": "./data", "target": "/data"}]},
+                "writable host bind",
+            ),
+            (
+                {
+                    "volumes": [
+                        {"type": "bind", "source": "./d", "target": "/d", "read_only": False}
+                    ]
+                },
+                "writable host bind",
+            ),
+            (
+                {"privileged": True, "volumes": ["./data:/data:ro"]},
+                "permit remounting host binds writable",
+            ),
+            (
+                {"cap_add": ["CAP_SYS_ADMIN"], "volumes": ["./data:/data:ro"]},
+                "permit remounting host binds writable",
+            ),
+            (
+                {"cap_add": ["all"], "volumes": ["./data:/data:ro"]},
+                "permit remounting host binds writable",
+            ),
+            ({"volumes": ["./data:/data:ro,rshared"]}, "bind propagation"),
+            (
+                {
+                    "volumes": [
+                        {
+                            "type": "bind",
+                            "source": "./data",
+                            "target": "/data",
+                            "read_only": True,
+                            "bind": {"propagation": "slave"},
+                        }
+                    ]
+                },
+                "bind propagation",
+            ),
+            (
+                {
+                    "volumes": [
+                        {
+                            "type": "bind",
+                            "source": "./data",
+                            "target": "/data",
+                            "read_only": True,
+                            "bind": {"recursive": "writable"},
+                        }
+                    ]
+                },
+                "writable submounts",
+            ),
+            ({"volumes": [{"type": "cluster", "source": "x", "target": "/x"}]}, "mount type"),
+            ({"volumes_from": ["worker:ro"]}, "volumes_from cannot be verified"),
+            (
+                {"privileged": True, "configs": [{"source": "app", "target": "/app"}]},
+                "permit remounting host binds writable",
+            ),
+        ],
+    )
+    def test_refused_mount_fails_without_allowlist_key(self, tmp_path, service, reason):
+        refusals = [r for r in self.run_check(tmp_path, service) if r.key is None]
+        (refusal,) = refusals
+        assert refusal.status == "fail"
+        assert "inspect_ai's Docker sandbox refuses" in refusal.message
+        assert reason in refusal.message
+        assert "unsafe_allow_writable_host_mounts" in (refusal.hint or "")
+
+    @pytest.mark.parametrize(
+        "definition",
+        [
+            {"external": True},
+            {"driver": "nfs"},
+            {"driver_opts": {"type": "tmpfs", "device": "tmpfs"}},
+            {"name": "shared-data"},
+        ],
+    )
+    def test_named_volume_that_cannot_be_verified_is_refused(self, tmp_path, definition):
+        results = self.run_check(
+            tmp_path, {"volumes": ["data:/data"]}, volumes={"data": definition}
+        )
+        assert [(r.key, r.status) for r in results if r.key is None] == [(None, "fail")]
+        assert "volume host access cannot be verified" in results[-1].message
+
+    @pytest.mark.parametrize(
+        "mount",
+        [
+            "./data:/data:ro",
+            "./data:/data:ro,z",
+            "./data:/data:ro,rprivate",
+            r"C:\data:C:\container:ro",
+            {"type": "bind", "source": "./data", "target": "/data", "read_only": True},
+            {
+                "type": "bind",
+                "source": "./data",
+                "target": "/data",
+                "read_only": "true",
+                "bind": {"propagation": "private", "recursive": "readonly"},
+            },
+            "data:/data",
+            "/scratch",
+            {"type": "tmpfs", "target": "/tmp"},
+            {"type": "image", "source": "example/models:1.0", "target": "/models"},
+            {"type": "npipe", "source": "//./pipe/docker_engine", "target": "//./pipe/x"},
+        ],
+    )
+    def test_accepted_mount_is_not_refused(self, tmp_path, mount):
+        results = self.run_check(tmp_path, {"volumes": [mount]}, volumes={"data": None})
+        assert all(r.key is not None for r in results if r.status != "pass")
+
+    @pytest.mark.parametrize(
+        "mount",
+        [
+            "./data:/data:${MODE}",
+            {"type": "bind", "source": "./data", "target": "/data", "read_only": "${READ_ONLY}"},
+        ],
+    )
+    def test_interpolated_access_mode_warns(self, tmp_path, mount):
+        (warning,) = [r for r in self.run_check(tmp_path, {"volumes": [mount]}) if r.key is None]
+        assert warning.status == "warn"
+        assert "cannot be checked" in warning.message
+
+    def test_opting_out_reports_the_setting_and_no_refusals(self, tmp_path):
+        results = self.run_check(
+            tmp_path,
+            {"privileged": True, "volumes": ["./data:/data"], "volumes_from": ["worker"]},
+            settings={"unsafe_allow_writable_host_mounts": True},
+        )
+        assert [(r.key, r.status) for r in results] == [
+            ("x-inspect_docker_sandbox.unsafe_allow_writable_host_mounts", "fail"),
+            ("default:privileged", "fail"),
+            ("default:volumes:./data", "fail"),
+        ]
+
+    def test_opting_in_explicitly_keeps_the_checks(self, tmp_path):
+        results = self.run_check(
+            tmp_path,
+            {"volumes": ["./data:/data"]},
+            settings={"unsafe_allow_writable_host_mounts": False},
+        )
+        assert [(r.key, r.status) for r in results] == [
+            ("default:volumes:./data", "fail"),
+            (None, "fail"),
+        ]
+
+    @pytest.mark.parametrize(
+        "settings",
+        [
+            {"unsafe_allow_writable_host_mounts": "true"},
+            {"unsafe_allow_writable_host_mounts": "${ALLOW_WRITES}"},
+            ["unsafe_allow_writable_host_mounts"],
+        ],
+    )
+    def test_opt_out_that_is_not_a_literal_boolean_fails(self, tmp_path, settings):
+        results = self.run_check(tmp_path, {}, settings=settings)
+        (result,) = results
+        assert result.status == "fail"
+        assert result.key is None
+        assert "literal boolean" in result.message
 
 
 class TestGpuSandboxCheck:

@@ -14,9 +14,12 @@ from inspect_evals_lint import (
     evaluation_names,
     helper_names,
     lint_package,
+    lint_repository,
     rule_names,
 )
-from inspect_evals_lint.registry import CATEGORIES, category_of, rules
+from inspect_evals_lint.diagnostics import Diagnostic, PackageReport
+from inspect_evals_lint.registry import CATEGORIES, category_of, get_rule, rules
+from inspect_evals_lint.runner import _report_once  # pyright: ignore[reportPrivateUsage]
 from tests.conftest import (
     make_eval,
     make_helper,
@@ -82,6 +85,43 @@ def test_well_formed_eval_passes_every_check(tmp_path: Path, layout: str) -> Non
     assert failing == []
     assert report.passed()
     assert set(report.statuses()) == set(rule_names())
+
+
+def test_a_shared_diagnostic_several_packages_report_is_listed_once() -> None:
+    rule = get_rule("readme")
+
+    def shared(message: str = "shared") -> Diagnostic:
+        return Diagnostic(
+            message, file=Path("pyproject.toml"), severity="warning", rule=rule, shared=True
+        )
+
+    first = PackageReport("alpha", "eval", diagnostics=[shared()])
+    second = PackageReport("beta", "eval", diagnostics=[shared(), shared("own")])
+    # Same name as the first, as two task files in different directories can give.
+    third = PackageReport("alpha", "eval", diagnostics=[shared()])
+    _report_once([first, second, third])
+    assert [d.message for d in first.diagnostics] == ["shared"]
+    assert [d.message for d in second.diagnostics] == ["own"]
+    assert [(o.status, o.message) for o in second.outcomes] == [
+        ("skip", "Reported under 'alpha', which shares it")
+    ]
+    assert third.diagnostics == []
+    assert [(o.status, o.message) for o in third.outcomes] == [
+        ("skip", "Reported under the first package named 'alpha' in this run, which shares it")
+    ]
+
+
+def test_identical_diagnostics_not_marked_shared_stay_with_each_package(tmp_path: Path) -> None:
+    # Two evaluations missing from the same registry module get the same
+    # message on the same file; each must still fail.
+    config = make_monorepo(tmp_path, ("alpha", "beta"))
+    write(tmp_path / "src/inspect_evals/_registry.py", "")
+    run = lint_repository(tmp_path, config, names=["alpha", "beta"], check="registry")
+    for package in run.packages:
+        assert [d.status for d in package.diagnostics] == ["fail"], package.name
+        assert not package.passed()
+    first, second = (p.diagnostics[0] for p in run.packages)
+    assert (first.file, first.line, first.message) == (second.file, second.line, second.message)
 
 
 def test_results_follow_registry_order(monorepo: tuple[Path, LintConfig]) -> None:
@@ -511,11 +551,37 @@ def test_sandbox_privileges_allowlist_is_scoped_to_service_field_and_value(
         ("default:cap_add:SYS_PTRACE", "warn"),
         ("default:cap_add:ALL", "fail"),
         ("default:volumes:./data", "warn"),
+        (None, "fail"),
         ("default:volumes:/var/run/docker.sock", "fail"),
+        (None, "fail"),
         ("other:privileged", "fail"),
     ]
     assert report.diagnostics[0].message.startswith("Allowlisted:")
     assert "'default:cap_add:ALL'" in (report.diagnostics[2].hint or "")
+    # A privileged service could remount its read-only bind writable, so inspect_ai refuses it.
+    assert "remounting" in report.diagnostics[4].message
+
+
+def test_sandbox_privileges_allowlist_accepts_the_writable_mount_opt_out(
+    monorepo: tuple[Path, LintConfig],
+) -> None:
+    root, config = monorepo
+    write(
+        config.package_dir(root, "alpha") / "compose.yaml",
+        "x-inspect_docker_sandbox:\n  unsafe_allow_writable_host_mounts: true\n"
+        "services:\n  default:\n    volumes: ['./data:/data']\n",
+    )
+    with (root / "pyproject.toml").open("a") as f:
+        f.write(
+            "\n[tool.inspect-evals-lint.allowlists.sandbox_privileges]\n"
+            'alpha = ["x-inspect_docker_sandbox.unsafe_allow_writable_host_mounts", '
+            '"default:volumes:./data"]\n'
+        )
+    report = lint_package(root, "alpha", check="IESC001")
+    assert [(d.key, d.status, d.line) for d in report.diagnostics] == [
+        ("x-inspect_docker_sandbox.unsafe_allow_writable_host_mounts", "warn", 2),
+        ("default:volumes:./data", "warn", 5),
+    ]
 
 
 def test_host_code_execution_allowlist_is_keyed_by_file_and_sink(

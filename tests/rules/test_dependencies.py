@@ -8,8 +8,8 @@ from inspect_evals_lint.rules.dependencies import (
     _extract_package_name,
     _get_imports_from_file,
     _get_stdlib_modules,
-    _normalize_name,
     external_dependencies,
+    normalize_name,
 )
 
 
@@ -63,10 +63,10 @@ class TestExtractPackageName:
 
 class TestNormalizeName:
     def test_pep503_forms(self):
-        assert _normalize_name("Friendly_Bard") == "friendly-bard"
-        assert _normalize_name("friendly.bard") == "friendly-bard"
-        assert _normalize_name("FRIENDLY-BARD") == "friendly-bard"
-        assert _normalize_name("friendly_-_bard") == "friendly-bard"
+        assert normalize_name("Friendly_Bard") == "friendly-bard"
+        assert normalize_name("friendly.bard") == "friendly-bard"
+        assert normalize_name("FRIENDLY-BARD") == "friendly-bard"
+        assert normalize_name("friendly_-_bard") == "friendly-bard"
 
     def test_import_map_values_are_normalised(self, monkeypatch):
         """Distribution metadata may spell a name either way; the map stores the canonical form."""
