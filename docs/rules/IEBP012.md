@@ -32,7 +32,7 @@ A judge API error or a sandbox outage then reads as a real verdict: "not refused
 What to do instead depends on what failed:
 
 - **The grader call raised** (an API error): let it propagate.
-- **The grader replied but gave no usable verdict**: retry the grader alone a bounded number of times, holding the model's output fixed (a retry with the same prompt and `cache=True` never reaches the grader), then return `Score.unscored(reason="grader_failed")`. This holds when the grader is the model under test too, as in a self-judging defence. If the grader feeds one key of a dict score and the other keys are valid results, set that key to NaN instead of unscoring the sample, and record which key failed in `explanation` and `metadata`: `Score.reason` describes the whole sample.
+- **The grader replied but gave no usable verdict**: retry the grader alone a bounded number of times, holding the model's output fixed (a retry with the same prompt and `cache=True` never reaches the grader), then return `Score.unscored(reason="grader_failed")`. This holds when the grader is the model under test too, as in a self-judging defence. If the grader feeds one key of a dict score and the other keys are valid results, set that key to NaN instead of unscoring the sample, and record which key failed in `explanation` and `metadata`: `Score.reason` describes the whole sample. Metrics registered per key (`metrics={"refused": [mean()]}`) and the epoch reducer skip a NaN key and count it toward that key's unscored samples. A custom metric that reads the whole dict receives the NaN and has to skip it itself.
 - **A sandbox call raised**: let it propagate; the sandbox broke. Score what a result shows instead: a non-zero exit is the model's code failing, and a missing file the agent was told to write is a verdict (`reason="no_response"`). Catch only errors the model's own output causes, such as that `FileNotFoundError` or an `OutputLimitExceededError`, and only where they can occur.
 - **A sandbox call timed out**: a command that overruns and a sandbox that stops answering raise the same `SandboxTimeoutError` (a `TimeoutError`) from `exec(timeout=...)`, so let it propagate, unless the time limit is part of the task. Then run the code under a `timeout` inside the sandbox and score the overrun from its exit code, allowing for sandboxes whose `timeout` is BusyBox's rather than GNU's, or missing. Timing it from the host doesn't work: `exec_remote()` polls at least 5 s apart, so a program that finished just before its deadline is seen after it.
 - **The eval's own code raised** (a parser or comparator on input it didn't expect): let it propagate. Catch only the errors the model's answer can cause.
@@ -59,20 +59,26 @@ except ValueError:
     return Score.unscored(reason="grader_failed", explanation=result.completion)
 ```
 
-Or, where the grader feeds one key of a dict score:
+Or, where the grader feeds one key of a dict score with per-key metrics:
 
 ```python
-failed_keys: list[str] = []
-try:
-    refused = parse_verdict(result.completion)
-except ValueError:
-    refused = float("nan")  # this key is ungraded; the other keys stand
-    failed_keys.append("refused")
-return Score(
-    value={"score": task_score, "refused": refused},
-    explanation=f"grader gave no verdict for {failed_keys}" if failed_keys else None,
-    metadata={"grader_failed_keys": failed_keys},
-)
+@scorer(metrics={"score": [mean()], "refused": [mean()]})
+def task_and_refusal() -> Scorer:
+    async def score(state: TaskState, target: Target) -> Score:
+        task_score = await check_task(state, target)
+        result = await grader.generate(refusal_prompt(state))
+        try:
+            refused = parse_verdict(result.completion)
+        except ValueError:
+            # NaN leaves this key out of its metrics; "score" still counts.
+            return Score(
+                value={"score": task_score, "refused": float("nan")},
+                explanation=f"refusal grader gave no verdict: {result.completion}",
+                metadata={"grader_failed_keys": ["refused"]},
+            )
+        return Score(value={"score": task_score, "refused": refused})
+
+    return score
 ```
 
 ## See also
