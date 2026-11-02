@@ -624,6 +624,11 @@ _FAILURE_HINT = {
     summary="A scorer does not turn a grader or sandbox failure into a score",
     references=(
         inspect_docs("scoring-policy", "Scoring Policy: Malfunctions", "malfunctions"),
+        inspect_docs(
+            "scoring-policy",
+            "Scoring Policy: Attribution: whose output failed?",
+            "attribution-whose-output-failed",
+        ),
         inspect_docs("custom-scorers", "Custom Scorers: Unscored Samples", "unscored-samples"),
     ),
 )
@@ -693,7 +698,9 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
     class's ``check()`` called on an instance or a parameter
     (``refusal_judge.check_refusal(...)``) is not read; following those is a
     later step. Calls wrapped in ``asyncio.gather()`` or ``wait_for()`` are
-    not seen as awaited. Nothing outside the package is followed.
+    not seen as awaited. Nothing outside the package is followed. A ``try``
+    that awaits neither kind of call, such as one around an import or a
+    comparator, is not read, though the advice below applies to it too.
 
     ## Why is this bad?
     A judge API error or a sandbox outage then reads as a real verdict: "not
@@ -710,7 +717,9 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
       grader), then return ``Score.unscored(reason="grader_failed")``. This
       holds when the grader is the model under test too, as in a self-judging
       defence. If the grader feeds one key of a dict score and the other keys
-      are valid results, set that key to NaN instead of unscoring the sample.
+      are valid results, set that key to NaN instead of unscoring the sample,
+      and record which key failed in ``explanation`` and ``metadata``:
+      ``Score.reason`` describes the whole sample.
     - **A sandbox call raised**: let it propagate; the sandbox broke. Score
       what a result shows instead: a non-zero exit is the model's code
       failing, and a missing file the agent was told to write is a verdict
@@ -718,18 +727,22 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
       causes, such as that ``FileNotFoundError`` or an
       ``OutputLimitExceededError``, and only where they can occur.
     - **A sandbox call timed out**: a command that overruns and a sandbox
-      that stops answering raise the same ``TimeoutError`` from
-      ``exec(timeout=...)``, so let it propagate, unless the time limit is
-      part of the task. Then run the code under a ``timeout`` inside the
-      sandbox and score the overrun from its exit code. Timing it from the
-      host doesn't work: ``exec_remote()`` polls at least 5 s apart, so a
-      program that finished just before its deadline is seen after it.
+      that stops answering raise the same ``SandboxTimeoutError`` (a
+      ``TimeoutError``) from ``exec(timeout=...)``, so let it propagate,
+      unless the time limit is part of the task. Then run the code under a
+      ``timeout`` inside the sandbox and score the overrun from its exit
+      code, allowing for sandboxes whose ``timeout`` is BusyBox's rather
+      than GNU's, or missing. Timing it from the host doesn't work:
+      ``exec_remote()`` polls at least 5 s apart, so a program that finished
+      just before its deadline is seen after it.
     - **The eval's own code raised** (a parser or comparator on input it
       didn't expect): let it propagate. Catch only the errors the model's
       answer can cause.
 
     A failed call never becomes ``Score.unscored()``. That is only for an
-    instrument that ran and gave no usable reading.
+    instrument that ran and gave no usable reading: ``grader_failed`` when
+    the grader replied without a usable verdict, ``scoring_failed`` when the
+    scorer ran without error but had nothing to measure.
 
     ## Example
     ```python
@@ -749,11 +762,17 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
     ```
     Or, where the grader feeds one key of a dict score:
     ```python
+    failed_keys: list[str] = []
     try:
         refused = parse_verdict(result.completion)
     except ValueError:
         refused = float("nan")  # this key is ungraded; the other keys stand
-    return Score(value={"score": task_score, "refused": refused})
+        failed_keys.append("refused")
+    return Score(
+        value={"score": task_score, "refused": refused},
+        explanation=f"grader gave no verdict for {failed_keys}" if failed_keys else None,
+        metadata={"grader_failed_keys": failed_keys},
+    )
     ```
     """
     parsed_files = parse_python_files(ctx)

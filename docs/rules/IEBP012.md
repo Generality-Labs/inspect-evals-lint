@@ -23,7 +23,7 @@ Code a scorer runs is every `@scorer` function, the functions nested in it, and 
 
 It is an error when the `try` guards a grader call. It is a warning when it guards only a sandbox call, whatever the handler returns, since some of those failures are the model's own: the agent never wrote the file it was asked to, or its code ran past a time limit that is part of the task. A handler narrowed to the error the model causes, such as `except FileNotFoundError`, is not broad and is not reported. Mark a reviewed site with `# inspect-evals-lint: ignore[scorer_failure_scored] -- <reason>` on the `except` line.
 
-**Known limits:** a constant that reaches the result only through a derived value (`refused = "yes" in response` with `response` not set in the `try`) is not traced, nor is one bound through an alias, a walrus or an attribute. Method calls are not followed, so a judge class's `check()` called on an instance or a parameter (`refusal_judge.check_refusal(...)`) is not read; following those is a later step. Calls wrapped in `asyncio.gather()` or `wait_for()` are not seen as awaited. Nothing outside the package is followed.
+**Known limits:** a constant that reaches the result only through a derived value (`refused = "yes" in response` with `response` not set in the `try`) is not traced, nor is one bound through an alias, a walrus or an attribute. Method calls are not followed, so a judge class's `check()` called on an instance or a parameter (`refusal_judge.check_refusal(...)`) is not read; following those is a later step. Calls wrapped in `asyncio.gather()` or `wait_for()` are not seen as awaited. Nothing outside the package is followed. A `try` that awaits neither kind of call, such as one around an import or a comparator, is not read, though the advice below applies to it too.
 
 ## Why is this bad?
 
@@ -32,12 +32,12 @@ A judge API error or a sandbox outage then reads as a real verdict: "not refused
 What to do instead depends on what failed:
 
 - **The grader call raised** (an API error): let it propagate.
-- **The grader replied but gave no usable verdict**: retry the grader alone a bounded number of times, holding the model's output fixed (a retry with the same prompt and `cache=True` never reaches the grader), then return `Score.unscored(reason="grader_failed")`. This holds when the grader is the model under test too, as in a self-judging defence. If the grader feeds one key of a dict score and the other keys are valid results, set that key to NaN instead of unscoring the sample.
+- **The grader replied but gave no usable verdict**: retry the grader alone a bounded number of times, holding the model's output fixed (a retry with the same prompt and `cache=True` never reaches the grader), then return `Score.unscored(reason="grader_failed")`. This holds when the grader is the model under test too, as in a self-judging defence. If the grader feeds one key of a dict score and the other keys are valid results, set that key to NaN instead of unscoring the sample, and record which key failed in `explanation` and `metadata`: `Score.reason` describes the whole sample.
 - **A sandbox call raised**: let it propagate; the sandbox broke. Score what a result shows instead: a non-zero exit is the model's code failing, and a missing file the agent was told to write is a verdict (`reason="no_response"`). Catch only errors the model's own output causes, such as that `FileNotFoundError` or an `OutputLimitExceededError`, and only where they can occur.
-- **A sandbox call timed out**: a command that overruns and a sandbox that stops answering raise the same `TimeoutError` from `exec(timeout=...)`, so let it propagate, unless the time limit is part of the task. Then run the code under a `timeout` inside the sandbox and score the overrun from its exit code. Timing it from the host doesn't work: `exec_remote()` polls at least 5 s apart, so a program that finished just before its deadline is seen after it.
+- **A sandbox call timed out**: a command that overruns and a sandbox that stops answering raise the same `SandboxTimeoutError` (a `TimeoutError`) from `exec(timeout=...)`, so let it propagate, unless the time limit is part of the task. Then run the code under a `timeout` inside the sandbox and score the overrun from its exit code, allowing for sandboxes whose `timeout` is BusyBox's rather than GNU's, or missing. Timing it from the host doesn't work: `exec_remote()` polls at least 5 s apart, so a program that finished just before its deadline is seen after it.
 - **The eval's own code raised** (a parser or comparator on input it didn't expect): let it propagate. Catch only the errors the model's answer can cause.
 
-A failed call never becomes `Score.unscored()`. That is only for an instrument that ran and gave no usable reading.
+A failed call never becomes `Score.unscored()`. That is only for an instrument that ran and gave no usable reading: `grader_failed` when the grader replied without a usable verdict, `scoring_failed` when the scorer ran without error but had nothing to measure.
 
 ## Example
 
@@ -62,16 +62,23 @@ except ValueError:
 Or, where the grader feeds one key of a dict score:
 
 ```python
+failed_keys: list[str] = []
 try:
     refused = parse_verdict(result.completion)
 except ValueError:
     refused = float("nan")  # this key is ungraded; the other keys stand
-return Score(value={"score": task_score, "refused": refused})
+    failed_keys.append("refused")
+return Score(
+    value={"score": task_score, "refused": refused},
+    explanation=f"grader gave no verdict for {failed_keys}" if failed_keys else None,
+    metadata={"grader_failed_keys": failed_keys},
+)
 ```
 
 ## See also
 
 - [Scoring Policy: Malfunctions](https://inspect.aisi.org.uk/scoring-policy.html#malfunctions)
+- [Scoring Policy: Attribution: whose output failed?](https://inspect.aisi.org.uk/scoring-policy.html#attribution-whose-output-failed)
 - [Custom Scorers: Unscored Samples](https://inspect.aisi.org.uk/custom-scorers.html#unscored-samples)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP012] -- <reason>` or `ignore[scorer_failure_scored] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.
