@@ -17,6 +17,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, cast, get_args
+from urllib.parse import urlsplit
 
 from inspect_evals_lint.config import ConfigError
 from inspect_evals_lint.context import LintContext
@@ -33,6 +34,7 @@ DEFAULT_HOST_LOCK_COUPLING: HostLockCoupling = "allow"
 OPTION_TABLE = f"[tool.inspect-evals-lint.{RULE_NAME}]"
 
 _FULL_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+_SCP_STYLE_URL = re.compile(r"^[\w.-]+@[\w.-]+:")
 _DIRECTIVE = re.compile(r"^#\s*([A-Za-z_]\w*)\s*=\s*(.+?)\s*$")
 _HEREDOC = re.compile(r"<<-?['\"]?(\w+)['\"]?")
 _ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
@@ -304,6 +306,29 @@ def _image_problem(reference: str, state: _BuildState) -> tuple[str, str] | None
             "append @sha256:<digest> to the reference to fix the build input",
         )
     return None
+
+
+def _is_git_source(source: str) -> bool:
+    """True for the sources BuildKit's ``ADD`` clones rather than downloads."""
+    if source.startswith(("git://", "ssh://", "git+ssh://")) or _SCP_STYLE_URL.match(source):
+        return True
+    if source.startswith(("http://", "https://")):
+        return urlsplit(source).path.endswith(".git")
+    return False
+
+
+def _add_git_source(source: str, instruction: Instruction, state: _BuildState) -> None:
+    """An ``ADD <repo>#<ref>`` is a fixed input only when the ref or ``--checksum`` is a full commit."""
+    ref = source.partition("#")[2].partition(":")[0]
+    checksum = instruction.flags.get("checksum", "")
+    if _FULL_COMMIT.match(ref) or _FULL_COMMIT.match(checksum):
+        return
+    state.warn(
+        instruction.line,
+        f"ADD of git repository '{source}' without a full commit, and a branch or tag can move",
+        "put the 40-character commit in the URL fragment, ADD <url>.git#<commit> <dir>, "
+        "or give it as --checksum=<commit>",
+    )
 
 
 def _register_source(source: str, line: int, state: _BuildState, via: str) -> None:
@@ -700,7 +725,10 @@ def _analyse(
             if any(str(part).startswith("<<") for part in parts):
                 continue
             for source in parts[:-1]:
-                _register_source(str(source), instruction.line, state, keyword)
+                if keyword == "ADD" and _is_git_source(str(source)):
+                    _add_git_source(str(source), instruction, state)
+                else:
+                    _register_source(str(source), instruction.line, state, keyword)
         elif keyword == "RUN":
             for mount in instruction.mounts:
                 options = dict(part.split("=", 1) for part in mount.split(",") if "=" in part)
@@ -766,6 +794,16 @@ def dockerfile_locking(ctx: LintContext) -> Iterable[Finding]:
       installer script piped from ``curl`` or ``wget`` into a shell warns because
       nothing verifies it. ``COPY --from`` a digest-pinned tool image is the accepted
       way to bring in ``uv``.
+    - A Git repository brought into the image needs a full 40-character commit. The
+      form that needs no git in the image is ``ADD <url>.git#<commit> <dir>``
+      (BuildKit clones it; ``--checksum=<commit>`` also counts, and the URL must end
+      in ``.git`` or use an ``ssh``, ``git`` or ``git@`` address). A ``git clone``
+      passes when the same ``RUN`` pins it with ``git -C <dir> checkout <commit>``,
+      ``switch`` or ``reset``, through ``cd <dir>`` or ``git -C <dir>``, with
+      ``checkout FETCH_HEAD`` after a ``git fetch`` of the commit, or with
+      ``git clone --revision=<commit>`` (git 2.49 or newer). A branch, tag or short
+      hash, a checkout of some other directory, a ``fetch`` alone, and a pin in a
+      later ``RUN`` all warn.
     - Dynamic references (``${VAR}`` images, remote or interpolated ``COPY`` sources,
       templated package names) and unsupported package managers (``npm``, ``cargo``,
       ``conda``, ...) are reported as unverified, never as passing.

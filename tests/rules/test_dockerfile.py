@@ -429,6 +429,38 @@ class TestMutableImageAndSourceInputs:
         assert "git -C <dir> checkout" in _text(results[0])
         assert "ADD" in _text(results[0])
 
+    @pytest.mark.parametrize(
+        "add",
+        [
+            f"ADD https://github.com/org/repo.git#{COMMIT} /opt/repo",
+            f"ADD --keep-git-dir=true git@github.com:org/repo.git#{COMMIT} /opt/repo",
+            f"ADD --checksum={COMMIT} https://github.com/org/repo.git#v1.0 /opt/repo",
+            f"ADD https://github.com/org/repo.git#{COMMIT}:docs /opt/docs",
+        ],
+    )
+    def test_add_of_git_repository_at_a_full_commit_passes(self, tmp_path: Path, add: str) -> None:
+        root, eval_path = _single_dockerfile(tmp_path, f"FROM python:3.12{DIGEST}\n{add}\n")
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["pass"], _texts(results)
+
+    @pytest.mark.parametrize(
+        "add",
+        [
+            "ADD https://github.com/org/repo.git /opt/repo",
+            "ADD https://github.com/org/repo.git#main /opt/repo",
+            "ADD https://github.com/org/repo.git#2451bcb /opt/repo",
+            "ADD --checksum=2451bcb https://github.com/org/repo.git#v1.0 /opt/repo",
+        ],
+    )
+    def test_add_of_git_repository_without_a_full_commit_warns(
+        self, tmp_path: Path, add: str
+    ) -> None:
+        root, eval_path = _single_dockerfile(tmp_path, f"FROM python:3.12{DIGEST}\n{add}\n")
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["warn"]
+        assert "git repository" in results[0].message
+        assert "#<commit>" in _text(results[0])
+
     def test_installer_script_piped_to_shell_warns(self, tmp_path: Path) -> None:
         root, eval_path = _single_dockerfile(
             tmp_path,
