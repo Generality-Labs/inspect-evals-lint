@@ -10,6 +10,7 @@ release so consumers can migrate before any of them fail.
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import shlex
 from collections.abc import Iterable, Mapping
@@ -487,27 +488,136 @@ def _uv_command(command: list[str], line: int, state: _BuildState) -> None:
         )
 
 
-def _pins_commit(command: list[str]) -> bool:
-    """True for a git checkout, switch, reset or fetch of a full commit."""
-    tokens = _normalise(command)
-    if tokens[:1] != ["git"]:
-        return False
-    tokens = tokens[1:]
-    while len(tokens) >= 2 and tokens[0] in ("-C", "-c"):
-        tokens = tokens[2:]
-    return (
-        bool(tokens)
-        and tokens[0] in ("checkout", "switch", "reset", "fetch")
-        and any(_FULL_COMMIT.match(t) for t in tokens[1:])
-    )
+_GIT_GLOBAL_OPTIONS_WITH_VALUE = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace"})
+_GIT_CLONE_OPTIONS_WITH_VALUE = frozenset(
+    {
+        "-b",
+        "--branch",
+        "-c",
+        "--config",
+        "-j",
+        "--jobs",
+        "-o",
+        "--origin",
+        "-u",
+        "--upload-pack",
+        "--bundle-uri",
+        "--depth",
+        "--filter",
+        "--reference",
+        "--reference-if-able",
+        "--revision",
+        "--separate-git-dir",
+        "--server-option",
+        "--shallow-exclude",
+        "--shallow-since",
+        "--template",
+    }
+)
+_GIT_HEAD_MOVERS = ("checkout", "switch", "reset")
+
+
+def _join(base: str | None, path: str) -> str:
+    """Resolve ``path`` as the shell would: against ``base`` when relative and ``base`` is known."""
+    if not path.startswith("/") and base is not None:
+        path = f"{base}/{path}"
+    return posixpath.normpath(path)
+
+
+def _git_global_options(tokens: list[str], cwd: str | None) -> tuple[list[str], str | None]:
+    """Strip git's global options; return the subcommand with its arguments and the directory it acts on."""
+    directory = cwd
+    while tokens and tokens[0].startswith("-"):
+        option, has_value, value = tokens[0].partition("=")
+        tokens = tokens[1:]
+        if option in _GIT_GLOBAL_OPTIONS_WITH_VALUE and not has_value:
+            if not tokens:
+                return [], directory
+            value, tokens = tokens[0], tokens[1:]
+        if option in ("-C", "--work-tree"):
+            directory = _join(directory, value)
+    return tokens, directory
+
+
+def _clone_target(args: list[str], cwd: str | None) -> tuple[str, bool]:
+    """The directory a ``git clone`` populates, and whether its own options pin a full commit."""
+    positional: list[str] = []
+    pinned = False
+    tokens = list(args)
+    while tokens:
+        token = tokens.pop(0)
+        if token == "--":
+            positional.extend(tokens)
+            break
+        if not token.startswith("-"):
+            positional.append(token)
+            continue
+        option, has_value, value = token.partition("=")
+        if option in _GIT_CLONE_OPTIONS_WITH_VALUE and not has_value and tokens:
+            value = tokens.pop(0)
+        if option == "--revision" and _FULL_COMMIT.match(value):
+            pinned = True
+    if len(positional) >= 2:
+        target = positional[1]
+    elif positional:
+        # git's default: the last path component of the repository, without .git.
+        name = positional[0].rstrip("/")
+        name = name.removesuffix(".git")
+        target = re.split(r"[/:]", name)[-1]
+    else:
+        target = ""
+    return _join(cwd, target), pinned
+
+
+def _check_git_clones(commands: list[list[str]], line: int, state: _BuildState) -> None:
+    """Warn for each ``git clone`` in a RUN that no later command in it pins to a full commit.
+
+    A pin is a ``checkout``, ``switch`` or ``reset`` of a full commit (or of
+    ``FETCH_HEAD`` after a ``fetch`` of one) acting on the cloned directory, found
+    through ``cd``, ``git -C <dir>`` or ``--work-tree``, or ``--revision=<commit>``
+    on the clone itself. Paths are compared as written, so a clone and its pin must
+    name the directory the same way; ``WORKDIR`` is not tracked.
+    """
+    cwd: str | None = None
+    unpinned: list[str] = []
+    fetched: set[str | None] = set()
+    for command in commands:
+        tokens = _normalise(command)
+        if not tokens:
+            continue
+        if tokens[0] == "cd":
+            operand = tokens[1] if len(tokens) > 1 else ""
+            cwd = _join(cwd, operand) if operand and not operand.startswith("-") else None
+            continue
+        if tokens[0] != "git":
+            continue
+        rest, directory = _git_global_options(tokens[1:], cwd)
+        if not rest:
+            continue
+        subcommand, args = rest[0], rest[1:]
+        if subcommand == "clone":
+            target, pinned = _clone_target(args, directory)
+            if not pinned:
+                unpinned.append(target)
+        elif subcommand == "fetch" and any(_FULL_COMMIT.match(t) for t in args):
+            fetched.add(directory)
+        elif subcommand in _GIT_HEAD_MOVERS and directory in unpinned and "--" not in args:
+            # With ``--`` the arguments after it are paths: that form restores files, not HEAD.
+            if any(_FULL_COMMIT.match(t) for t in args) or (
+                "FETCH_HEAD" in args and directory in fetched
+            ):
+                unpinned.remove(directory)
+    if unpinned:
+        state.warn(
+            line,
+            "git clone at build time without a full commit checkout, and a branch or tag can move",
+            "pin it in the same RUN with git -C <dir> checkout <40-character commit>, or replace "
+            "the clone with ADD <url>.git#<commit> <dir>, which needs no git in the image",
+        )
 
 
 def _classify(
-    command: list[str],
-    previous: list[str] | None,
-    later: list[list[str]],
-    line: int,
-    state: _BuildState,
+    command: list[str], previous: list[str] | None, line: int, state: _BuildState
 ) -> None:
     command = _normalise(command)
     if not command:
@@ -536,18 +646,6 @@ def _classify(
             line,
             f"dependency installation with {name} cannot be verified by this rule",
             "only pip and uv installs are understood; lock these inputs by other means",
-        )
-    elif (
-        name == "git"
-        and len(command) > 1
-        and command[1] == "clone"
-        and not any(_FULL_COMMIT.match(t.rpartition("=")[2]) for t in command)
-        and not any(_pins_commit(c) for c in later)
-    ):
-        state.warn(
-            line,
-            "git clone at build time without a full commit checkout, and a branch or tag can move",
-            "check out a full 40-character commit",
         )
 
 
@@ -610,9 +708,10 @@ def _analyse(
                     _register_source(options["source"], instruction.line, state, "bind mount")
             previous: list[str] | None = None
             commands = split_shell_commands(instruction.args)
-            for index, command in enumerate(commands):
-                _classify(command, previous, commands[index + 1 :], instruction.line, state)
+            for command in commands:
+                _classify(command, previous, instruction.line, state)
                 previous = command
+            _check_git_clones(commands, instruction.line, state)
 
     if coupling == "warn":
         for line in sorted(set(state.host_coupling_lines)):

@@ -389,6 +389,13 @@ class TestMutableImageAndSourceInputs:
             "git clone --no-checkout https://github.com/org/repo /opt/repo && cd /opt/repo"
             f" && git fetch --depth 1 origin {COMMIT} && git checkout FETCH_HEAD",
             f"git clone --revision={COMMIT} https://github.com/org/repo /opt/repo",
+            f"git clone --revision {COMMIT} https://github.com/org/repo /opt/repo",
+            # The directory defaults to the repository name, and cd resolves against it.
+            f"cd /opt && git clone https://github.com/org/repo.git && cd repo && git checkout {COMMIT}",
+            f"git clone https://github.com/org/repo repo && cd repo && git -C . checkout {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/repo && git --work-tree=/opt/repo checkout {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/a && git clone https://github.com/org/repo /opt/b"
+            f" && git -C /opt/a checkout {COMMIT} && git -C /opt/b checkout {COMMIT}",
         ],
     )
     def test_git_clone_then_full_commit_checkout_passes(self, tmp_path: Path, run: str) -> None:
@@ -402,6 +409,16 @@ class TestMutableImageAndSourceInputs:
             "git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout main",
             "git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout 2451bcb",
             f"git -C /opt/other checkout {COMMIT} && git clone https://github.com/org/repo /opt/repo",
+            # A pin of some other directory does not cover this clone.
+            f"git clone https://github.com/org/repo /opt/repo && git -C /opt/other checkout {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/repo && git checkout {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/a && git clone https://github.com/org/repo /opt/b"
+            f" && git -C /opt/a checkout {COMMIT}",
+            # A fetch alone does not move HEAD, and a path checkout restores one file.
+            f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo fetch origin {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo checkout {COMMIT} -- README.md",
+            # git clone --branch rejects a commit hash; only --revision takes one.
+            f"git clone --branch={COMMIT} https://github.com/org/repo /opt/repo",
         ],
     )
     def test_git_clone_then_moving_checkout_warns(self, tmp_path: Path, run: str) -> None:
@@ -409,6 +426,8 @@ class TestMutableImageAndSourceInputs:
         results = _run(root, eval_path)
         assert _statuses(results) == ["warn"]
         assert "git clone" in results[0].message
+        assert "git -C <dir> checkout" in _text(results[0])
+        assert "ADD" in _text(results[0])
 
     def test_installer_script_piped_to_shell_warns(self, tmp_path: Path) -> None:
         root, eval_path = _single_dockerfile(
