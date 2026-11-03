@@ -361,6 +361,29 @@ def judged():
         )
         assert [r.status for r in results] == ["pass"]
 
+    def test_outside_calls_are_graders_by_their_whole_name(self, tmp_path):
+        results = run(
+            tmp_path,
+            {
+                "scorer.py": """
+@scorer(metrics=[])
+def judged():
+    async def score(state, target):
+        try:
+            rubric = await load_grader_rubric(target.text)
+        except Exception:
+            rubric = ""
+        try:
+            verdict = await ask_judge(state.output.completion, rubric)
+        except Exception:
+            verdict = ""
+        return Score(value=verdict in rubric)
+    return score
+"""
+            },
+        )
+        assert found(results) == [("fail", "scorer.py", 16)]
+
     def test_a_try_without_a_grader_or_sandbox_call_passes(self, tmp_path):
         results = run(
             tmp_path,

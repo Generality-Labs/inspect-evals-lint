@@ -285,6 +285,11 @@ _GRADER_WORDS = ("judge", "grader")
 _BROAD_EXCEPTIONS = frozenset({"Exception", "BaseException"})
 
 
+def _named_for_grader(name: str) -> bool:
+    """``judge``, ``grader``, or a name ending in ``_judge`` or ``_grader``, such as ``ask_judge``."""
+    return name.lower().rsplit("_", 1)[-1] in _GRADER_WORDS
+
+
 def _direct_arm(call: ast.Call) -> Arm | None:
     """The arm an awaited call belongs to by its name, for a call the package does not define."""
     func = call.func
@@ -292,8 +297,7 @@ def _direct_arm(call: ast.Call) -> Arm | None:
         return "grader"
     if isinstance(func, ast.Attribute) and func.attr in _SANDBOX_METHODS:
         return "sandbox"
-    name = (get_call_name(call) or "").lower()
-    if any(word in name for word in _GRADER_WORDS):
+    if _named_for_grader(get_call_name(call) or ""):
         return "grader"
     return None
 
@@ -648,12 +652,12 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
 
     - its ``try`` body awaits a grader call or a sandbox call. A grader call is
       a method call ending in ``.generate(``, or a call to something outside
-      the package whose name contains ``judge`` or ``grader``, such as a
-      ``model_graded_qa()`` scorer bound to ``grader``. A sandbox call is a
-      method call ending in ``.exec(`` or ``.read_file(``. A package function
-      counts by what it does, not its name: awaiting one counts when it awaits
-      either kind of call, at any depth, outside a ``try`` of its own that
-      swallows the failure;
+      the package named ``judge`` or ``grader`` or ending in ``_judge`` or
+      ``_grader``, such as a ``model_graded_qa()`` scorer bound to ``grader``.
+      A sandbox call is a method call ending in ``.exec(`` or ``.read_file(``.
+      A package function counts by what it does, not its name: awaiting one
+      counts when it awaits either kind of call, at any depth, outside a
+      ``try`` of its own that swallows the failure;
     - the handler turns the failure into a result. It returns a constant; or
       it assigns one to a name the function returns after it; or it rebinds
       a name the ``try`` body binds, to a constant or a dict literal holding
