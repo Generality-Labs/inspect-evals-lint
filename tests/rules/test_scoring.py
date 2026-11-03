@@ -4,7 +4,9 @@ from pathlib import Path
 
 from inspect_evals_lint.config import PRESETS, LintConfig
 from inspect_evals_lint.diagnostics import Diagnostic
+from inspect_evals_lint.registry import get_rule
 from inspect_evals_lint.rules.scoring import scorer_failure_scored
+from inspect_evals_lint.suppressions import apply_suppressions, load_suppressions
 from tests.conftest import context_for, write
 
 HEADER = """
@@ -464,6 +466,41 @@ def checkpoints():
             },
         )
         assert found(results) == [("warn", "scorer.py", 10), ("warn", "scorer.py", 26)]
+
+
+class TestSuppression:
+    def test_a_comment_on_the_except_line_or_in_a_multi_line_header_suppresses(self, tmp_path):
+        results = run(
+            tmp_path,
+            {
+                "scorer.py": """
+@scorer(metrics=[])
+def judged():
+    async def score(state, target):
+        try:
+            result = await get_model(role="grader").generate("p")
+        except Exception:  # inspect-evals-lint: ignore[scorer_failure_scored] -- reviewed
+            return Score(value=INCORRECT)
+        try:
+            result = await get_model(role="grader").generate("p")
+        except (
+            Exception
+        ):  # inspect-evals-lint: ignore[scorer_failure_scored] -- reviewed
+            return Score(value=INCORRECT)
+        return Score(value=result.completion)
+    return score
+"""
+            },
+        )
+        for r in results:
+            r.rule = get_rule("scorer_failure_scored")
+        apply_suppressions(
+            results,
+            load_suppressions(context_for(tmp_path / "my_eval")),
+            PRESETS["multi-eval"],
+            tmp_path,
+        )
+        assert [r.status for r in results] == ["suppressed", "suppressed"]
 
 
 class TestScope:

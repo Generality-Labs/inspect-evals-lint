@@ -590,6 +590,12 @@ def _constant_result(
     return None
 
 
+def _header_end(handler: ast.ExceptHandler) -> int | None:
+    """Last line of a multi-line ``except (...)`` header: the line before its body; None for a one-line header."""
+    end = handler.body[0].lineno - 1
+    return end if end > handler.lineno else None
+
+
 def _has_raise(handler: ast.ExceptHandler) -> bool:
     return any(isinstance(node, ast.Raise) for node in scope_nodes(handler.body))
 
@@ -689,7 +695,7 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
     ``except FileNotFoundError``, is not broad and is not reported. Mark a
     reviewed site with
     ``# inspect-evals-lint: ignore[scorer_failure_scored] -- <reason>`` on the
-    ``except`` line.
+    ``except`` line, or on any line of a multi-line ``except (...)`` header.
 
     **Known limits:** a constant that reaches the result only through a
     derived value (``refused = "yes" in response`` with ``response`` not set
@@ -811,6 +817,7 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
                         f"{result}, so the failure is scored instead of raised",
                         file=function.file.path,
                         line=handler.lineno,
+                        end_line=_header_end(handler),
                         column=column_of(handler),
                         severity=severity,
                         hint=_FAILURE_HINT[arm],
