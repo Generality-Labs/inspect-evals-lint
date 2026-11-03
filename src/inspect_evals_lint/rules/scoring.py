@@ -400,6 +400,8 @@ def _is_constant(node: ast.expr, names: frozenset[str]) -> bool:
         node = node.operand
     if isinstance(node, ast.Constant):
         return node.value is None or node.value == "" or isinstance(node.value, (bool, int, float))
+    if _is_nan(node):
+        return True
     if (
         isinstance(node, ast.Call)
         and not node.args
@@ -411,14 +413,45 @@ def _is_constant(node: ast.expr, names: frozenset[str]) -> bool:
     return isinstance(node, ast.Name) and node.id.isupper() and node.id in names
 
 
+def _is_nan(node: ast.expr) -> bool:
+    """``float("nan")``, ``math.nan`` or ``np.nan``."""
+    if isinstance(node, ast.Call) and get_call_name(node) == "float" and len(node.args) == 1:
+        arg = node.args[0]
+        return (
+            isinstance(arg, ast.Constant)
+            and isinstance(arg.value, str)
+            and arg.value.lower() == "nan"
+        )
+    return isinstance(node, ast.Attribute) and node.attr == "nan"
+
+
 def _is_none(node: ast.expr) -> bool:
     return isinstance(node, ast.Constant) and node.value is None
 
 
+def _is_falsy(node: ast.expr) -> bool:
+    """``None``, ``""``, ``0`` or ``False``: the values a ``not name`` test reads as a sentinel."""
+    return isinstance(node, ast.Constant) and (
+        node.value is None or node.value == "" or node.value == 0
+    )
+
+
+def _is_unscored(node: ast.expr) -> bool:
+    """``Score.unscored(...)``."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "unscored"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "Score"
+    )
+
+
 def _holds_verdict(node: ast.expr) -> bool:
-    """A dict literal with a bool or number among its values: ``{"criteria_met": False, ...}``."""
+    """A dict literal with a bool, a number or NaN among its values: ``{"criteria_met": False, ...}``."""
     return isinstance(node, ast.Dict) and any(
-        isinstance(v, ast.Constant) and isinstance(v.value, (bool, int, float)) for v in node.values
+        (isinstance(v, ast.Constant) and isinstance(v.value, (bool, int, float))) or _is_nan(v)
+        for v in node.values
     )
 
 
@@ -432,14 +465,19 @@ def _score_value(node: ast.expr) -> ast.expr | None:
 
 
 def _constant_text(node: ast.expr, names: frozenset[str]) -> str | None:
-    """How a message shows a constant result: ``0.0``, ``(False, ...)``, ``Score(value=INCORRECT)``; None for anything else."""
+    """How a message shows a result fixed in the source: ``0.0``, ``(False, ...)``, ``{...}``, ``Score(value=INCORRECT)``, ``Score.unscored(...)``; None for anything else."""
+    if _is_unscored(node):
+        return "Score.unscored(...)"
     if isinstance(node, ast.Tuple):
         if node.elts and _is_constant(node.elts[0], names):
             return f"({ast.unparse(node.elts[0])}, ...)"
         return None
     value = _score_value(node)
     if value is not None:
-        return f"Score(value={ast.unparse(value)})" if _is_constant(value, names) else None
+        text = _constant_text(value, names)
+        return f"Score(value={text})" if text is not None else None
+    if _holds_verdict(node):
+        return "{...}"
     return ast.unparse(node) if _is_constant(node, names) else None
 
 
@@ -449,10 +487,12 @@ def _returns_name(node: ast.expr, name: str) -> bool:
     return any(isinstance(e, ast.Name) and e.id == name for e in elements)
 
 
-def _assigned(target: ast.expr, value: ast.expr) -> Iterable[tuple[str, ast.expr]]:
-    """``(name, value)`` for each name an assignment binds to a value written beside it."""
+def _assigned(target: ast.expr, value: ast.expr) -> Iterable[tuple[str, str, ast.expr]]:
+    """``(name, target, value)`` for each name an assignment binds, or indexes into, with a value written beside it."""
     if isinstance(target, ast.Name):
-        yield target.id, value
+        yield target.id, target.id, value
+    elif isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name):
+        yield target.value.id, ast.unparse(target), value
     elif (
         isinstance(target, ast.Tuple)
         and isinstance(value, ast.Tuple)
@@ -462,30 +502,54 @@ def _assigned(target: ast.expr, value: ast.expr) -> Iterable[tuple[str, ast.expr
             yield from _assigned(t, v)
 
 
-def _checks_none(fn: FunctionNode, name: str) -> bool:
-    """Whether ``fn`` tests ``name`` as a sentinel: ``name is None``, ``name is not None`` or ``not name``."""
+def _sentinel_branches(fn: FunctionNode, name: str, value: ast.expr) -> Iterable[list[ast.stmt]]:
+    """The branches ``fn`` takes when ``name`` holds ``value``: the body of ``if name is None`` or ``if not name``, or the ``else`` of ``if name is not None``."""
     for node in scope_nodes(fn.body):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
         if (
-            isinstance(node, ast.Compare)
-            and isinstance(node.left, ast.Name)
-            and node.left.id == name
-            and len(node.ops) == 1
-            and isinstance(node.ops[0], (ast.Is, ast.IsNot))
-            and _is_none(node.comparators[0])
+            isinstance(test, ast.Compare)
+            and isinstance(test.left, ast.Name)
+            and test.left.id == name
+            and len(test.ops) == 1
+            and isinstance(test.ops[0], (ast.Is, ast.IsNot))
+            and _is_none(test.comparators[0])
+            and _is_none(value)
         ):
-            return True
-        if (
-            isinstance(node, ast.UnaryOp)
-            and isinstance(node.op, ast.Not)
-            and isinstance(node.operand, ast.Name)
-            and node.operand.id == name
+            yield node.body if isinstance(test.ops[0], ast.Is) else node.orelse
+        elif (
+            isinstance(test, ast.UnaryOp)
+            and isinstance(test.op, ast.Not)
+            and isinstance(test.operand, ast.Name)
+            and test.operand.id == name
+            and _is_falsy(value)
         ):
-            return True
-    return False
+            yield node.body
 
 
-def _callers_check_none(function: PackageFunction, code: ScorerCode) -> bool:
-    """Whether every call to ``function`` in scorer code assigns the result to a name its caller tests for ``None``."""
+def _leaves_by_raise_or_result(body: list[ast.stmt], names: frozenset[str]) -> bool:
+    """Whether a branch raises, continues, or returns something other than a result fixed in the source."""
+    return any(
+        isinstance(node, (ast.Raise, ast.Continue))
+        or (
+            isinstance(node, ast.Return)
+            and node.value is not None
+            and _constant_text(node.value, names) is None
+        )
+        for node in scope_nodes(body)
+    )
+
+
+def _checks_sentinel(fn: FunctionNode, name: str, value: ast.expr, names: frozenset[str]) -> bool:
+    """Whether ``fn`` tests ``name`` for the sentinel ``value`` and then raises, continues, or returns something not fixed in the source."""
+    return any(
+        _leaves_by_raise_or_result(branch, names) for branch in _sentinel_branches(fn, name, value)
+    )
+
+
+def _callers_check_sentinel(function: PackageFunction, value: ast.expr, code: ScorerCode) -> bool:
+    """Whether every call to ``function`` in scorer code assigns the result to a name its caller tests as a sentinel."""
     calls = code.calls.get(id(function.node), [])
     if not calls:
         return False
@@ -501,7 +565,8 @@ def _callers_check_none(function: PackageFunction, code: ScorerCode) -> bool:
             for target in node.targets
             if isinstance(target, ast.Name)
         ]
-        if not any(_checks_none(caller.node, name) for name in names):
+        constants = code.constant_names(caller)
+        if not any(_checks_sentinel(caller.node, name, value, constants) for name in names):
             return False
     return True
 
@@ -517,15 +582,43 @@ def _is_score_function(function: PackageFunction) -> bool:
 
 
 def _leaves_otherwise(handler: ast.ExceptHandler, names: frozenset[str]) -> bool:
-    """Whether the handler leaves by ``continue`` or a ``return`` of something other than a constant."""
+    """Whether the handler leaves by ``continue``, ``break`` or a ``return`` of something not fixed in the source."""
     return any(
-        isinstance(node, ast.Continue)
+        isinstance(node, (ast.Continue, ast.Break))
         or (
             isinstance(node, ast.Return)
             and (node.value is None or _constant_text(node.value, names) is None)
         )
         for node in scope_nodes(handler.body)
     )
+
+
+def _falls_through(handler: ast.ExceptHandler) -> bool:
+    """Whether the handler runs on into the code after the ``try``: nothing in it returns, raises, continues or breaks."""
+    return not any(
+        isinstance(node, (ast.Return, ast.Raise, ast.Continue, ast.Break))
+        for node in scope_nodes(handler.body)
+    )
+
+
+def _appended(node: ast.AST) -> tuple[str, ast.expr] | None:
+    """``(name, value)`` for a statement ``name.append(value)``."""
+    if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)):
+        return None
+    call = node.value
+    if (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == "append"
+        and isinstance(call.func.value, ast.Name)
+        and len(call.args) == 1
+        and not call.keywords
+    ):
+        return call.func.value.id, call.args[0]
+    return None
+
+
+def _shown(value: ast.expr) -> str:
+    return "{...}" if isinstance(value, ast.Dict) else ast.unparse(value)
 
 
 def _constant_result(
@@ -536,20 +629,24 @@ def _constant_result(
 ) -> str | None:
     """How ``handler`` turns the failure into a result, for the message; None when it does not.
 
-    It returns a constant; or it assigns one to a name the function returns
-    after it; or it rebinds a name the ``try`` body bound, to a constant or a
-    dict literal holding a bool or number, and the function reads the name
-    after the ``try``. A ``None`` the function, or every caller of it, tests
-    for is a sentinel and does not count, nor does one a scorer's score
-    function returns, which records no score.
+    It returns a result fixed in the source, which includes
+    ``Score.unscored(...)`` and a NaN; or it assigns a constant to a name the
+    function returns after it; or it rebinds a name the ``try`` body bound,
+    indexes into a name, or appends to one, with a constant or a dict literal
+    holding a bool, number or NaN, and the function reads the name after the
+    ``try``; or it falls through, leaving a name the ``try`` would have
+    bound at the constant it was set to before the ``try``, and the function
+    reads that name after it. A falsy value the function, or every caller of
+    it, tests for as a sentinel and then raises on does not count, nor does a
+    ``None`` a scorer's score function returns, which records no score.
     """
     names = code.constant_names(function)
     for node in scope_nodes(handler.body):
         if isinstance(node, ast.Return) and node.value is not None:
             text = _constant_text(node.value, names)
             if text is not None and not (
-                _is_none(node.value)
-                and (_is_score_function(function) or _callers_check_none(function, code))
+                (_is_none(node.value) and _is_score_function(function))
+                or (_is_falsy(node.value) and _callers_check_sentinel(function, node.value, code))
             ):
                 return f"returns {text}"
     if _leaves_otherwise(handler, names):
@@ -572,25 +669,56 @@ def _constant_result(
         for node in scope_nodes(statement.body)
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
     }
+
+    def is_result(value: ast.expr) -> bool:
+        return _is_constant(value, names) or _holds_verdict(value)
+
     for node in scope_nodes(handler.body):
         assignments: list[tuple[ast.expr, ast.expr]] = []
         if isinstance(node, ast.Assign):
             assignments = [(target, node.value) for target in node.targets]
         elif isinstance(node, ast.AnnAssign) and node.value is not None:
             assignments = [(node.target, node.value)]
+        elif (appended := _appended(node)) is not None:
+            name, value = appended
+            if name in read_after and is_result(value):
+                return f"appends {_shown(value)} to {name}, which is read after the try"
         for target, value in assignments:
-            for name, part in _assigned(target, value):
-                if _is_none(part) and _checks_none(function.node, name):
+            for name, shown_target, part in _assigned(target, value):
+                if _is_falsy(part) and _checks_sentinel(function.node, name, part, names):
                     continue
-                if _is_constant(part, names) and any(_returns_name(r, name) for r in later):
-                    return f"sets {name} = {ast.unparse(part)}"
+                indexed = shown_target != name
                 if (
-                    name in bound_in_try
-                    and name in read_after
-                    and (_is_constant(part, names) or _holds_verdict(part))
+                    not indexed
+                    and _is_constant(part, names)
+                    and any(_returns_name(r, name) for r in later)
                 ):
-                    shown = "{...}" if isinstance(part, ast.Dict) else ast.unparse(part)
-                    return f"sets {name} = {shown}, which is read after the try"
+                    return f"sets {name} = {ast.unparse(part)}"
+                if (indexed or name in bound_in_try) and name in read_after and is_result(part):
+                    return f"sets {shown_target} = {_shown(part)}, which is read after the try"
+    if _falls_through(handler):
+        before: dict[str, ast.expr] = {}
+        for node in scope_nodes(function.node.body):
+            earlier: list[tuple[ast.expr, ast.expr]] = []
+            if isinstance(node, ast.Assign) and node.lineno < statement.lineno:
+                earlier = [(target, node.value) for target in node.targets]
+            elif (
+                isinstance(node, ast.AnnAssign)
+                and node.value is not None
+                and node.lineno < statement.lineno
+            ):
+                earlier = [(node.target, node.value)]
+            for target, value in earlier:
+                for name, shown_target, part in _assigned(target, value):
+                    if shown_target == name:
+                        before[name] = part
+        for name in sorted(bound_in_try & read_after):
+            part = before.get(name)
+            if part is None or not is_result(part):
+                continue
+            if _is_falsy(part) and _checks_sentinel(function.node, name, part, names):
+                continue
+            return f"falls through, leaving {name} = {_shown(part)} from before the try, which is read after it"
     return None
 
 
@@ -601,7 +729,13 @@ def _header_end(handler: ast.ExceptHandler) -> int | None:
 
 
 def _has_raise(handler: ast.ExceptHandler) -> bool:
+    """Whether anything in the handler raises, so some failures get out of it."""
     return any(isinstance(node, ast.Raise) for node in scope_nodes(handler.body))
+
+
+def _always_raises(handler: ast.ExceptHandler) -> bool:
+    """Whether the handler ends by raising on every path: a ``raise`` among its own statements, not one inside an ``if``."""
+    return any(isinstance(node, ast.Raise) for node in handler.body)
 
 
 _GUARDED = {"grader": "a grader call", "sandbox": "a sandbox exec()/read_file()"}
@@ -647,8 +781,8 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
 
     ## What it does
     Flags a broad handler (``except:``, ``except Exception`` or ``except
-    BaseException``, alone or in a tuple) with no ``raise`` in its body, in code
-    a scorer runs, when both hold:
+    BaseException``, alone or in a tuple) that does not ``raise`` among its
+    own statements, in code a scorer runs, when both hold:
 
     - its ``try`` body awaits a grader call or a sandbox call. A grader call is
       a method call ending in ``.generate(``, or a call to something outside
@@ -658,25 +792,38 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
       A package function counts by what it does, not its name: awaiting one
       counts when it awaits either kind of call, at any depth, outside a
       ``try`` of its own that swallows the failure;
-    - the handler turns the failure into a result. It returns a constant; or
-      it assigns one to a name the function returns after it; or it rebinds
-      a name the ``try`` body binds, to a constant or a dict literal holding
-      a bool or number (``{"criteria_met": False}``), and the function reads
-      that name after the ``try``. A constant is a number, a bool, ``None``,
-      ``""``, an upper-case name bound at module level or imported (such as
-      ``INCORRECT``, or its ``.copy()``), a tuple starting with one, or
-      ``Score(value=<constant>)``. A name is returned when the ``return``
-      gives the name itself, a tuple holding it, or ``Score(value=<name>)``.
+    - the handler turns the failure into a result. It returns a constant, a
+      dict holding one, ``Score.unscored(...)`` or ``Score(value=<any of
+      these>)``; or it assigns a constant to a name the function returns
+      after it; or it rebinds a name the ``try`` body binds, indexes into a
+      name (``results[c] = 0.0``) or appends to one (``scores.append(0.0)``),
+      with a constant or a dict literal holding one (``{"criteria_met":
+      False}``), and the function reads that name after the ``try``; or it
+      falls through, leaving a name the ``try`` would have bound at the
+      constant it was set to before the ``try`` (``passed = False``), and the
+      function reads that name after it. A constant is a number, a bool,
+      ``None``, ``""``, a NaN (``float("nan")``, ``math.nan``), an upper-case
+      name bound at module level or imported (such as ``INCORRECT``, or its
+      ``.copy()``), or a tuple starting with one. A name is returned when the
+      ``return`` gives the name itself, a tuple holding it, or
+      ``Score(value=<name>)``.
+
+    A ``raise`` inside an ``if`` does not exempt the handler: one that
+    re-raises some errors and returns a constant for the rest is reported.
 
     These do not count as a result:
 
-    - an assignment in a handler that then leaves by ``continue``, or by a
-      ``return`` of anything but a constant, such as
-      ``return Score.unscored(...)``;
-    - a ``None`` that is tested as a sentinel: assigned in a function that
-      tests ``name is None``, ``name is not None`` or ``not name``, or
-      returned by a helper whose every caller in scorer code assigns the
-      result to a name it tests that way;
+    - an assignment in a handler that then leaves by ``continue``, ``break``,
+      or a ``return`` of anything but a result listed above, such as a call
+      that scores the sample another way;
+    - a falsy value (``None``, ``""``, ``0``, ``False``) that is tested as a
+      sentinel and then raised on: assigned in a function whose
+      ``if name is None`` (or the ``else`` of ``if name is not None``) or
+      ``if not name`` branch raises, continues, or returns something other
+      than a result listed above; or returned by a helper whose every caller
+      in scorer code assigns the result to a name it tests that way. A
+      sentinel branch that returns a constant or ``Score.unscored(...)``
+      scores the failure, so the handler is reported;
     - a ``None`` returned by a scorer's own score function, which records
       no score.
 
@@ -704,7 +851,12 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
     **Known limits:** a constant that reaches the result only through a
     derived value (``refused = "yes" in response`` with ``response`` not set
     in the ``try``) is not traced, nor is one bound through an alias, a
-    walrus or an attribute. Method calls are not followed, so a judge
+    walrus or an attribute. Any narrowed handler passes, including
+    ``except TimeoutError`` around ``exec(timeout=...)``, which the advice
+    below allows only when the time limit is part of the task; and
+    ``write_file()`` is not read as a sandbox call. A sentinel branch that
+    leaves by ``continue`` is accepted without reading what follows the
+    loop. Method calls are not followed, so a judge
     class's ``check()`` called on an instance or a parameter
     (``refusal_judge.check_refusal(...)``) is not read; following those is a
     later step. Calls wrapped in ``asyncio.gather()`` or ``wait_for()`` are
@@ -713,7 +865,7 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
     comparator, is not read, though the advice below applies to it too.
 
     ## Why is this bad?
-    A judge API error or a sandbox outage then reads as a real verdict: "not
+    A judge API error or a sandbox outage then reads as a verdict: "not
     refused", "wrong answer", 0.0. The run looks healthy and the metric moves
     with the outage rate. Letting the error propagate fails the sample, which
     is visible and can be retried.
@@ -809,7 +961,7 @@ def scorer_failure_scored(ctx: LintContext) -> Iterable[Finding]:
             if arm is None:
                 continue
             for handler in node.handlers:
-                if not _is_broad(handler) or _has_raise(handler):
+                if not _is_broad(handler) or _always_raises(handler):
                     continue
                 result = _constant_result(handler, node, function, code)
                 if result is None:
