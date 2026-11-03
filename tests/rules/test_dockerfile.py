@@ -397,6 +397,15 @@ class TestMutableImageAndSourceInputs:
             f"git clone https://github.com/org/repo /opt/repo && git --work-tree=/opt/repo checkout {COMMIT}",
             f"git clone https://github.com/org/repo /opt/a && git clone https://github.com/org/repo /opt/b"
             f" && git -C /opt/a checkout {COMMIT} && git -C /opt/b checkout {COMMIT}",
+            # A clone into the current directory, pinned there.
+            f"git clone https://github.com/org/repo.git . && git checkout {COMMIT} && git lfs pull",
+            # A fallback clone into the same directory, then one pin.
+            "git clone https://github.com/org/repo /opt/repo || git clone https://github.com/mirror/repo /opt/repo"
+            f" && git -C /opt/repo checkout {COMMIT}",
+            # A trailing -- with nothing after it is not a path checkout.
+            f"git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout {COMMIT} --",
+            # A branch created at the pinned commit does not move HEAD.
+            f"git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout {COMMIT} && git checkout -b work",
         ],
     )
     def test_git_clone_then_full_commit_checkout_passes(self, tmp_path: Path, run: str) -> None:
@@ -423,6 +432,11 @@ class TestMutableImageAndSourceInputs:
             # A mixed or soft reset moves HEAD but leaves the working tree on the branch.
             f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo reset {COMMIT}",
             f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo reset --soft {COMMIT}",
+            # The last move of HEAD decides: a branch checked out after the commit moves it again.
+            f"git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout {COMMIT} && git checkout main",
+            # FETCH_HEAD pins only after a fetch of a full commit.
+            "git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout FETCH_HEAD",
+            "git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git fetch origin 2451bcb && git checkout FETCH_HEAD",
         ],
     )
     def test_git_clone_then_moving_checkout_warns(self, tmp_path: Path, run: str) -> None:
@@ -432,6 +446,42 @@ class TestMutableImageAndSourceInputs:
         assert "git clone" in results[0].message
         assert "git -C <dir> checkout" in _text(results[0])
         assert "ADD" in _text(results[0])
+
+    @pytest.mark.parametrize(
+        "run",
+        [
+            f"git clone https://github.com/org/repo /opt/repo && cd repo && git checkout {COMMIT}",
+            f"git clone https://github.com/org/repo repo && git -C /opt/repo checkout {COMMIT}",
+            f"git clone https://github.com/org/repo.git && cd repo && git checkout {COMMIT}",
+        ],
+    )
+    def test_workdir_resolves_relative_paths_in_a_clone_pin(self, tmp_path: Path, run: str) -> None:
+        root, eval_path = _single_dockerfile(
+            tmp_path, f"FROM python:3.12{DIGEST}\nWORKDIR /opt\nRUN {run}\n"
+        )
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["pass"], _texts(results)
+
+    def test_workdir_is_reset_by_a_new_stage(self, tmp_path: Path) -> None:
+        root, eval_path = _single_dockerfile(
+            tmp_path,
+            f"FROM python:3.12{DIGEST} AS build\nWORKDIR /opt\n"
+            f"FROM python:3.12{DIGEST}\n"
+            f"RUN git clone https://github.com/org/repo /opt/repo && cd repo && git checkout {COMMIT}\n",
+        )
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["warn"], _texts(results)
+
+    def test_a_pin_in_a_later_run_warns(self, tmp_path: Path) -> None:
+        root, eval_path = _single_dockerfile(
+            tmp_path,
+            f"FROM python:3.12{DIGEST}\n"
+            "RUN git clone https://github.com/org/repo /opt/repo\n"
+            f"RUN git -C /opt/repo checkout {COMMIT}\n",
+        )
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["warn"]
+        assert results[0].line == 2
 
     @pytest.mark.parametrize(
         "add",

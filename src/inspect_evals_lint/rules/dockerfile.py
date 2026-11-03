@@ -281,6 +281,8 @@ class _BuildState:
     stages: set[str] = field(default_factory=set)
     lock_available: bool = False
     lock_unverified: bool = False
+    workdir: str | None = None
+    """The current ``WORKDIR``, when it is a literal path; None at the start of a stage or after a variable."""
     host_coupling_lines: list[int] = field(default_factory=list)
     findings: list[_Finding] = field(default_factory=list)
 
@@ -597,16 +599,37 @@ def _clone_target(args: list[str], cwd: str | None) -> tuple[str, bool]:
     return _join(cwd, target), pinned
 
 
+_BRANCH_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+"""A plain branch name such as ``main``; a tag with a dot or a remote-qualified ref is not recognised."""
+
+
+def _moves_to_branch(subcommand: str, args: list[str]) -> bool:
+    """``git checkout main`` or ``git switch main``: HEAD moves to a branch that can move again.
+
+    ``-b``, ``-B``, ``-c``, ``-C`` and ``--orphan`` create a branch at the current
+    commit and are not moves.
+    """
+    if subcommand not in ("checkout", "switch"):
+        return False
+    if any(t in ("-b", "-B", "-c", "-C", "--orphan") for t in args):
+        return False
+    targets = [t for t in args if not t.startswith("-")]
+    return len(targets) == 1 and _BRANCH_NAME.match(targets[0]) is not None and targets[0] != "HEAD"
+
+
 def _check_git_clones(commands: list[list[str]], line: int, state: _BuildState) -> None:
     """Warn for each ``git clone`` in a RUN that no later command in it pins to a full commit.
 
     A pin is a ``checkout``, ``switch`` or ``reset`` of a full commit (or of
     ``FETCH_HEAD`` after a ``fetch`` of one) acting on the cloned directory, found
     through ``cd``, ``git -C <dir>`` or ``--work-tree``, or ``--revision=<commit>``
-    on the clone itself. Paths are compared as written, so a clone and its pin must
-    name the directory the same way; ``WORKDIR`` is not tracked.
+    on the clone itself. Relative paths resolve against the stage's ``WORKDIR`` and
+    earlier ``cd`` commands, so a clone and its pin may name the directory
+    differently. The last move of HEAD decides: a branch checked out after the
+    commit leaves the clone unpinned.
     """
-    cwd: str | None = None
+    cwd: str | None = state.workdir if state.workdir is not None else "."
+    cloned: set[str] = set()
     unpinned: list[str] = []
     fetched: set[str | None] = set()
     for command in commands:
@@ -625,19 +648,24 @@ def _check_git_clones(commands: list[list[str]], line: int, state: _BuildState) 
         subcommand, args = rest[0], rest[1:]
         if subcommand == "clone":
             target, pinned = _clone_target(args, directory)
+            cloned.add(target)
             if not pinned:
                 unpinned.append(target)
         elif subcommand == "fetch" and any(_FULL_COMMIT.match(t) for t in args):
             fetched.add(directory)
-        elif subcommand in _GIT_HEAD_MOVERS and directory in unpinned and "--" not in args:
+        elif subcommand in _GIT_HEAD_MOVERS and directory in cloned:
             # With ``--`` the arguments after it are paths: that form restores files, not HEAD.
             # A reset only moves the working tree in these modes; soft and mixed leave it.
+            if "--" in args and args.index("--") < len(args) - 1:
+                continue
             if subcommand == "reset" and not any(t in _GIT_RESET_TREE_MODES for t in args):
                 continue
             if any(_FULL_COMMIT.match(t) for t in args) or (
                 "FETCH_HEAD" in args and directory in fetched
             ):
-                unpinned.remove(directory)
+                unpinned = [d for d in unpinned if d != directory]
+            elif _moves_to_branch(subcommand, args) and directory not in unpinned:
+                unpinned.append(directory)
     if unpinned:
         state.warn(
             line,
@@ -704,6 +732,7 @@ def _analyse(
     for instruction in instructions:
         keyword = instruction.keyword
         if keyword == "FROM":
+            state.workdir = None
             tokens = instruction.args.split()
             if not tokens:
                 continue
@@ -713,6 +742,9 @@ def _analyse(
                 state.warn(instruction.line, f"FROM: {problem[0]}", problem[1])
             if len(tokens) >= 3 and tokens[1].upper() == "AS":
                 state.stages.add(tokens[2])
+        elif keyword == "WORKDIR":
+            path = instruction.args.strip()
+            state.workdir = _join(state.workdir, path) if path and "$" not in path else None
         elif keyword in ("COPY", "ADD"):
             source_image = instruction.flags.get("from")
             if source_image is not None:
@@ -805,12 +837,15 @@ def dockerfile_locking(ctx: LintContext) -> Iterable[Finding]:
       (BuildKit clones it; ``--checksum=<commit>`` also counts, and the URL must end
       in ``.git`` or use an ``ssh``, ``git`` or ``git@`` address). A ``git clone``
       passes when the same ``RUN`` runs ``checkout <commit>``, ``switch`` or
-      ``reset --hard`` in the cloned directory, reached through ``cd <dir>`` or
-      ``git -C <dir>``, with ``checkout FETCH_HEAD`` after a ``git fetch`` of the
-      commit, or with ``git clone --revision=<commit>`` (git 2.49 or newer). A
-      branch, tag or short hash, a checkout of some other directory, a ``fetch``
-      alone, a ``reset`` that leaves the working tree, and a pin in a later ``RUN``
-      all warn.
+      ``reset --hard`` in the cloned directory, reached through ``cd <dir>``,
+      ``git -C <dir>`` or ``--work-tree=<dir>``, with ``checkout FETCH_HEAD`` after
+      a ``git fetch`` of the commit, or with ``git clone --revision=<commit>`` (git
+      2.49 or newer). Relative paths resolve against the stage's ``WORKDIR`` and
+      earlier ``cd`` commands, so a clone into ``.`` pinned by a bare ``git
+      checkout`` passes. A branch, tag or short hash, a checkout of some other
+      directory, a ``fetch`` alone, a ``reset`` that leaves the working tree, a
+      branch checked out after the commit, and a pin in a later ``RUN`` all warn.
+      Heredoc bodies and the string given to ``sh -c`` are not read.
     - Dynamic references (``${VAR}`` images, remote or interpolated ``COPY`` sources,
       templated package names) and unsupported package managers (``npm``, ``cargo``,
       ``conda``, ...) are reported as unverified, never as passing.
