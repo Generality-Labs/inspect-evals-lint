@@ -1,5 +1,6 @@
 """Scoring rules: grader and sandbox failures inside the code a scorer runs."""
 
+from dataclasses import replace
 from pathlib import Path
 
 from inspect_evals_lint.config import PRESETS, LintConfig
@@ -1042,7 +1043,6 @@ def graded(model=None):
         name = get_model().name
         a = await get_model(role="grader").generate("p")
         b = await get_model(default="openai/gpt-4o").generate("p")
-        c = await get_model(model).generate("p")
         d = await get_model(**options).generate("p")
         tokens = count(get_model(), "p")
         return Score(value=name)
@@ -1050,7 +1050,109 @@ def graded(model=None):
 """,
         )
         assert [r.status for r in results] == ["pass"]
-        assert "6 get_model() call(s)" in results[0].message
+        assert "5 get_model() call(s)" in results[0].message
+
+    def test_a_parameter_left_at_none_fails_unless_the_call_is_guarded(self, tmp_path):
+        results = self.run(
+            tmp_path,
+            """
+@scorer(metrics=[])
+def graded(model=None, *, judge: str | None = None):
+    grader_model = get_model(model) if model else None
+    async def score(state, target):
+        if judge is not None:
+            a = await get_model(judge).generate("p")
+        b = await get_model(model).generate("p")
+        return Score(value=b.completion)
+    return score
+""",
+        )
+        (d,) = diagnostics(results)
+        assert (d.status, d.line) == ("fail", 13)
+        assert (
+            "get_model(model) in score() resolves to the model under evaluation when model is left at None"
+            in d.message
+        )
+
+    def test_an_if_chain_reports_the_bare_branch_in_any_order(self, tmp_path):
+        bare = "grader = get_model()"
+        named = 'grader = get_model(model) if model else get_model(role="grader", default="openai/gpt-4o")'
+        code = """
+@scorer(metrics=[])
+def graded(model=None, model_role=None):
+    async def score(state, target):
+        if {first_test}:
+            {first}
+        else:
+            {second}
+        result = await grader.generate("p")
+        return Score(value=result.completion)
+    return score
+"""
+        orders = {
+            "bare_first": ("model is None and model_role is None", bare, named),
+            "bare_last": ("model is not None or model_role is not None", named, bare),
+        }
+        for label, (first_test, first, second) in orders.items():
+            results = self.run(
+                tmp_path / label, code.format(first_test=first_test, first=first, second=second)
+            )
+            assert [d.status for d in diagnostics(results)] == ["fail"], label
+
+    def test_a_package_function_named_get_model_is_not_read(self, tmp_path):
+        results = self.run(
+            tmp_path,
+            """
+def get_model():
+    return load_hf_model("gpt2")
+
+@scorer(metrics=[])
+def graded():
+    async def score(state, target):
+        return Score(value=(await get_model().generate("p")).completion)
+    return score
+""",
+        )
+        assert [r.status for r in results] == ["skip"]
+
+    def test_an_attribute_of_state_model_and_the_module_form_fail(self, tmp_path):
+        results = self.run(
+            tmp_path,
+            """
+from inspect_ai import model as inspect_model
+
+@scorer(metrics=[])
+def graded():
+    async def score(state, target):
+        a = await get_model(
+            state.model.name
+        ).generate("p")
+        b = await inspect_model.get_model().generate("p")
+        return Score(value=a.completion + b.completion)
+    return score
+""",
+        )
+        assert [(d.status, d.line, d.end_line) for d in diagnostics(results)] == [
+            ("fail", 12, 14),
+            ("fail", 15, None),
+        ]
+
+    def test_a_helper_package_is_read(self, tmp_path):
+        package = tmp_path / "utils"
+        write(package / "__init__.py", "")
+        write(
+            package / "judging.py",
+            HEADER
+            + """
+@scorer(metrics=[])
+def judged():
+    async def score(state, target):
+        return Score(value=(await get_model().generate("p")).completion)
+    return score
+""",
+        )
+        ctx = replace(context_for(package), kind="helper")
+        assert found(list(grader_model_under_test(ctx))) == [("fail", "judging.py", 10)]
 
     def test_a_name_rebound_before_it_generates_passes(self, tmp_path):
         results = self.run(

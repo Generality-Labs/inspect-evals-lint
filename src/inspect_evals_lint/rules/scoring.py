@@ -1007,16 +1007,22 @@ def _is_state_model(node: ast.expr) -> bool:
         and not node.keywords
     ):
         node = node.args[0]
-    return (
-        isinstance(node, ast.Attribute)
-        and node.attr == "model"
-        and isinstance(node.value, ast.Name)
-        and node.value.id == "state"
-    )
+    while isinstance(node, ast.Attribute):
+        if node.attr == "model" and isinstance(node.value, ast.Name) and node.value.id == "state":
+            return True
+        node = node.value
+    return False
 
 
-def _resolves_to_model_under_test(call: ast.Call) -> bool:
-    """A ``get_model()`` call with no model, role or default, or one given ``state.model``."""
+def _model_argument(call: ast.Call) -> ast.expr | None:
+    """The ``model`` argument of a ``get_model(...)`` call, positional or by keyword."""
+    if call.args:
+        return call.args[0]
+    return next((k.value for k in call.keywords if k.arg == "model"), None)
+
+
+def _resolves_to_model_under_test(call: ast.Call, none_params: frozenset[str]) -> bool:
+    """A ``get_model()`` call with no model, role or default, or one given ``state.model`` or a parameter that defaults to ``None``."""
     if get_call_name(call) != "get_model" or any(isinstance(a, ast.Starred) for a in call.args):
         return False
     keywords = {k.arg: k.value for k in call.keywords}
@@ -1025,8 +1031,47 @@ def _resolves_to_model_under_test(call: ast.Call) -> bool:
     default = keywords.get("default")
     if default is not None and not _is_none(default):
         return False
-    model = call.args[0] if call.args else keywords.get("model")
-    return model is None or _is_none(model) or _is_state_model(model)
+    model = _model_argument(call)
+    return (
+        model is None
+        or _is_none(model)
+        or _is_state_model(model)
+        or (isinstance(model, ast.Name) and model.id in none_params)
+    )
+
+
+def _none_default_params(fn: FunctionNode) -> set[str]:
+    """The parameters of ``fn`` whose default is ``None``."""
+    args = fn.args
+    positional = args.posonlyargs + args.args
+    with_default = positional[len(positional) - len(args.defaults) :]
+    names = {a.arg for a, d in zip(with_default, args.defaults, strict=True) if _is_none(d)}
+    for a, d in zip(args.kwonlyargs, args.kw_defaults, strict=True):
+        if d is not None and _is_none(d):
+            names.add(a.arg)
+    return names
+
+
+def _none_params(function: PackageFunction, code: ScorerCode) -> frozenset[str]:
+    """Parameters defaulting to ``None`` that ``function`` sees: its own, and those of enclosing functions it does not rebind."""
+    names: set[str] = set()
+    for fn in [*function.enclosing, function.node]:
+        if isinstance(fn, ast.ClassDef):
+            continue
+        names -= code.bound(fn)
+        names |= _none_default_params(fn)
+    return frozenset(names)
+
+
+def _guarded(call: ast.Call, body: list[ast.stmt], name: str) -> bool:
+    """Whether ``call`` sits under an ``if`` or conditional expression whose test reads ``name``."""
+    at = _position(call)
+    return any(
+        isinstance(node, (ast.If, ast.IfExp))
+        and _position(node) <= at <= _end(node)
+        and any(isinstance(n, ast.Name) and n.id == name for n in ast.walk(node.test))
+        for node in scope_nodes(body)
+    )
 
 
 def _value_holds(value: ast.expr, call: ast.Call) -> bool:
@@ -1045,6 +1090,23 @@ Position = tuple[int, int]
 
 def _position(node: ast.expr | ast.stmt) -> Position:
     return (node.lineno, node.col_offset)
+
+
+def _end(node: ast.expr | ast.stmt) -> Position:
+    return (node.end_lineno or node.lineno, node.end_col_offset or 0)
+
+
+def _sibling_branches(statement: ast.stmt, body: list[ast.stmt]) -> list[tuple[Position, Position]]:
+    """The spans of the other branches of each ``if`` around ``statement``: code that does not run when it does."""
+    at = _position(statement)
+    spans: list[tuple[Position, Position]] = []
+    for node in scope_nodes(body):
+        if not (isinstance(node, ast.If) and _position(node) <= at <= _end(node)):
+            continue
+        for branch in (node.body, node.orelse):
+            if branch and not (_position(branch[0]) <= at <= _end(branch[-1])):
+                spans.append((_position(branch[0]), _end(branch[-1])))
+    return spans
 
 
 def _generate_calls(body: list[ast.stmt], name: str) -> list[Position]:
@@ -1080,7 +1142,8 @@ def _generates_with(call: ast.Call, function: PackageFunction, code: ScorerCode)
     Directly (``get_model().generate(...)``), or through a name it is assigned
     to: ``function`` calls ``.generate`` on the name after the assignment and
     before the name is next bound, or, when it is not bound again, a function
-    nested in ``function`` that sees the name does.
+    nested in ``function`` that sees the name does. A binding in another
+    branch of an ``if`` around the assignment does not count as the next one.
     """
     body = function.node.body
     for node in scope_nodes(body):
@@ -1098,7 +1161,8 @@ def _generates_with(call: ast.Call, function: PackageFunction, code: ScorerCode)
             targets = [node.target]
         else:
             continue
-        start = (node.end_lineno or node.lineno, node.end_col_offset or 0)
+        start = _end(node)
+        elsewhere = _sibling_branches(node, body)
         for name in (t.id for t in targets if isinstance(t, ast.Name)):
             rebound = [
                 _position(n)
@@ -1107,6 +1171,7 @@ def _generates_with(call: ast.Call, function: PackageFunction, code: ScorerCode)
                 and isinstance(n.ctx, ast.Store)
                 and n.id == name
                 and _position(n) > start
+                and not any(low <= _position(n) <= high for low, high in elsewhere)
             ]
             stop = min(rebound, default=None)
             if any(
@@ -1121,8 +1186,10 @@ def _generates_with(call: ast.Call, function: PackageFunction, code: ScorerCode)
 _UNDER_TEST_HINT = (
     'resolve the grader as get_model(role="grader", default=...), where the default is the '
     "grader the upstream benchmark used, or, where the benchmark grades without a model, a "
-    "default this port picks and names in its README (required=True also works); then it "
-    "can be chosen at invocation and is never the model under evaluation by accident"
+    'default this port picks and names in its README; or as get_model(role="grader", '
+    "required=True), which raises on the first scored sample when the role is unbound; "
+    "then the grader is chosen at invocation and is never the model under evaluation by "
+    "accident"
 )
 
 
@@ -1144,15 +1211,22 @@ def grader_model_under_test(ctx: LintContext) -> Iterable[Finding]:
     Flags a ``get_model()`` call, in code a scorer runs, that resolves to the
     model under evaluation and whose result is used for ``.generate(...)``.
     That is ``get_model()`` with no model, no ``role=`` and no ``default=``
-    (a literal ``None`` counts as none), or ``get_model(state.model)`` or
-    ``get_model(str(state.model))``. The result is used when ``.generate`` is
-    called on the call itself, or on a name it is assigned to, alone or as an
-    alternative (``grader = grader_model or get_model(...)``). The name
-    counts in the same function from the assignment until it is next bound,
-    and, if it is not bound again, in nested functions that see it: one that
-    takes the name as a parameter or assigns it has its own. A call whose
-    result is only read, such as ``get_model().name`` to pick a tokenizer, is
-    not reported.
+    (a literal ``None`` counts as none); ``get_model(state.model)``,
+    ``get_model(str(state.model))`` or an attribute of it such as
+    ``state.model.name``; or ``get_model(model)`` where ``model`` is a
+    parameter of the function, or of an enclosing one, that defaults to
+    ``None``, unless the call sits under an ``if`` or conditional expression
+    whose test reads that parameter (``get_model(model) if model else
+    None``). The result is used when ``.generate`` is called on the call
+    itself, or on a name it is assigned to, alone or as an alternative
+    (``grader = grader_model or get_model(...)``). The name counts in the
+    same function from the assignment until it is next bound, where a
+    binding in another branch of the same ``if`` does not count, and, if it
+    is not bound again, in nested functions that see it: one that takes the
+    name as a parameter or assigns it has its own. A call whose result is
+    only read, such as ``get_model().name`` to pick a tokenizer, is not
+    reported, and neither is a call to the package's own function named
+    ``get_model``.
 
     Code a scorer runs is found as for ``scorer_failure_scored`` (IEBP012):
     ``@scorer`` functions, the functions nested in them, and the package
@@ -1162,10 +1236,10 @@ def grader_model_under_test(ctx: LintContext) -> Iterable[Finding]:
 
     Self-grading is not a default. Where it is right by design, mark the call
     with ``# inspect-evals-lint: ignore[grader_model_under_test] -- <reason>``
-    and say so in the README too. That covers a scoring-only task, where
-    ``--model`` is the grader because the task scores another run's output
-    (PaperBench's ``paperbench_score``), a self-judging defence, and a helper's
-    last resort after an explicit model and a role.
+    and say so in the README too. That covers a scoring-only task, whose
+    only job is to score another run's output, so ``--model`` is the grader;
+    a self-judging defence; and a helper's last resort after a model argument
+    and a role.
 
     The default grader is the one the upstream benchmark used. Preferably it
     is a ``Model`` carrying the generation settings the paper or upstream code
@@ -1174,13 +1248,20 @@ def grader_model_under_test(ctx: LintContext) -> Iterable[Finding]:
     its README says so. Changing a default grader moves scores, so it needs a
     comparability version bump.
 
-    **Known limits:** ``get_model(model)`` where ``model`` is a parameter that
-    defaults to ``None`` is not reported, since telling it from a guarded call
-    needs the guards read. Nor is a model passed on to another function, such
-    as ``model_graded_qa(model=get_model())``, or one reached through an
-    alias (``grader = m``, ``gen = m.generate``), a walrus or an attribute
-    (``self.grader``). Statement order is read by position, not by control
-    flow.
+    **Known limits:** a ``get_model()`` in the task body that is passed into
+    the scorer, or in a class's ``__init__`` or classmethod, is not code a
+    scorer runs and is not read. A guard is any ``if`` whose test reads the
+    parameter, whichever branch the call is in. A model passed on to another
+    function, such as ``model_graded_qa(model=get_model())``, is not
+    followed, nor is one reached through an alias (``grader = m``,
+    ``gen = m.generate``, ``name = str(state.model)``), a walrus, an
+    attribute (``self.grader``) or a tuple target (``grader, n =
+    get_model(), 3``). ``get_model`` imported under another name is not
+    recognised, as for IEBP002. A closure that generates on a name the outer
+    function later rebinds is not followed. A ``model_graded_*`` scorer left
+    on its default grader role is seen by neither this rule nor IEBP002.
+    Statement order is read by position, not by control flow, apart from
+    the ``if`` branches above.
 
     ## Why is this bad?
     The evaluated model grades its own answers, and nothing in the log says
@@ -1214,22 +1295,34 @@ def grader_model_under_test(ctx: LintContext) -> Iterable[Finding]:
     calls = 0
     found: list[Diagnostic] = []
     for function in code.reached:
+        none_params = _none_params(function, code)
         for node in scope_nodes(function.node.body):
             if not (isinstance(node, ast.Call) and get_call_name(node) == "get_model"):
                 continue
+            if code.callee(node, function) is not None:
+                continue
             calls += 1
-            if _resolves_to_model_under_test(node) and _generates_with(node, function, code):
-                found.append(
-                    Diagnostic(
-                        f"{ast.unparse(node)} in {function.node.name}() resolves to the model "
-                        "under evaluation, which then grades its own output",
-                        file=function.file.path,
-                        line=node.lineno,
-                        column=column_of(node),
-                        end_line=end_line_of(node),
-                        hint=_UNDER_TEST_HINT,
-                    )
+            if not (
+                _resolves_to_model_under_test(node, none_params)
+                and _generates_with(node, function, code)
+            ):
+                continue
+            model = _model_argument(node)
+            param = model.id if isinstance(model, ast.Name) else None
+            if param is not None and _guarded(node, function.node.body, param):
+                continue
+            when = f" when {param} is left at None" if param is not None else ""
+            found.append(
+                Diagnostic(
+                    f"{ast.unparse(node)} in {function.node.name}() resolves to the model "
+                    f"under evaluation{when}, which then grades its own output",
+                    file=function.file.path,
+                    line=node.lineno,
+                    column=column_of(node),
+                    end_line=end_line_of(node),
+                    hint=_UNDER_TEST_HINT,
                 )
+            )
     yield from sorted(found, key=lambda d: (str(d.file), d.line or 0))
 
     if found:
