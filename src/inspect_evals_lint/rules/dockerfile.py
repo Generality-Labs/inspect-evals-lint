@@ -319,6 +319,8 @@ def _is_git_source(source: str) -> bool:
 
 def _add_git_source(source: str, instruction: Instruction, state: _BuildState) -> None:
     """An ``ADD <repo>#<ref>`` is a fixed input only when the ref or ``--checksum`` is a full commit."""
+    # The repository's contents are not read, so a lock inside it is unknown rather than missing.
+    state.lock_unverified = True
     ref = source.partition("#")[2].partition(":")[0]
     checksum = instruction.flags.get("checksum", "")
     if _FULL_COMMIT.match(ref) or _FULL_COMMIT.match(checksum):
@@ -729,7 +731,7 @@ def _analyse(
             if any(str(part).startswith("<<") for part in parts):
                 continue
             for source in parts[:-1]:
-                if keyword == "ADD" and _is_git_source(str(source)):
+                if keyword == "ADD" and "$" not in str(source) and _is_git_source(str(source)):
                     _add_git_source(str(source), instruction, state)
                 else:
                     _register_source(str(source), instruction.line, state, keyword)

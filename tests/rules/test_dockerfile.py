@@ -465,6 +465,27 @@ class TestMutableImageAndSourceInputs:
         assert "git repository" in results[0].message
         assert "#<commit>" in _text(results[0])
 
+    def test_add_of_git_repository_with_a_dynamic_ref_is_unverified(self, tmp_path: Path) -> None:
+        root, eval_path = _single_dockerfile(
+            tmp_path,
+            f"FROM python:3.12{DIGEST}\nARG COMMIT\n"
+            "ADD https://github.com/org/repo.git#${COMMIT} /opt/repo\n",
+        )
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["warn"]
+        assert "cannot be verified statically" in results[0].message
+
+    def test_lock_inside_an_added_git_repository_is_unverified(self, tmp_path: Path) -> None:
+        """The rule does not read the cloned repository, so a lock in it is unknown, not missing."""
+        root, eval_path = _single_dockerfile(
+            tmp_path,
+            f"FROM python:3.12{DIGEST}\nADD https://github.com/org/repo.git#{COMMIT} /app\n"
+            "WORKDIR /app\nRUN uv sync --locked\n",
+        )
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["warn"]
+        assert "cannot verify that uv.lock is available" in results[0].message
+
     def test_installer_script_piped_to_shell_warns(self, tmp_path: Path) -> None:
         root, eval_path = _single_dockerfile(
             tmp_path,
