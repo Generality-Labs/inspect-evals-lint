@@ -1184,12 +1184,11 @@ def _generates_with(call: ast.Call, function: PackageFunction, code: ScorerCode)
 
 
 _UNDER_TEST_HINT = (
-    'resolve the grader as get_model(role="grader", default=...), where the default is the '
-    "grader the upstream benchmark used, or, where the benchmark grades without a model, a "
-    'default this port picks and names in its README; or as get_model(role="grader", '
-    "required=True), which raises on the first scored sample when the role is unbound; "
-    "then the grader is chosen at invocation and is never the model under evaluation by "
-    "accident"
+    'use get_model(role="grader", default=...) with the upstream benchmark\'s grader. '
+    "If the upstream benchmark grades without a model, choose a default and document it "
+    'in the README. Alternatively, use get_model(role="grader", required=True) to require '
+    "a grader at invocation. If no grader role is configured, this raises when get_model "
+    "runs (on the first scored sample if called inside score())."
 )
 
 
@@ -1198,77 +1197,127 @@ _UNDER_TEST_HINT = (
     name="grader_model_under_test",
     category="best_practices",
     scopes=("eval", "helper"),
-    summary="A scorer's grader is not silently the model under evaluation",
+    summary="Choose a grader instead of defaulting to the model under evaluation",
     references=(
         inspect_docs("custom-scorers", "Custom Scorers: Models in Scorers", "models-in-scorers"),
         inspect_docs("models", "Models: Model Roles", "model-roles"),
     ),
 )
 def grader_model_under_test(ctx: LintContext) -> Iterable[Finding]:
-    """A scorer's grader is not silently the model under evaluation.
+    """Choose a grader instead of defaulting to the model under evaluation.
 
     ## What it does
-    Flags a ``get_model()`` call, in code a scorer runs, that resolves to the
-    model under evaluation and whose result is used for ``.generate(...)``.
-    That is ``get_model()`` with no model, no ``role=`` and no ``default=``
-    (a literal ``None`` counts as none); ``get_model(state.model)``,
-    ``get_model(str(state.model))`` or an attribute of it such as
-    ``state.model.name``; or ``get_model(model)`` where ``model`` is a
-    parameter of the function, or of an enclosing one, that defaults to
-    ``None``, unless the call sits under an ``if`` or conditional expression
-    whose test reads that parameter (``get_model(model) if model else
-    None``). The result is used when ``.generate`` is called on the call
-    itself, or on a name it is assigned to, alone or as an alternative
-    (``grader = grader_model or get_model(...)``). The name counts in the
-    same function from the assignment until it is next bound, where a
-    binding in another branch of the same ``if`` does not count, and, if it
-    is not bound again, in nested functions that see it: one that takes the
-    name as a parameter or assigns it has its own. A call whose result is
-    only read, such as ``get_model().name`` to pick a tokenizer, is not
-    reported, and neither is a call to the package's own function named
-    ``get_model``.
 
-    Code a scorer runs is found as for ``scorer_failure_scored`` (IEBP012):
-    ``@scorer`` functions, the functions nested in them, and the package
-    functions they call. A call with ``role=`` is left to
-    ``model_role_resolution`` (IEBP002), which asks for a ``default=`` or
-    ``required=True``.
+    Reports an error when scorer code uses ``get_model()`` to select the
+    model under evaluation and then calls ``.generate(...)`` on it.
 
-    Self-grading is not a default. Where it is right by design, mark the call
-    with ``# inspect-evals-lint: ignore[grader_model_under_test] -- <reason>``
-    and say so in the README too. That covers a scoring-only task, whose
-    only job is to score another run's output, so ``--model`` is the grader;
-    a self-judging defence; and a helper's last resort after a model argument
-    and a role.
+    The rule checks ``@scorer`` functions, their nested functions, and the
+    package functions they call. This is the same scope as
+    ``scorer_failure_scored`` (IEBP012).
 
-    The default grader is the one the upstream benchmark used. Preferably it
-    is a ``Model`` carrying the generation settings the paper or upstream code
-    specifies; a model name string is enough. Where the benchmark grades
-    without a model and the port adds a grader, the port picks the default and
-    its README says so. Changing a default grader moves scores, so it needs a
-    comparability version bump.
+    It reports these forms when no ``role=`` or non-``None`` ``default=``
+    is supplied:
 
-    **Known limits:** a ``get_model()`` in the task body that is passed into
-    the scorer, or in a class's ``__init__`` or classmethod, is not code a
-    scorer runs and is not read. A guard is any ``if`` whose test reads the
-    parameter, whichever branch the call is in. A model passed on to another
-    function, such as ``model_graded_qa(model=get_model())``, is not
-    followed, nor is one reached through an alias (``grader = m``,
-    ``gen = m.generate``, ``name = str(state.model)``), a walrus, an
-    attribute (``self.grader``) or a tuple target (``grader, n =
-    get_model(), 3``). ``get_model`` imported under another name is not
-    recognised, as for IEBP002. A closure that generates on a name the outer
-    function later rebinds is not followed. A ``model_graded_*`` scorer left
-    on its default grader role is seen by neither this rule nor IEBP002.
-    Statement order is read by position, not by control flow, apart from
-    the ``if`` branches above.
+    - Calls with no model argument or a literal ``None``, such as
+      ``get_model()`` or ``get_model(None)``.
+    - Calls that select the evaluated model through ``state.model``, such
+      as ``get_model(state.model)``, ``get_model(str(state.model))``, or
+      ``get_model(state.model.name)``.
+    - Calls that pass an optional function argument whose default is
+      ``None``, such as ``get_model(model)`` inside a function defined with
+      ``model=None``. This includes arguments used by a nested scoring
+      function. If the caller leaves the argument unset, ``get_model(None)``
+      returns the evaluated model.
+
+    The rule only reports a call if its result is used for
+    ``.generate(...)``. Reading ``get_model().name`` to choose a tokenizer,
+    for example, is allowed. Functions named ``get_model`` that are defined
+    by the package itself are also excluded.
+
+    Calls with ``role=`` are checked by ``model_role_resolution`` (IEBP002),
+    which requires ``default=`` or ``required=True`` unless allowlisted.
 
     ## Why is this bad?
-    The evaluated model grades its own answers, and nothing in the log says
-    so. Self-grading inflates scores, and the result cannot be compared with a
-    run that used an independent grader.
+
+    Without a separate grader, the model under evaluation grades its own
+    answers. This can inflate scores and make them unsuitable for comparison
+    with results from an independent grader.
+
+    ## How to fix it
+
+    Use ``get_model(role="grader", default=...)``. Set the default to the
+    grader used by the original benchmark's authors. A model name string
+    is accepted; prefer a ``Model`` that also preserves the generation
+    settings specified in their paper or code.
+
+    If the original benchmark grades without a model and your implementation
+    adds one, choose a default grader and document that choice in the README.
+    Changing the default can affect scores, so bump the task version to
+    indicate that scores may no longer be comparable.
+
+    Alternatively, use ``get_model(role="grader", required=True)`` to require
+    the user to configure a grader. If the role is missing, the error occurs
+    when ``get_model`` runs. Inside ``score()``, that is the first scored
+    sample.
+
+    ### When using the evaluated model is intentional
+
+    If the rule reports an intentional use, suppress it with
+    ``# inspect-evals-lint: ignore[grader_model_under_test] -- <reason>``
+    and explain the choice in the README. Examples include:
+
+    - A scoring-only task uses ``--model`` to select the grader for another
+      run's output.
+    - A benchmark includes a self-judging defence.
+    - A shared helper deliberately falls back to the evaluated model when
+      neither a model argument nor a model role is supplied.
+
+    ## How model use is tracked
+
+    The rule recognises ``get_model().generate(...)`` and calls through an
+    assigned variable, such as ``grader = get_model()`` followed by
+    ``grader.generate(...)``. It also recognises fallback assignments such
+    as ``grader = grader_model or get_model()``.
+
+    Within a function, tracking starts at the assignment and stops when the
+    variable is assigned again. Assignments in other branches of the same
+    ``if`` do not stop tracking.
+
+    Nested functions are checked if the outer function does not assign the
+    variable again. A nested function is excluded if it defines its own
+    variable with that name, either as a parameter or by assignment.
+
+    ## Known limits
+
+    The rule can miss self-grading in these cases:
+
+    - The model is selected in a task body, a class's ``__init__``, or a
+      classmethod. The rule does not inspect those locations.
+    - The model is passed to another function, for example
+      ``model_graded_qa(model=get_model())``.
+    - The model or its ``generate`` method is assigned to another variable,
+      for example ``grader = m`` or ``gen = m.generate``. The rule also
+      misses model names assigned separately, such as
+      ``name = str(state.model)`` followed by ``get_model(name)``.
+    - The result is stored using a walrus operator, an attribute such as
+      ``self.grader``, or tuple unpacking such as
+      ``grader, n = get_model(), 3``.
+    - ``get_model`` is imported under another name.
+    - A nested function uses a model variable that the outer function later
+      assigns again.
+    - A ``model_graded_*`` scorer uses its default grader role. Neither this
+      rule nor IEBP002 checks that implicit choice.
+
+    The parameter check also has a limitation: any enclosing ``if`` or
+    conditional expression that mentions the parameter prevents a report,
+    regardless of which branch contains the call. The rule does not verify
+    that the condition prevents ``None`` from reaching ``get_model``.
+
+    Apart from the handling of ``if`` branches described above, tracking
+    follows source order and does not determine which statements run.
 
     ## Example
+
     ```python
     @scorer(metrics=[accuracy()])
     def equivalence():
@@ -1276,7 +1325,9 @@ def grader_model_under_test(ctx: LintContext) -> Iterable[Finding]:
             result = await get_model().generate(prompt)
             ...
     ```
+
     Use instead:
+
     ```python
     UPSTREAM_GRADER = "openai/gpt-4o-2024-08-06"  # the grader the benchmark's paper used
 
