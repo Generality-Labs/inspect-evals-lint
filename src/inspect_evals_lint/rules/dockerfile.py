@@ -10,12 +10,14 @@ release so consumers can migrate before any of them fail.
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import shlex
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, cast, get_args
+from urllib.parse import urlsplit
 
 from inspect_evals_lint.config import ConfigError
 from inspect_evals_lint.context import LintContext
@@ -32,6 +34,7 @@ DEFAULT_HOST_LOCK_COUPLING: HostLockCoupling = "allow"
 OPTION_TABLE = f"[tool.inspect-evals-lint.{RULE_NAME}]"
 
 _FULL_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+_SCP_STYLE_URL = re.compile(r"^[\w.-]+@[\w.-]+:")
 _DIRECTIVE = re.compile(r"^#\s*([A-Za-z_]\w*)\s*=\s*(.+?)\s*$")
 _HEREDOC = re.compile(r"<<-?['\"]?(\w+)['\"]?")
 _ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
@@ -278,6 +281,8 @@ class _BuildState:
     stages: set[str] = field(default_factory=set)
     lock_available: bool = False
     lock_unverified: bool = False
+    workdir: str | None = None
+    """The current ``WORKDIR``, when it is a literal path; None at the start of a stage or after a variable."""
     host_coupling_lines: list[int] = field(default_factory=list)
     findings: list[_Finding] = field(default_factory=list)
 
@@ -303,6 +308,31 @@ def _image_problem(reference: str, state: _BuildState) -> tuple[str, str] | None
             "append @sha256:<digest> to the reference to fix the build input",
         )
     return None
+
+
+def _is_git_source(source: str) -> bool:
+    """True for the sources BuildKit's ``ADD`` clones rather than downloads."""
+    if source.startswith(("git://", "ssh://", "git+ssh://")) or _SCP_STYLE_URL.match(source):
+        return True
+    if source.startswith(("http://", "https://")):
+        return urlsplit(source).path.endswith(".git")
+    return False
+
+
+def _add_git_source(source: str, instruction: Instruction, state: _BuildState) -> None:
+    """An ``ADD <repo>#<ref>`` is a fixed input only when the ref or ``--checksum`` is a full commit."""
+    # The repository's contents are not read, so a lock inside it is unknown rather than missing.
+    state.lock_unverified = True
+    ref = source.partition("#")[2].partition(":")[0]
+    checksum = instruction.flags.get("checksum", "")
+    if _FULL_COMMIT.match(ref) or _FULL_COMMIT.match(checksum):
+        return
+    state.warn(
+        instruction.line,
+        f"ADD of git repository '{source}' without a full commit, and a branch or tag can move",
+        "put the 40-character commit in the URL fragment, ADD <url>.git#<commit> <dir>, "
+        "or give it as --checksum=<commit>",
+    )
 
 
 def _register_source(source: str, line: int, state: _BuildState, via: str) -> None:
@@ -487,6 +517,164 @@ def _uv_command(command: list[str], line: int, state: _BuildState) -> None:
         )
 
 
+_GIT_GLOBAL_OPTIONS_WITH_VALUE = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace"})
+_GIT_CLONE_OPTIONS_WITH_VALUE = frozenset(
+    {
+        "-b",
+        "--branch",
+        "-c",
+        "--config",
+        "-j",
+        "--jobs",
+        "-o",
+        "--origin",
+        "-u",
+        "--upload-pack",
+        "--bundle-uri",
+        "--depth",
+        "--filter",
+        "--reference",
+        "--reference-if-able",
+        "--revision",
+        "--separate-git-dir",
+        "--server-option",
+        "--shallow-exclude",
+        "--shallow-since",
+        "--template",
+    }
+)
+_GIT_HEAD_MOVERS = ("checkout", "switch", "reset")
+_GIT_RESET_TREE_MODES = frozenset({"--hard", "--merge", "--keep"})
+
+
+def _join(base: str | None, path: str) -> str:
+    """Resolve ``path`` as the shell would: against ``base`` when relative and ``base`` is known."""
+    if not path.startswith("/") and base is not None:
+        path = f"{base}/{path}"
+    return posixpath.normpath(path)
+
+
+def _git_global_options(tokens: list[str], cwd: str | None) -> tuple[list[str], str | None]:
+    """Strip git's global options; return the subcommand with its arguments and the directory it acts on."""
+    directory = cwd
+    while tokens and tokens[0].startswith("-"):
+        option, has_value, value = tokens[0].partition("=")
+        tokens = tokens[1:]
+        if option in _GIT_GLOBAL_OPTIONS_WITH_VALUE and not has_value:
+            if not tokens:
+                return [], directory
+            value, tokens = tokens[0], tokens[1:]
+        if option in ("-C", "--work-tree"):
+            directory = _join(directory, value)
+    return tokens, directory
+
+
+def _clone_target(args: list[str], cwd: str | None) -> tuple[str, bool]:
+    """The directory a ``git clone`` populates, and whether its own options pin a full commit."""
+    positional: list[str] = []
+    pinned = False
+    tokens = list(args)
+    while tokens:
+        token = tokens.pop(0)
+        if token == "--":
+            positional.extend(tokens)
+            break
+        if not token.startswith("-"):
+            positional.append(token)
+            continue
+        option, has_value, value = token.partition("=")
+        if option in _GIT_CLONE_OPTIONS_WITH_VALUE and not has_value and tokens:
+            value = tokens.pop(0)
+        if option == "--revision" and _FULL_COMMIT.match(value):
+            pinned = True
+    if len(positional) >= 2:
+        target = positional[1]
+    elif positional:
+        # git's default: the last path component of the repository, without .git.
+        name = positional[0].rstrip("/")
+        name = name.removesuffix(".git")
+        target = re.split(r"[/:]", name)[-1]
+    else:
+        target = ""
+    return _join(cwd, target), pinned
+
+
+_BRANCH_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+"""A plain branch name such as ``main``; a tag with a dot or a remote-qualified ref is not recognised."""
+
+
+def _moves_to_branch(subcommand: str, args: list[str]) -> bool:
+    """``git checkout main`` or ``git switch main``: HEAD moves to a branch that can move again.
+
+    ``-b``, ``-B``, ``-c``, ``-C`` and ``--orphan`` create a branch at the current
+    commit and are not moves.
+    """
+    if subcommand not in ("checkout", "switch"):
+        return False
+    if any(t in ("-b", "-B", "-c", "-C", "--orphan") for t in args):
+        return False
+    targets = [t for t in args if not t.startswith("-")]
+    return len(targets) == 1 and _BRANCH_NAME.match(targets[0]) is not None and targets[0] != "HEAD"
+
+
+def _check_git_clones(commands: list[list[str]], line: int, state: _BuildState) -> None:
+    """Warn for each ``git clone`` in a RUN that no later command in it pins to a full commit.
+
+    A pin is a ``checkout``, ``switch`` or ``reset`` of a full commit (or of
+    ``FETCH_HEAD`` after a ``fetch`` of one) acting on the cloned directory, found
+    through ``cd``, ``git -C <dir>`` or ``--work-tree``, or ``--revision=<commit>``
+    on the clone itself. Relative paths resolve against the stage's ``WORKDIR`` and
+    earlier ``cd`` commands, so a clone and its pin may name the directory
+    differently. The last move of HEAD decides: a branch checked out after the
+    commit leaves the clone unpinned.
+    """
+    cwd: str | None = state.workdir if state.workdir is not None else "."
+    cloned: set[str] = set()
+    unpinned: list[str] = []
+    fetched: set[str | None] = set()
+    for command in commands:
+        tokens = _normalise(command)
+        if not tokens:
+            continue
+        if tokens[0] == "cd":
+            operand = tokens[1] if len(tokens) > 1 else ""
+            cwd = _join(cwd, operand) if operand and not operand.startswith("-") else None
+            continue
+        if tokens[0] != "git":
+            continue
+        rest, directory = _git_global_options(tokens[1:], cwd)
+        if not rest:
+            continue
+        subcommand, args = rest[0], rest[1:]
+        if subcommand == "clone":
+            target, pinned = _clone_target(args, directory)
+            cloned.add(target)
+            if not pinned:
+                unpinned.append(target)
+        elif subcommand == "fetch" and any(_FULL_COMMIT.match(t) for t in args):
+            fetched.add(directory)
+        elif subcommand in _GIT_HEAD_MOVERS and directory in cloned:
+            # With ``--`` the arguments after it are paths: that form restores files, not HEAD.
+            # A reset only moves the working tree in these modes; soft and mixed leave it.
+            if "--" in args and args.index("--") < len(args) - 1:
+                continue
+            if subcommand == "reset" and not any(t in _GIT_RESET_TREE_MODES for t in args):
+                continue
+            if any(_FULL_COMMIT.match(t) for t in args) or (
+                "FETCH_HEAD" in args and directory in fetched
+            ):
+                unpinned = [d for d in unpinned if d != directory]
+            elif _moves_to_branch(subcommand, args) and directory not in unpinned:
+                unpinned.append(directory)
+    if unpinned:
+        state.warn(
+            line,
+            "git clone at build time without a full commit checkout, and a branch or tag can move",
+            "pin it in the same RUN with git -C <dir> checkout <40-character commit>, or replace "
+            "the clone with ADD <url>.git#<commit> <dir>, which needs no git in the image",
+        )
+
+
 def _classify(
     command: list[str], previous: list[str] | None, line: int, state: _BuildState
 ) -> None:
@@ -518,17 +706,6 @@ def _classify(
             f"dependency installation with {name} cannot be verified by this rule",
             "only pip and uv installs are understood; lock these inputs by other means",
         )
-    elif (
-        name == "git"
-        and len(command) > 1
-        and command[1] == "clone"
-        and not any(_FULL_COMMIT.match(t) for t in command)
-    ):
-        state.warn(
-            line,
-            "git clone at build time without a full commit checkout, and a branch or tag can move",
-            "check out a full 40-character commit",
-        )
 
 
 def _analyse(
@@ -555,6 +732,7 @@ def _analyse(
     for instruction in instructions:
         keyword = instruction.keyword
         if keyword == "FROM":
+            state.workdir = None
             tokens = instruction.args.split()
             if not tokens:
                 continue
@@ -564,6 +742,9 @@ def _analyse(
                 state.warn(instruction.line, f"FROM: {problem[0]}", problem[1])
             if len(tokens) >= 3 and tokens[1].upper() == "AS":
                 state.stages.add(tokens[2])
+        elif keyword == "WORKDIR":
+            path = instruction.args.strip()
+            state.workdir = _join(state.workdir, path) if path and "$" not in path else None
         elif keyword in ("COPY", "ADD"):
             source_image = instruction.flags.get("from")
             if source_image is not None:
@@ -582,16 +763,21 @@ def _analyse(
             if any(str(part).startswith("<<") for part in parts):
                 continue
             for source in parts[:-1]:
-                _register_source(str(source), instruction.line, state, keyword)
+                if keyword == "ADD" and "$" not in str(source) and _is_git_source(str(source)):
+                    _add_git_source(str(source), instruction, state)
+                else:
+                    _register_source(str(source), instruction.line, state, keyword)
         elif keyword == "RUN":
             for mount in instruction.mounts:
                 options = dict(part.split("=", 1) for part in mount.split(",") if "=" in part)
                 if options.get("type") == "bind" and options.get("source"):
                     _register_source(options["source"], instruction.line, state, "bind mount")
             previous: list[str] | None = None
-            for command in split_shell_commands(instruction.args):
+            commands = split_shell_commands(instruction.args)
+            for command in commands:
                 _classify(command, previous, instruction.line, state)
                 previous = command
+            _check_git_clones(commands, instruction.line, state)
 
     if coupling == "warn":
         for line in sorted(set(state.host_coupling_lines)):
@@ -646,6 +832,20 @@ def dockerfile_locking(ctx: LintContext) -> Iterable[Finding]:
       installer script piped from ``curl`` or ``wget`` into a shell warns because
       nothing verifies it. ``COPY --from`` a digest-pinned tool image is the accepted
       way to bring in ``uv``.
+    - A Git repository brought into the image needs a full 40-character commit. The
+      form that needs no git in the image is ``ADD <url>.git#<commit> <dir>``
+      (BuildKit clones it; ``--checksum=<commit>`` also counts, and the URL must end
+      in ``.git`` or use an ``ssh``, ``git`` or ``git@`` address). A ``git clone``
+      passes when the same ``RUN`` runs ``checkout <commit>``, ``switch`` or
+      ``reset --hard`` in the cloned directory, reached through ``cd <dir>``,
+      ``git -C <dir>`` or ``--work-tree=<dir>``, with ``checkout FETCH_HEAD`` after
+      a ``git fetch`` of the commit, or with ``git clone --revision=<commit>`` (git
+      2.49 or newer). Relative paths resolve against the stage's ``WORKDIR`` and
+      earlier ``cd`` commands, so a clone into ``.`` pinned by a bare ``git
+      checkout`` passes. A branch, tag or short hash, a checkout of some other
+      directory, a ``fetch`` alone, a ``reset`` that leaves the working tree, a
+      branch checked out after the commit, and a pin in a later ``RUN`` all warn.
+      Heredoc bodies and the string given to ``sh -c`` are not read.
     - Dynamic references (``${VAR}`` images, remote or interpolated ``COPY`` sources,
       templated package names) and unsupported package managers (``npm``, ``cargo``,
       ``conda``, ...) are reported as unverified, never as passing.

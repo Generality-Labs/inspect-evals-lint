@@ -380,6 +380,162 @@ class TestMutableImageAndSourceInputs:
         assert _statuses(results) == ["warn"]
         assert "git clone" in results[0].message
 
+    @pytest.mark.parametrize(
+        "run",
+        [
+            f"git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo checkout {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo reset --hard {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo reset --keep {COMMIT}",
+            "git clone --no-checkout https://github.com/org/repo /opt/repo && cd /opt/repo"
+            f" && git fetch --depth 1 origin {COMMIT} && git checkout FETCH_HEAD",
+            f"git clone --revision={COMMIT} https://github.com/org/repo /opt/repo",
+            f"git clone --revision {COMMIT} https://github.com/org/repo /opt/repo",
+            # The directory defaults to the repository name, and cd resolves against it.
+            f"cd /opt && git clone https://github.com/org/repo.git && cd repo && git checkout {COMMIT}",
+            f"git clone https://github.com/org/repo repo && cd repo && git -C . checkout {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/repo && git --work-tree=/opt/repo checkout {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/a && git clone https://github.com/org/repo /opt/b"
+            f" && git -C /opt/a checkout {COMMIT} && git -C /opt/b checkout {COMMIT}",
+            # A clone into the current directory, pinned there.
+            f"git clone https://github.com/org/repo.git . && git checkout {COMMIT} && git lfs pull",
+            # A fallback clone into the same directory, then one pin.
+            "git clone https://github.com/org/repo /opt/repo || git clone https://github.com/mirror/repo /opt/repo"
+            f" && git -C /opt/repo checkout {COMMIT}",
+            # A trailing -- with nothing after it is not a path checkout.
+            f"git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout {COMMIT} --",
+            # A branch created at the pinned commit does not move HEAD.
+            f"git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout {COMMIT} && git checkout -b work",
+        ],
+    )
+    def test_git_clone_then_full_commit_checkout_passes(self, tmp_path: Path, run: str) -> None:
+        root, eval_path = _single_dockerfile(tmp_path, f"FROM python:3.12{DIGEST}\nRUN {run}\n")
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["pass"], _texts(results)
+
+    @pytest.mark.parametrize(
+        "run",
+        [
+            "git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout main",
+            "git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout 2451bcb",
+            f"git -C /opt/other checkout {COMMIT} && git clone https://github.com/org/repo /opt/repo",
+            # A pin of some other directory does not cover this clone.
+            f"git clone https://github.com/org/repo /opt/repo && git -C /opt/other checkout {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/repo && git checkout {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/a && git clone https://github.com/org/repo /opt/b"
+            f" && git -C /opt/a checkout {COMMIT}",
+            # A fetch alone does not move HEAD, and a path checkout restores one file.
+            f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo fetch origin {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo checkout {COMMIT} -- README.md",
+            # git clone --branch rejects a commit hash; only --revision takes one.
+            f"git clone --branch={COMMIT} https://github.com/org/repo /opt/repo",
+            # A mixed or soft reset moves HEAD but leaves the working tree on the branch.
+            f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo reset {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo reset --soft {COMMIT}",
+            # The last move of HEAD decides: a branch checked out after the commit moves it again.
+            f"git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout {COMMIT} && git checkout main",
+            # FETCH_HEAD pins only after a fetch of a full commit.
+            "git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout FETCH_HEAD",
+            "git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git fetch origin 2451bcb && git checkout FETCH_HEAD",
+        ],
+    )
+    def test_git_clone_then_moving_checkout_warns(self, tmp_path: Path, run: str) -> None:
+        root, eval_path = _single_dockerfile(tmp_path, f"FROM python:3.12{DIGEST}\nRUN {run}\n")
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["warn"]
+        assert "git clone" in results[0].message
+        assert "git -C <dir> checkout" in _text(results[0])
+        assert "ADD" in _text(results[0])
+
+    @pytest.mark.parametrize(
+        "run",
+        [
+            f"git clone https://github.com/org/repo /opt/repo && cd repo && git checkout {COMMIT}",
+            f"git clone https://github.com/org/repo repo && git -C /opt/repo checkout {COMMIT}",
+            f"git clone https://github.com/org/repo.git && cd repo && git checkout {COMMIT}",
+        ],
+    )
+    def test_workdir_resolves_relative_paths_in_a_clone_pin(self, tmp_path: Path, run: str) -> None:
+        root, eval_path = _single_dockerfile(
+            tmp_path, f"FROM python:3.12{DIGEST}\nWORKDIR /opt\nRUN {run}\n"
+        )
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["pass"], _texts(results)
+
+    def test_workdir_is_reset_by_a_new_stage(self, tmp_path: Path) -> None:
+        root, eval_path = _single_dockerfile(
+            tmp_path,
+            f"FROM python:3.12{DIGEST} AS build\nWORKDIR /opt\n"
+            f"FROM python:3.12{DIGEST}\n"
+            f"RUN git clone https://github.com/org/repo /opt/repo && cd repo && git checkout {COMMIT}\n",
+        )
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["warn"], _texts(results)
+
+    def test_a_pin_in_a_later_run_warns(self, tmp_path: Path) -> None:
+        root, eval_path = _single_dockerfile(
+            tmp_path,
+            f"FROM python:3.12{DIGEST}\n"
+            "RUN git clone https://github.com/org/repo /opt/repo\n"
+            f"RUN git -C /opt/repo checkout {COMMIT}\n",
+        )
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["warn"]
+        assert results[0].line == 2
+
+    @pytest.mark.parametrize(
+        "add",
+        [
+            f"ADD https://github.com/org/repo.git#{COMMIT} /opt/repo",
+            f"ADD --keep-git-dir=true git@github.com:org/repo.git#{COMMIT} /opt/repo",
+            f"ADD --checksum={COMMIT} https://github.com/org/repo.git#v1.0 /opt/repo",
+            f"ADD https://github.com/org/repo.git#{COMMIT}:docs /opt/docs",
+        ],
+    )
+    def test_add_of_git_repository_at_a_full_commit_passes(self, tmp_path: Path, add: str) -> None:
+        root, eval_path = _single_dockerfile(tmp_path, f"FROM python:3.12{DIGEST}\n{add}\n")
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["pass"], _texts(results)
+
+    @pytest.mark.parametrize(
+        "add",
+        [
+            "ADD https://github.com/org/repo.git /opt/repo",
+            "ADD https://github.com/org/repo.git#main /opt/repo",
+            "ADD https://github.com/org/repo.git#2451bcb /opt/repo",
+            "ADD --checksum=2451bcb https://github.com/org/repo.git#v1.0 /opt/repo",
+        ],
+    )
+    def test_add_of_git_repository_without_a_full_commit_warns(
+        self, tmp_path: Path, add: str
+    ) -> None:
+        root, eval_path = _single_dockerfile(tmp_path, f"FROM python:3.12{DIGEST}\n{add}\n")
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["warn"]
+        assert "git repository" in results[0].message
+        assert "#<commit>" in _text(results[0])
+
+    def test_add_of_git_repository_with_a_dynamic_ref_is_unverified(self, tmp_path: Path) -> None:
+        root, eval_path = _single_dockerfile(
+            tmp_path,
+            f"FROM python:3.12{DIGEST}\nARG COMMIT\n"
+            "ADD https://github.com/org/repo.git#${COMMIT} /opt/repo\n",
+        )
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["warn"]
+        assert "cannot be verified statically" in results[0].message
+
+    def test_lock_inside_an_added_git_repository_is_unverified(self, tmp_path: Path) -> None:
+        """The rule does not read the cloned repository, so a lock in it is unknown, not missing."""
+        root, eval_path = _single_dockerfile(
+            tmp_path,
+            f"FROM python:3.12{DIGEST}\nADD https://github.com/org/repo.git#{COMMIT} /app\n"
+            "WORKDIR /app\nRUN uv sync --locked\n",
+        )
+        results = _run(root, eval_path)
+        assert _statuses(results) == ["warn"]
+        assert "cannot verify that uv.lock is available" in results[0].message
+
     def test_installer_script_piped_to_shell_warns(self, tmp_path: Path) -> None:
         root, eval_path = _single_dockerfile(
             tmp_path,
