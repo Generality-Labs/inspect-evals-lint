@@ -386,6 +386,7 @@ class TestMutableImageAndSourceInputs:
             f"git clone https://github.com/org/repo /opt/repo && cd /opt/repo && git checkout {COMMIT}",
             f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo checkout {COMMIT}",
             f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo reset --hard {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo reset --keep {COMMIT}",
             "git clone --no-checkout https://github.com/org/repo /opt/repo && cd /opt/repo"
             f" && git fetch --depth 1 origin {COMMIT} && git checkout FETCH_HEAD",
             f"git clone --revision={COMMIT} https://github.com/org/repo /opt/repo",
@@ -419,6 +420,9 @@ class TestMutableImageAndSourceInputs:
             f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo checkout {COMMIT} -- README.md",
             # git clone --branch rejects a commit hash; only --revision takes one.
             f"git clone --branch={COMMIT} https://github.com/org/repo /opt/repo",
+            # A mixed or soft reset moves HEAD but leaves the working tree on the branch.
+            f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo reset {COMMIT}",
+            f"git clone https://github.com/org/repo /opt/repo && git -C /opt/repo reset --soft {COMMIT}",
         ],
     )
     def test_git_clone_then_moving_checkout_warns(self, tmp_path: Path, run: str) -> None:

@@ -540,6 +540,7 @@ _GIT_CLONE_OPTIONS_WITH_VALUE = frozenset(
     }
 )
 _GIT_HEAD_MOVERS = ("checkout", "switch", "reset")
+_GIT_RESET_TREE_MODES = frozenset({"--hard", "--merge", "--keep"})
 
 
 def _join(base: str | None, path: str) -> str:
@@ -628,6 +629,9 @@ def _check_git_clones(commands: list[list[str]], line: int, state: _BuildState) 
             fetched.add(directory)
         elif subcommand in _GIT_HEAD_MOVERS and directory in unpinned and "--" not in args:
             # With ``--`` the arguments after it are paths: that form restores files, not HEAD.
+            # A reset only moves the working tree in these modes; soft and mixed leave it.
+            if subcommand == "reset" and not any(t in _GIT_RESET_TREE_MODES for t in args):
+                continue
             if any(_FULL_COMMIT.match(t) for t in args) or (
                 "FETCH_HEAD" in args and directory in fetched
             ):
@@ -798,12 +802,13 @@ def dockerfile_locking(ctx: LintContext) -> Iterable[Finding]:
       form that needs no git in the image is ``ADD <url>.git#<commit> <dir>``
       (BuildKit clones it; ``--checksum=<commit>`` also counts, and the URL must end
       in ``.git`` or use an ``ssh``, ``git`` or ``git@`` address). A ``git clone``
-      passes when the same ``RUN`` pins it with ``git -C <dir> checkout <commit>``,
-      ``switch`` or ``reset``, through ``cd <dir>`` or ``git -C <dir>``, with
-      ``checkout FETCH_HEAD`` after a ``git fetch`` of the commit, or with
-      ``git clone --revision=<commit>`` (git 2.49 or newer). A branch, tag or short
-      hash, a checkout of some other directory, a ``fetch`` alone, and a pin in a
-      later ``RUN`` all warn.
+      passes when the same ``RUN`` runs ``checkout <commit>``, ``switch`` or
+      ``reset --hard`` in the cloned directory, reached through ``cd <dir>`` or
+      ``git -C <dir>``, with ``checkout FETCH_HEAD`` after a ``git fetch`` of the
+      commit, or with ``git clone --revision=<commit>`` (git 2.49 or newer). A
+      branch, tag or short hash, a checkout of some other directory, a ``fetch``
+      alone, a ``reset`` that leaves the working tree, and a pin in a later ``RUN``
+      all warn.
     - Dynamic references (``${VAR}`` images, remote or interpolated ``COPY`` sources,
       templated package names) and unsupported package managers (``npm``, ``cargo``,
       ``conda``, ...) are reported as unverified, never as passing.
