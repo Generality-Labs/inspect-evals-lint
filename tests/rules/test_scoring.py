@@ -1,11 +1,12 @@
 """Scoring rules: grader and sandbox failures inside the code a scorer runs."""
 
+from dataclasses import replace
 from pathlib import Path
 
 from inspect_evals_lint.config import PRESETS, LintConfig
 from inspect_evals_lint.diagnostics import Diagnostic
 from inspect_evals_lint.registry import get_rule
-from inspect_evals_lint.rules.scoring import scorer_failure_scored
+from inspect_evals_lint.rules.scoring import grader_model_under_test, scorer_failure_scored
 from inspect_evals_lint.suppressions import apply_suppressions, load_suppressions
 from tests.conftest import context_for, write
 
@@ -23,12 +24,13 @@ def run(
     *,
     config: LintConfig | None = None,
     name: str = "my_eval",
+    rule=scorer_failure_scored,
 ):
     package = tmp_path / name
     write(package / "__init__.py", "")
     for relative, code in files.items():
         write(package / relative, HEADER + code)
-    return list(scorer_failure_scored(context_for(package, config)))
+    return list(rule(context_for(package, config)))
 
 
 def diagnostics(results) -> list[Diagnostic]:
@@ -960,3 +962,245 @@ async def judge_one(text):
             config=PRESETS["single-eval"],
         )
         assert found(results) == [("fail", "judging.py", 10)]
+
+
+class TestGraderModelUnderTest:
+    def run(self, tmp_path: Path, code: str):
+        return run(tmp_path, {"scorer.py": code}, rule=grader_model_under_test)
+
+    def test_unqualified_get_model_used_to_grade_fails(self, tmp_path):
+        results = self.run(
+            tmp_path,
+            """
+@scorer(metrics=[])
+def equivalence():
+    async def score(state, target):
+        result = await get_model().generate("prompt")
+        return Score(value=result.completion == "yes")
+    return score
+""",
+        )
+        (d,) = diagnostics(results)
+        assert (d.status, d.line) == ("fail", 10)
+        assert "get_model() in score() resolves to the model under evaluation" in d.message
+        assert 'role="grader"' in (d.hint or "")
+
+    def test_state_model_as_a_fallback_fails(self, tmp_path):
+        results = self.run(
+            tmp_path,
+            """
+@scorer(metrics=[])
+def research(model=None):
+    grader_model = get_model(model) if model else None
+    async def score(state, target):
+        grader = grader_model or get_model(str(state.model))
+        result = await grader.generate("prompt")
+        other = get_model(model=state.model, default=None)
+        await other.generate("prompt")
+        return Score(value=result.completion)
+    return score
+""",
+        )
+        assert [(d.status, d.line) for d in diagnostics(results)] == [("fail", 11), ("fail", 13)]
+
+    def test_model_resolved_in_the_factory_and_used_in_the_closure_fails(self, tmp_path):
+        results = self.run(
+            tmp_path,
+            """
+@scorer(metrics=[])
+def graded():
+    grader: Model = get_model(None)
+    async def score(state, target):
+        return Score(value=(await grader.generate("p")).completion)
+    return score
+""",
+        )
+        assert [(d.status, d.line) for d in diagnostics(results)] == [("fail", 9)]
+
+    def test_helper_called_from_a_scorer_is_followed(self, tmp_path):
+        results = self.run(
+            tmp_path,
+            """
+async def judge(prompt):
+    return await get_model().generate(prompt)
+
+@scorer(metrics=[])
+def graded():
+    async def score(state, target):
+        return Score(value=(await judge("p")).completion)
+    return score
+""",
+        )
+        assert [(d.status, d.line) for d in diagnostics(results)] == [("fail", 8)]
+
+    def test_named_roles_defaults_and_reads_pass(self, tmp_path):
+        results = self.run(
+            tmp_path,
+            """
+@scorer(metrics=[])
+def graded(model=None):
+    async def score(state, target):
+        name = get_model().name
+        a = await get_model(role="grader").generate("p")
+        b = await get_model(default="openai/gpt-4o").generate("p")
+        d = await get_model(**options).generate("p")
+        tokens = count(get_model(), "p")
+        return Score(value=name)
+    return score
+""",
+        )
+        assert [r.status for r in results] == ["pass"]
+        assert "5 get_model() call(s)" in results[0].message
+
+    def test_a_parameter_left_at_none_fails_unless_the_call_is_guarded(self, tmp_path):
+        results = self.run(
+            tmp_path,
+            """
+@scorer(metrics=[])
+def graded(model=None, *, judge: str | None = None):
+    grader_model = get_model(model) if model else None
+    async def score(state, target):
+        if judge is not None:
+            a = await get_model(judge).generate("p")
+        b = await get_model(model).generate("p")
+        return Score(value=b.completion)
+    return score
+""",
+        )
+        (d,) = diagnostics(results)
+        assert (d.status, d.line) == ("fail", 13)
+        assert (
+            "get_model(model) in score() resolves to the model under evaluation when model is left at None"
+            in d.message
+        )
+
+    def test_an_if_chain_reports_the_bare_branch_in_any_order(self, tmp_path):
+        bare = "grader = get_model()"
+        named = 'grader = get_model(model) if model else get_model(role="grader", default="openai/gpt-4o")'
+        code = """
+@scorer(metrics=[])
+def graded(model=None, model_role=None):
+    async def score(state, target):
+        if {first_test}:
+            {first}
+        else:
+            {second}
+        result = await grader.generate("p")
+        return Score(value=result.completion)
+    return score
+"""
+        orders = {
+            "bare_first": ("model is None and model_role is None", bare, named),
+            "bare_last": ("model is not None or model_role is not None", named, bare),
+        }
+        for label, (first_test, first, second) in orders.items():
+            results = self.run(
+                tmp_path / label, code.format(first_test=first_test, first=first, second=second)
+            )
+            assert [d.status for d in diagnostics(results)] == ["fail"], label
+
+    def test_a_package_function_named_get_model_is_not_read(self, tmp_path):
+        results = self.run(
+            tmp_path,
+            """
+def get_model():
+    return load_hf_model("gpt2")
+
+@scorer(metrics=[])
+def graded():
+    async def score(state, target):
+        return Score(value=(await get_model().generate("p")).completion)
+    return score
+""",
+        )
+        assert [r.status for r in results] == ["skip"]
+
+    def test_an_attribute_of_state_model_and_the_module_form_fail(self, tmp_path):
+        results = self.run(
+            tmp_path,
+            """
+from inspect_ai import model as inspect_model
+
+@scorer(metrics=[])
+def graded():
+    async def score(state, target):
+        a = await get_model(
+            state.model.name
+        ).generate("p")
+        b = await inspect_model.get_model().generate("p")
+        return Score(value=a.completion + b.completion)
+    return score
+""",
+        )
+        assert [(d.status, d.line, d.end_line) for d in diagnostics(results)] == [
+            ("fail", 12, 14),
+            ("fail", 15, None),
+        ]
+
+    def test_a_helper_package_is_read(self, tmp_path):
+        package = tmp_path / "utils"
+        write(package / "__init__.py", "")
+        write(
+            package / "judging.py",
+            HEADER
+            + """
+@scorer(metrics=[])
+def judged():
+    async def score(state, target):
+        return Score(value=(await get_model().generate("p")).completion)
+    return score
+""",
+        )
+        ctx = replace(context_for(package), kind="helper")
+        assert found(list(grader_model_under_test(ctx))) == [("fail", "judging.py", 10)]
+
+    def test_a_name_rebound_before_it_generates_passes(self, tmp_path):
+        results = self.run(
+            tmp_path,
+            """
+@scorer(metrics=[])
+def graded():
+    async def score(state, target):
+        m = get_model()
+        name = m.name
+        m = get_model(role="grader", default="openai/gpt-4o")
+        await m.generate("p")
+        return Score(value=name)
+    return score
+""",
+        )
+        assert [r.status for r in results] == ["pass"]
+
+    def test_a_closure_with_its_own_binding_is_not_followed(self, tmp_path):
+        results = self.run(
+            tmp_path,
+            """
+@scorer(metrics=[])
+def graded(judge_model="openai/gpt-4o"):
+    model = get_model()
+    tokenizer = model.name
+    async def ask(model, prompt):
+        return await model.generate(prompt)
+    async def score(state, target):
+        model = get_model(judge_model)
+        await model.generate("p")
+        await ask(get_model(judge_model), "q")
+        return Score(value=1, metadata={"tokenizer": tokenizer})
+    return score
+""",
+        )
+        assert [r.status for r in results] == ["pass"]
+
+    def test_code_no_scorer_runs_is_not_reported(self, tmp_path):
+        results = self.run(
+            tmp_path,
+            """
+@solver
+def self_critique():
+    async def solve(state, generate):
+        await get_model().generate(state.messages)
+        return state
+    return solve
+""",
+        )
+        assert [r.status for r in results] == ["skip"]
