@@ -77,8 +77,8 @@ def _is_bare(text: str) -> bool:
     return not _labels(text) and not _BARE_FENCE_FILLER.sub("", text)
 
 
-def _helper_modules(ctx: LintContext) -> set[Path]:
-    """Files in the repository's helper packages that define ``extract_code_block`` at top level."""
+def helper_modules(ctx: LintContext, helper: str = HELPER) -> set[Path]:
+    """Files in the repository's helper packages that define ``helper`` at top level."""
     source_dir = ctx.config.source_dir(ctx.root)
     found: set[Path] = set()
     for name in ctx.config.helper_dirs:
@@ -88,8 +88,8 @@ def _helper_modules(ctx: LintContext) -> set[Path]:
         for path in package.rglob("*.py"):
             try:
                 text = path.read_text(encoding="utf-8")
-                if f"def {HELPER}" in text and any(
-                    isinstance(node, _Function) and node.name == HELPER
+                if f"def {helper}" in text and any(
+                    isinstance(node, _Function) and node.name == helper
                     for node in ast.parse(text).body
                 ):
                     found.add(path)
@@ -98,7 +98,7 @@ def _helper_modules(ctx: LintContext) -> set[Path]:
     return found
 
 
-def _is_test_file(path: Path, package: Path) -> bool:
+def is_test_file(path: Path, package: Path) -> bool:
     relative = path.relative_to(package) if path.is_relative_to(package) else Path(path.name)
     return (
         relative.name.startswith("test_")
@@ -360,8 +360,8 @@ def shared_code_extraction(ctx: LintContext) -> Iterable[Finding]:
     blocks = re.findall(r"```(?:cuda|cpp)\n(.*?)```", text, re.DOTALL)  # inspect-evals-lint: ignore[IECQ006] -- upstream reads CUDA and C++ blocks in one pass
     ```
     """
-    helper_modules = _helper_modules(ctx)
-    if not helper_modules and HELPER_DISTRIBUTION not in declared_dependencies(ctx.root):
+    helpers = helper_modules(ctx)
+    if not helpers and HELPER_DISTRIBUTION not in declared_dependencies(ctx.root):
         yield Outcome(
             "skip",
             f"inspect_evals.utils.code.{HELPER} is not available: no helper package defines it "
@@ -374,7 +374,7 @@ def shared_code_extraction(ctx: LintContext) -> Iterable[Finding]:
 
     found = False
     for parsed in parsed_files.parsed:
-        if parsed.path in helper_modules or _is_test_file(parsed.path, ctx.path):
+        if parsed.path in helpers or is_test_file(parsed.path, ctx.path):
             continue
         assert isinstance(parsed.tree, ast.Module)
         for scope, calls in _sites(parsed.tree):

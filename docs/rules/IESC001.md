@@ -8,7 +8,7 @@ Compose services do not grant additional sandbox privileges or host access.
 
 ## What it does
 
-Reads parsed YAML from every `compose*.y*ml` and `docker-compose*.y*ml` under the package, including nested files and overrides. `exclude` does not apply: Compose files configure the sandbox from the host even when they sit beside challenge code that is excluded. Reports one error per service, field and value for the settings described below.
+Reads parsed YAML from every `compose*.y*ml` and `docker-compose*.y*ml` under the package, including nested files and overrides. `exclude` does not apply: Compose files configure the sandbox from the host even when they sit beside challenge code that is excluded. Reports one error per service, field and value for the settings described below. It also reports the mounts that inspect_ai's Docker sandbox refuses, which no allowlist entry can accept.
 
 GPU reservations under `deploy.resources.reservations.devices`, ordinary named or anonymous volumes, and namespaces shared by `service:` reference are accepted. YAML anchors are resolved; commented-out settings are ignored. A value tagged `!override` or `!reset` is checked as written.
 
@@ -54,7 +54,7 @@ The following values in `security_opt` are reported with either `:` or `=` as th
 
 ### Host files and engine access
 
-- Host bind mounts in either short or long `volumes` syntax expose a host path. Writable mounts can let sandbox code change host files; read-only mounts still expose their contents, potentially including credentials or evaluation answers. Relative paths and Windows host paths are checked too, as is a short-syntax source with a path separator outside its interpolations, such as `${HOME}/.ssh`: a volume name cannot contain one. [Docker bind mounts](https://docs.docker.com/engine/storage/bind-mounts/).
+- Host bind mounts in either short or long `volumes` syntax expose a host path. Writable mounts can let sandbox code change host files, and inspect_ai refuses them (see below); read-only mounts still expose their contents, potentially including credentials or evaluation answers. Relative paths and Windows host paths are checked too, as is a short-syntax source with a path separator outside its interpolations, such as `${HOME}/.ssh`: a volume name cannot contain one. [Docker bind mounts](https://docs.docker.com/engine/storage/bind-mounts/).
 - Named volumes whose local `driver_opts.o` contains `bind` or `rbind` also expose the host path in `driver_opts.device`. Review them as host bind mounts even though the service refers to a volume name. [Compose local-driver bind example](https://docs.docker.com/reference/compose-file/volumes/#driver_opts). The `rbind` option also includes existing mounts below the source path, potentially exposing additional filesystems. [Linux recursive bind mounts](https://man7.org/linux/man-pages/man8/mount.8.html).
 - Windows named pipe mounts (`type: npipe`) expose a host communication endpoint. The implications depend on the service listening on that pipe and the caller's permissions. [Compose mount types](https://docs.docker.com/reference/compose-file/services/#volumes).
 - Container engine sockets receive an additional callout when the source or target names a Docker, Podman, containerd, CRI-O or BuildKit socket (`docker.sock`, `docker_engine`, `podman.sock`, `containerd.sock`, `crio.sock`, `cri-dockerd.sock`, `buildkitd.sock`), or the source is a directory holding `/var/run/docker.sock`, such as `/var/run`. Access to an engine API can allow creation of containers with host mounts or elevated privileges. [Docker daemon access](https://docs.docker.com/engine/security/#docker-daemon-attack-surface). A read-only socket mount does not restrict which API operations a connected client can request. Review must therefore account for [Docker's API authorization policy](https://docs.docker.com/engine/extend/plugins_authorization/), which allows all operations by default.
@@ -72,6 +72,28 @@ The rule also reports `privileged: true` within each lifecycle hook:
 
 These hooks need review even when the service itself has no `privileged` setting. Check what the command does and whether sandbox code can modify any scripts or inputs it will use with those privileges.
 
+### Mounts inspect_ai's Docker sandbox refuses
+
+In releases after 0.3.279, inspect_ai's Docker sandbox refuses to start a Compose project with a mount that could let sandbox code write to host files ([inspect_ai#5830](https://github.com/UKGovernmentBEIS/inspect_ai/pull/5830)). A malicious agent with host write access could rewrite a Compose file to grant later samples more privileges, or redirect a later mount with a symlink. The rule reports the mounts that inspect_ai refuses as errors without an allowlist key:
+
+- a host bind mount without `:ro` in short syntax or `read_only: true` in long syntax;
+- a read-only bind mount, `configs` or `secrets` in a service with `privileged: true`, or `SYS_ADMIN` or `ALL` in `cap_add`, since the service could remount them writable;
+- bind propagation other than `private` or `rprivate`, and `bind.recursive: writable`;
+- any `volumes_from`, including `service:` references;
+- a named volume that is `external`, uses a driver other than `local`, sets `driver_opts` or sets a custom `name`;
+- a mount type other than `bind`, `volume`, `tmpfs`, `image` or `npipe`.
+
+An access mode with an interpolation produces a warning, because only the resolved value shows whether the mount is read-only.
+
+Fix a refused mount by adding `:ro`, copying the files in with `Sample.files`, or using a Docker-managed volume. An evaluation that needs host writes can set the top-level opt-out:
+
+```yaml
+x-inspect_docker_sandbox:
+  unsafe_allow_writable_host_mounts: true
+```
+
+inspect_ai then skips its mount checks for that Compose file, and so does this rule. The rule reports the opt-out itself under the key `x-inspect_docker_sandbox.unsafe_allow_writable_host_mounts`, for review and an allowlist entry. inspect_ai accepts only a literal boolean there, so any other value, including an interpolation, is an error.
+
 ## Example
 
 ```yaml
@@ -87,13 +109,13 @@ Remove the settings when they are unnecessary. If required, document the reason 
 
 ## Scope and related checks
 
-This is a static check of declared Compose settings. It does not run Docker, read environment files, inspect images, combine overrides, follow `include` or `extends` files, or inspect Kubernetes settings. Interpolated privilege, namespace, capability, device, security-option, and mount values that cannot be checked produce warnings because [Compose interpolation](https://docs.docker.com/reference/compose-file/interpolation/) can change the effective settings at runtime. A pass means no listed settings were found in the files checked.
+This is a static check of declared Compose settings. It does not run Docker, read environment files, inspect images, combine overrides, follow `include` or `extends` files, or inspect Kubernetes settings. It does not check the Docker versions inspect_ai requires for read-only mounts. Interpolated privilege, namespace, capability, device, security-option, and mount values that cannot be checked produce warnings because [Compose interpolation](https://docs.docker.com/reference/compose-file/interpolation/) can change the effective settings at runtime. A pass means no listed settings were found in the files checked.
 
 Service `environment` and `env_file` values are not checked, though they can also carry host values into the container. Published ports, external networks, and host-gateway mappings need a network-exposure policy. Missing hardening settings such as `read_only` or `no-new-privileges` are outside this rule's checks.
 
 ## Options
 
-- `allowlists.sandbox_privileges`: `{ package = ["service:field:value"] }` entries report warnings while present. Each finding names its key in the hint. The value is the capability, device, rule, namespace mode, security option, host path, secret or config source, or container, so allowing `default:cap_add:SYS_PTRACE` does not allow `ALL`, and allowing one host path does not allow another. Settings without a value use `service:field`, such as `default:privileged` and `default:post_start.privileged`. A key applies to that service across the package's Compose files. Removed settings leave stale entries for the runner to report.
+- `allowlists.sandbox_privileges`: `{ package = ["service:field:value"] }` entries report warnings while present. Each finding names its key in the hint. The value is the capability, device, rule, namespace mode, security option, host path, secret or config source, or container, so allowing `default:cap_add:SYS_PTRACE` does not allow `ALL`, and allowing one host path does not allow another. Settings without a value use `service:field`, such as `default:privileged` and `default:post_start.privileged`. The writable-mount opt-out uses `x-inspect_docker_sandbox.unsafe_allow_writable_host_mounts`. A key applies to that service across the package's Compose files. Removed settings leave stale entries for the runner to report.
 
 ## See also
 

@@ -4,7 +4,9 @@ from pathlib import Path
 
 from inspect_evals_lint.config import PRESETS, LintConfig
 from inspect_evals_lint.diagnostics import Diagnostic
+from inspect_evals_lint.registry import get_rule
 from inspect_evals_lint.rules.scoring import grader_model_under_test, scorer_failure_scored
+from inspect_evals_lint.suppressions import apply_suppressions, load_suppressions
 from tests.conftest import context_for, write
 
 HEADER = """
@@ -206,7 +208,7 @@ def judged():
         )
         assert [r.status for r in results] == ["pass"]
 
-    def test_a_default_left_by_an_unscored_return_or_continue_passes(self, tmp_path):
+    def test_a_default_left_by_a_non_constant_return_or_continue_passes(self, tmp_path):
         results = run(
             tmp_path,
             {
@@ -219,7 +221,7 @@ def tested():
             passed = res.success
         except Exception:
             passed = False
-            return Score.unscored(reason="scoring_failed")
+            return await rescore(state, target)
         for attempt in range(3):
             try:
                 out = await get_model(role="grader").generate("p")
@@ -251,16 +253,69 @@ def judged():
     async def score(state, target):
         verdict = await ask_judge("p")
         if verdict is None:
-            return Score.unscored(reason="grader_failed")
-        retried = None
+            raise RuntimeError("judge gave no reply")
         for attempt in range(3):
             try:
                 retried = (await get_model(role="grader").generate("p")).completion
             except Exception:
                 retried = None
-        if not retried:
-            return Score.unscored(reason="grader_failed")
-        return Score(value=CORRECT if "yes" in verdict + retried else INCORRECT)
+            if not retried:
+                continue
+            break
+        try:
+            third = (await get_model(role="grader").generate("p")).completion
+        except Exception:
+            third = None
+        if third is not None:
+            return Score(value=CORRECT if "yes" in verdict + retried + third else INCORRECT)
+        else:
+            raise RuntimeError("judge gave no reply")
+    return score
+"""
+            },
+        )
+        assert [r.status for r in results] == ["pass"]
+
+    def test_a_sentinel_branch_that_scores_the_failure_fails(self, tmp_path):
+        helper = """
+async def ask_judge(prompt):
+    try:
+        return (await get_model(role="grader").generate(prompt)).completion
+    except Exception:
+        return None
+
+@scorer(metrics=[])
+def judged():
+    async def score(state, target):
+        verdict = await ask_judge("p")
+        if verdict is None:
+            return {branch}
+        return Score(value=CORRECT if "yes" in verdict else INCORRECT)
+    return score
+"""
+        branches = {
+            "constant": 'Score(value=INCORRECT, explanation="judge failed")',
+            "unscored": 'Score.unscored(reason="grader_failed")',
+        }
+        for label, branch in branches.items():
+            results = run(tmp_path / label, {"scorer.py": helper.format(branch=branch)})
+            assert found(results) == [("fail", "scorer.py", 10)], label
+
+    def test_an_empty_fall_back_the_function_raises_on_passes(self, tmp_path):
+        results = run(
+            tmp_path,
+            {
+                "scorer.py": """
+@scorer(metrics=[])
+def tested():
+    async def score(state, target):
+        try:
+            out = (await sandbox().read_file("/out.txt")).strip()
+        except Exception:
+            out = ""
+        if not out:
+            raise RuntimeError("could not read output")
+        return Score(value=out == target.text)
     return score
 """
             },
@@ -283,7 +338,7 @@ def judged():
     async def score(state, target):
         first = await ask_judge("p")
         if first is None:
-            return Score.unscored(reason="grader_failed")
+            raise RuntimeError("judge gave no reply")
         return Score(value=await ask_judge("q") == first)
     return score
 """
@@ -331,7 +386,7 @@ def judged():
         )
         assert [r.status for r in results] == ["pass"]
 
-    def test_narrow_or_reraising_handlers_pass(self, tmp_path):
+    def test_a_narrowed_handler_passes(self, tmp_path):
         results = run(
             tmp_path,
             {
@@ -344,21 +399,188 @@ def judged():
             return Score(value=parse(result.completion))
         except ValueError:
             return Score(value=INCORRECT)
-        try:
-            result = await get_model(role="grader").generate("p")
-        except Exception as e:
-            if retryable(e):
-                raise
-            return Score(value=INCORRECT)
-        try:
-            result = await get_model(role="grader").generate("p")
-        except Exception as e:
-            return Score.unscored(reason="grader_failed", explanation=str(e))
     return score
 """
             },
         )
         assert [r.status for r in results] == ["pass"]
+
+    def test_a_handler_that_raises_passes(self, tmp_path):
+        results = run(
+            tmp_path,
+            {
+                "scorer.py": """
+@scorer(metrics=[])
+def judged():
+    async def score(state, target):
+        try:
+            result = await get_model(role="grader").generate("p")
+        except Exception as e:
+            log(e)
+            raise RuntimeError("grader failed") from e
+        return Score(value=result.completion)
+    return score
+"""
+            },
+        )
+        assert [r.status for r in results] == ["pass"]
+
+    def test_a_raise_inside_an_if_does_not_exempt_a_constant_return(self, tmp_path):
+        results = run(
+            tmp_path,
+            {
+                "scorer.py": """
+@scorer(metrics=[])
+def judged():
+    async def score(state, target):
+        try:
+            result = await get_model(role="grader").generate("p")
+        except Exception as e:
+            if "rate limit" in str(e):
+                raise
+            return Score(value=INCORRECT)
+        return Score(value=result.completion)
+    return score
+"""
+            },
+        )
+        (d,) = diagnostics(results)
+        assert (d.status, d.line) == ("fail", 12)
+        assert "returns Score(value=INCORRECT)" in d.message
+
+    def test_unscored_or_nan_returned_from_a_handler_fails(self, tmp_path):
+        results = run(
+            tmp_path,
+            {
+                "scorer.py": """
+@scorer(metrics=[])
+def judged():
+    async def score(state, target):
+        try:
+            result = await get_model(role="grader").generate("p")
+        except Exception as e:
+            return Score.unscored(reason="grader_failed", explanation=str(e))
+        try:
+            result = await get_model(role="grader").generate("p")
+        except Exception:
+            return Score(value=float("nan"))
+        try:
+            result = await get_model(role="grader").generate("p")
+        except Exception:
+            return Score(value={"score": 1.0, "refused": math.nan})
+        return Score(value=result.completion)
+    return score
+"""
+            },
+        )
+        assert [(d.status, d.line) for d in diagnostics(results)] == [
+            ("fail", 12),
+            ("fail", 16),
+            ("fail", 20),
+        ]
+        assert [d.message.split("() ")[1] for d in diagnostics(results)] == [
+            "returns Score.unscored(...), so the failure is scored instead of raised",
+            "returns Score(value=float('nan')), so the failure is scored instead of raised",
+            "returns Score(value={...}), so the failure is scored instead of raised",
+        ]
+
+    def test_a_dict_or_dict_score_returned_from_a_handler_fails(self, tmp_path):
+        results = run(
+            tmp_path,
+            {
+                "scorer.py": """
+async def criterion(judge):
+    try:
+        return parse((await judge.generate("p")).completion)
+    except Exception:
+        return {"met": False}
+
+@scorer(metrics=[])
+def judged():
+    async def score(state, target):
+        met = await criterion(get_model(role="grader"))
+        try:
+            result = await get_model(role="grader").generate("p")
+        except Exception:
+            return Score(value={"accuracy": 0.0})
+        return Score(value=met)
+    return score
+"""
+            },
+        )
+        assert [(d.status, d.line) for d in diagnostics(results)] == [("fail", 10), ("fail", 19)]
+        assert "criterion() returns {...}" in diagnostics(results)[0].message
+        assert "returns Score(value={...})" in diagnostics(results)[1].message
+
+    def test_outside_calls_are_graders_by_their_whole_name(self, tmp_path):
+        results = run(
+            tmp_path,
+            {
+                "scorer.py": """
+@scorer(metrics=[])
+def judged():
+    async def score(state, target):
+        try:
+            rubric = await load_grader_rubric(target.text)
+        except Exception:
+            rubric = ""
+        try:
+            verdict = await ask_judge(state.output.completion, rubric)
+        except Exception:
+            verdict = ""
+        return Score(value=verdict in rubric)
+    return score
+"""
+            },
+        )
+        assert found(results) == [("fail", "scorer.py", 16)]
+
+    def test_broad_types_in_a_tuple_or_behind_a_module_fail(self, tmp_path):
+        results = run(
+            tmp_path,
+            {
+                "scorer.py": """
+import builtins
+
+@scorer(metrics=[])
+def judged():
+    async def score(state, target):
+        try:
+            result = await get_model(role="grader").generate("p")
+        except (ValueError, Exception):
+            return Score(value=INCORRECT)
+        try:
+            result = await get_model(role="grader").generate("p")
+        except builtins.Exception:
+            return Score(value=INCORRECT)
+        return Score(value=result.completion)
+    return score
+"""
+            },
+        )
+        assert found(results) == [("fail", "scorer.py", 14), ("fail", "scorer.py", 18)]
+
+    def test_a_try_holding_a_grader_and_a_sandbox_call_is_an_error(self, tmp_path):
+        results = run(
+            tmp_path,
+            {
+                "scorer.py": """
+@scorer(metrics=[])
+def judged():
+    async def score(state, target):
+        try:
+            out = await sandbox().read_file("/out.txt")
+            result = await get_model(role="grader").generate(out)
+        except Exception:
+            return Score(value=INCORRECT)
+        return Score(value=result.completion)
+    return score
+"""
+            },
+        )
+        (d,) = diagnostics(results)
+        assert d.status == "fail"
+        assert "around a grader call" in d.message
 
     def test_a_try_without_a_grader_or_sandbox_call_passes(self, tmp_path):
         results = run(
@@ -429,6 +651,53 @@ def tested():
         assert d.status == "warn"
         assert "returns Score(value=DEFAULTS.copy())" in d.message
 
+    def test_a_handler_that_falls_through_or_fills_a_container_warns(self, tmp_path):
+        results = run(
+            tmp_path,
+            {
+                "scorer.py": """
+async def ran(cmd):
+    passed = False
+    try:
+        res = await sandbox().exec(cmd)
+        passed = res.success
+    except Exception as e:
+        logger.warning(e)
+    return passed
+
+async def checks(cmds):
+    scores = []
+    results = {}
+    for cmd in cmds:
+        try:
+            res = await sandbox().exec(cmd)
+            scores.append(1.0 if res.success else 0.0)
+        except Exception:
+            scores.append(0.0)
+        try:
+            results[cmd] = (await sandbox().exec(cmd)).success
+        except Exception:
+            results[cmd] = 0.0
+    return sum(scores) / len(scores), results
+
+@scorer(metrics=[])
+def tested():
+    async def score(state, target):
+        return Score(value=await ran(["pytest"]) and await checks(["ls"]))
+    return score
+"""
+            },
+        )
+        assert [(d.status, d.line) for d in diagnostics(results)] == [
+            ("warn", 12),
+            ("warn", 23),
+            ("warn", 27),
+        ]
+        first, second, third = (d.message for d in diagnostics(results))
+        assert "in ran() falls through, leaving passed = False from before the try" in first
+        assert "in checks() appends 0.0 to scores, which is read after the try" in second
+        assert "in checks() sets results[cmd] = 0.0, which is read after the try" in third
+
     def test_a_failure_the_helper_swallows_is_not_reported_again_by_its_caller(self, tmp_path):
         results = run(
             tmp_path,
@@ -465,6 +734,41 @@ def checkpoints():
             },
         )
         assert found(results) == [("warn", "scorer.py", 10), ("warn", "scorer.py", 26)]
+
+
+class TestSuppression:
+    def test_a_comment_on_the_except_line_or_in_a_multi_line_header_suppresses(self, tmp_path):
+        results = run(
+            tmp_path,
+            {
+                "scorer.py": """
+@scorer(metrics=[])
+def judged():
+    async def score(state, target):
+        try:
+            result = await get_model(role="grader").generate("p")
+        except Exception:  # inspect-evals-lint: ignore[scorer_failure_scored] -- reviewed
+            return Score(value=INCORRECT)
+        try:
+            result = await get_model(role="grader").generate("p")
+        except (
+            Exception
+        ):  # inspect-evals-lint: ignore[scorer_failure_scored] -- reviewed
+            return Score(value=INCORRECT)
+        return Score(value=result.completion)
+    return score
+"""
+            },
+        )
+        for r in results:
+            r.rule = get_rule("scorer_failure_scored")
+        apply_suppressions(
+            results,
+            load_suppressions(context_for(tmp_path / "my_eval")),
+            PRESETS["multi-eval"],
+            tmp_path,
+        )
+        assert [r.status for r in results] == ["suppressed", "suppressed"]
 
 
 class TestScope:

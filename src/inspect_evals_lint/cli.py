@@ -150,12 +150,16 @@ def _list_rules(output_format: str) -> None:
 
 
 def _explain(rule: Rule, output_format: str) -> None:
-    """Print the rule's page: the same text as ``docs/rules/<code>.md``, rendered for the terminal."""
+    """Print the rule's page: the text of ``docs/rules/<code>.md``, rendered for the terminal.
+
+    The page is not run through mdformat, which is a docs dependency and not installed with the
+    package. mdformat only changes its layout, not how Rich renders it.
+    """
     from rich.markdown import Markdown
 
-    from inspect_evals_lint.docs import GENERATED_NOTE, formatted, rule_page
+    from inspect_evals_lint.docs import GENERATED_NOTE, rule_page
 
-    page = formatted(rule_page(rule).replace(GENERATED_NOTE + "\n\n", ""))
+    page = rule_page(rule).replace(GENERATED_NOTE + "\n\n", "")
     if output_format == "json":
         sys.stdout.write(json.dumps({**_rule_dict(rule), "doc": page}, indent=2) + "\n")
         return

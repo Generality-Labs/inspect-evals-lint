@@ -20,7 +20,7 @@ from inspect_evals_lint.registry import inspect_docs, rule
 from inspect_evals_lint.rules._ast import iter_python_files
 
 
-def _normalize_name(name: str) -> str:
+def normalize_name(name: str) -> str:
     """Canonical PEP 503 form: lower-cased, with runs of ``-``, ``_`` and ``.`` collapsed to ``-``.
 
     ``inspect_ai`` and ``inspect-ai`` name the same distribution, and distribution
@@ -33,7 +33,7 @@ def _normalize_name(name: str) -> str:
 def _extract_package_name(dep: str) -> str | None:
     """Normalised package name from a requirement string, stripping specifiers, extras and markers."""
     dep_name = re.split(r"[<>=!~@,;[\s]", dep)[0].strip()
-    return _normalize_name(dep_name) if dep_name else None
+    return normalize_name(dep_name) if dep_name else None
 
 
 @functools.cache
@@ -128,8 +128,8 @@ def _lock_requirements(repo_root: Path) -> dict[str, frozenset[str]] | None:
                 if isinstance(dependency, dict):
                     dep_name = cast(dict[str, Any], dependency).get("name")
                     if isinstance(dep_name, str):
-                        needed.add(_normalize_name(dep_name))
-        graph[_normalize_name(name)] = frozenset(needed)
+                        needed.add(normalize_name(dep_name))
+        graph[normalize_name(name)] = frozenset(needed)
     return graph
 
 
@@ -208,10 +208,10 @@ _KNOWN_IMPORT_ALIASES: dict[str, str] = {
 @functools.cache
 def _get_import_to_package_map() -> dict[str, str]:
     """Import name -> distribution name, from installed packages plus static aliases."""
-    mapping = {imp: _normalize_name(dist) for imp, dist in _KNOWN_IMPORT_ALIASES.items()}
+    mapping = {imp: normalize_name(dist) for imp, dist in _KNOWN_IMPORT_ALIASES.items()}
     for import_name, distributions in packages_distributions().items():
         if distributions:
-            mapping[import_name] = _normalize_name(distributions[0])
+            mapping[import_name] = normalize_name(distributions[0])
     return mapping
 
 
@@ -421,7 +421,7 @@ def _external_imports(
     external: dict[str, Location] = {}
     for imp, location in imports.items():
         imp_lower = imp.lower()
-        package_name = import_to_package.get(imp, _normalize_name(imp))
+        package_name = import_to_package.get(imp, normalize_name(imp))
         if (
             imp_lower not in stdlib_modules
             and package_name not in core_deps
@@ -434,7 +434,7 @@ def _external_imports(
 
 
 def _distribution(imp: str) -> str:
-    return _get_import_to_package_map().get(imp, _normalize_name(imp))
+    return _get_import_to_package_map().get(imp, normalize_name(imp))
 
 
 def _undeclared(external: dict[str, Location], declared: set[str]) -> dict[str, Location]:
@@ -442,7 +442,7 @@ def _undeclared(external: dict[str, Location], declared: set[str]) -> dict[str, 
     return {
         imp: loc
         for imp, loc in external.items()
-        if _distribution(imp) not in declared and _normalize_name(imp) not in declared
+        if _distribution(imp) not in declared and normalize_name(imp) not in declared
     }
 
 

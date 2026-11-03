@@ -8,32 +8,38 @@ A scorer does not turn a grader or sandbox failure into a score.
 
 ## What it does
 
-Flags a broad handler (`except:`, `except Exception` or `except BaseException`, alone or in a tuple) with no `raise` in its body, in code a scorer runs, when both hold:
+Flags a broad handler (`except:`, `except Exception` or `except BaseException`, alone or in a tuple) that does not `raise` among its own statements, in code a scorer runs, when both hold:
 
-- its `try` body awaits a grader call or a sandbox call. A grader call is a method call ending in `.generate(`, or a call to something outside the package whose name contains `judge` or `grader`, such as a `model_graded_qa()` scorer bound to `grader`. A sandbox call is a method call ending in `.exec(` or `.read_file(`. A package function counts by what it does, not its name: awaiting one counts when it awaits either kind of call, at any depth, outside a `try` of its own that swallows the failure;
-- the handler turns the failure into a result. It returns a constant; or it assigns one to a name the function returns after it; or it rebinds a name the `try` body binds, to a constant or a dict literal holding a bool or number (`{"criteria_met": False}`), and the function reads that name after the `try`. A constant is a number, a bool, `None`, `""`, an upper-case name bound at module level or imported (such as `INCORRECT`, or its `.copy()`), a tuple starting with one, or `Score(value=<constant>)`. A name is returned when the `return` gives the name itself, a tuple holding it, or `Score(value=<name>)`.
+- its `try` body awaits a grader call or a sandbox call. A grader call is a method call ending in `.generate(`, or a call to something outside the package named `judge` or `grader` or ending in `_judge` or `_grader`, such as a `model_graded_qa()` scorer bound to `grader`. A sandbox call is a method call ending in `.exec(` or `.read_file(`. A package function counts by what it does, not its name: awaiting one counts when it awaits either kind of call, at any depth, outside a `try` of its own that swallows the failure;
+- the handler turns the failure into a result. It returns a constant, a dict holding one, `Score.unscored(...)` or `Score(value=<any of these>)`; or it assigns a constant to a name the function returns after it; or it rebinds a name the `try` body binds, indexes into a name (`results[c] = 0.0`) or appends to one (`scores.append(0.0)`), with a constant or a dict literal holding one (`{"criteria_met": False}`), and the function reads that name after the `try`; or it falls through, leaving a name the `try` would have bound at the constant it was set to before the `try` (`passed = False`), and the function reads that name after it. A constant is a number, a bool, `None`, `""`, a NaN (`float("nan")`, `math.nan`), an upper-case name bound at module level or imported (such as `INCORRECT`, or its `.copy()`), or a tuple starting with one. A name is returned when the `return` gives the name itself, a tuple holding it, or `Score(value=<name>)`.
+
+A `raise` inside an `if` does not exempt the handler: one that re-raises some errors and returns a constant for the rest is reported.
 
 These do not count as a result:
 
-- an assignment in a handler that then leaves by `continue`, or by a `return` of anything but a constant, such as `return Score.unscored(...)`;
-- a `None` that is tested as a sentinel: assigned in a function that tests `name is None`, `name is not None` or `not name`, or returned by a helper whose every caller in scorer code assigns the result to a name it tests that way;
+- an assignment in a handler that then leaves by `continue`, `break`, or a `return` of anything but a result listed above, such as a call that scores the sample another way;
+- a falsy value (`None`, `""`, `0`, `False`) that is tested as a sentinel and then raised on: assigned in a function whose `if name is None` (or the `else` of `if name is not None`) or `if not name` branch raises, continues, or returns something other than a result listed above; or returned by a helper whose every caller in scorer code assigns the result to a name it tests that way. A sentinel branch that returns a constant or `Score.unscored(...)` scores the failure, so the handler is reported;
 - a `None` returned by a scorer's own score function, which records no score.
 
 Code a scorer runs is every `@scorer` function, the functions nested in it, and the package functions they call, to any depth. A call is followed when its target is a function defined in an enclosing scope or at the top of the file, or a function imported from another module of the package (directly, as an attribute of an imported module, or through a re-export). A parameter or assignment of the same name in an enclosing function hides the definition. `@tool` functions are not followed: a tool returning an error string to the model is correct. Code no scorer calls, such as a solver or a health check, is not read.
 
-It is an error when the `try` guards a grader call. It is a warning when it guards only a sandbox call, whatever the handler returns, since some of those failures are the model's own: the agent never wrote the file it was asked to, or its code ran into the timeout. A handler narrowed to the error the model causes, such as `except FileNotFoundError`, is not broad and is not reported. Mark a reviewed site with `# inspect-evals-lint: ignore[scorer_failure_scored] -- <reason>` on the `except` line.
+It is an error when the `try` guards a grader call. It is a warning when it guards only a sandbox call, whatever the handler returns, since some of those failures are the model's own: the agent never wrote the file it was asked to, or its code ran past a time limit that is part of the task. A handler narrowed to the error the model causes, such as `except FileNotFoundError`, is not broad and is not reported. Mark a reviewed site with `# inspect-evals-lint: ignore[scorer_failure_scored] -- <reason>` on the `except` line, or on any line of a multi-line `except (...)` header.
 
-**Known limits:** a constant that reaches the result only through a derived value (`refused = "yes" in response` with `response` not set in the `try`) is not traced, nor is one bound through an alias, a walrus or an attribute. Method calls are not followed, so a judge class's `check()` called on an instance or a parameter (`refusal_judge.check_refusal(...)`) is not read; following those is a later step. Calls wrapped in `asyncio.gather()` or `wait_for()` are not seen as awaited. Nothing outside the package is followed.
+**Known limits:** a constant that reaches the result only through a derived value (`refused = "yes" in response` with `response` not set in the `try`) is not traced, nor is one bound through an alias, a walrus or an attribute. Any narrowed handler passes, including `except TimeoutError` around `exec(timeout=...)`, which the advice below allows only when the time limit is part of the task; and `write_file()` is not read as a sandbox call. A sentinel branch that leaves by `continue` is accepted without reading what follows the loop. Method calls are not followed, so a judge class's `check()` called on an instance or a parameter (`refusal_judge.check_refusal(...)`) is not read; following those is a later step. Calls wrapped in `asyncio.gather()` or `wait_for()` are not seen as awaited. Nothing outside the package is followed. A `try` that awaits neither kind of call, such as one around an import or a comparator, is not read, though the advice below applies to it too.
 
 ## Why is this bad?
 
-A judge API error or a sandbox outage then reads as a real verdict: "not refused", "wrong answer", 0.0. The run looks healthy and the metric moves with the outage rate. Letting the error propagate fails the sample, which is visible and can be retried.
+A judge API error or a sandbox outage then reads as a verdict: "not refused", "wrong answer", 0.0. The run looks healthy and the metric moves with the outage rate. Letting the error propagate fails the sample, which is visible and can be retried.
 
 What to do instead depends on what failed:
 
 - **The grader call raised** (an API error): let it propagate.
-- **The grader replied but gave no usable verdict**: retry the grader alone a bounded number of times, holding the model's output fixed (a retry with the same prompt and `cache=True` never reaches the grader), then return `Score.unscored(reason="grader_failed")`. This holds when the grader is the model under test too, as in a self-judging defence. If the grader feeds one key of a dict score and the other keys are valid results, set that key to NaN instead of unscoring the sample.
-- **A sandbox call raised**: let it propagate; the sandbox broke. Score what a result shows instead: a non-zero exit is the model's code failing, and a missing file the agent was told to write is a verdict (`reason="no_response"`). A deterministic failure never becomes `Score.unscored()`.
+- **The grader replied but gave no usable verdict**: retry the grader alone a bounded number of times, holding the model's output fixed (a retry with the same prompt and `cache=True` never reaches the grader), then return `Score.unscored(reason="grader_failed")`. This holds when the grader is the model under test too, as in a self-judging defence. If the grader feeds one key of a dict score and the other keys are valid results, set that key to NaN instead of unscoring the sample, and record which key failed in `explanation` and `metadata`: `Score.reason` describes the whole sample. Metrics registered per key (`metrics={"refused": [mean()]}`) and the epoch reducer skip a NaN key and count it toward that key's unscored samples. A custom metric that reads the whole dict receives the NaN and has to skip it itself.
+- **A sandbox call raised**: let it propagate; the sandbox broke. Score what a result shows instead: a non-zero exit is the model's code failing, and a missing file the agent was told to write is a verdict (`reason="no_response"`). Catch only errors the model's own output causes, such as that `FileNotFoundError` or an `OutputLimitExceededError`, and only where they can occur.
+- **A sandbox call timed out**: a command that overruns and a sandbox that stops answering raise the same `SandboxTimeoutError` (a `TimeoutError`) from `exec(timeout=...)`, so let it propagate, unless the time limit is part of the task. Then run the code under a `timeout` inside the sandbox and score the overrun from its exit code, allowing for sandboxes whose `timeout` is BusyBox's rather than GNU's, or missing. Timing it from the host doesn't work: `exec_remote()` polls at least 5 s apart, so a program that finished just before its deadline is seen after it.
+- **The eval's own code raised** (a parser or comparator on input it didn't expect): let it propagate. Catch only the errors the model's answer can cause.
+
+A failed call never becomes `Score.unscored()`. That is only for an instrument that ran and gave no usable reading: `grader_failed` when the grader replied without a usable verdict, `scoring_failed` when the scorer ran without error but had nothing to measure.
 
 ## Example
 
@@ -55,19 +61,32 @@ except ValueError:
     return Score.unscored(reason="grader_failed", explanation=result.completion)
 ```
 
-Or, where the grader feeds one key of a dict score:
+Or, where the grader feeds one key of a dict score with per-key metrics:
 
 ```python
-try:
-    refused = parse_verdict(result.completion)
-except ValueError:
-    refused = float("nan")  # this key is ungraded; the other keys stand
-return Score(value={"score": task_score, "refused": refused})
+@scorer(metrics={"score": [mean()], "refused": [mean()]})
+def task_and_refusal() -> Scorer:
+    async def score(state: TaskState, target: Target) -> Score:
+        task_score = await check_task(state, target)
+        result = await grader.generate(refusal_prompt(state))
+        try:
+            refused = parse_verdict(result.completion)
+        except ValueError:
+            # NaN leaves this key out of its metrics; "score" still counts.
+            return Score(
+                value={"score": task_score, "refused": float("nan")},
+                explanation=f"refusal grader gave no verdict: {result.completion}",
+                metadata={"grader_failed_keys": ["refused"]},
+            )
+        return Score(value={"score": task_score, "refused": refused})
+
+    return score
 ```
 
 ## See also
 
 - [Scoring Policy: Malfunctions](https://inspect.aisi.org.uk/scoring-policy.html#malfunctions)
+- [Scoring Policy: Attribution: whose output failed?](https://inspect.aisi.org.uk/scoring-policy.html#attribution-whose-output-failed)
 - [Custom Scorers: Unscored Samples](https://inspect.aisi.org.uk/custom-scorers.html#unscored-samples)
 
 Suppress on a line with `# inspect-evals-lint: ignore[IEBP012] -- <reason>` or `ignore[scorer_failure_scored] -- <reason>`; select or ignore it in configuration by either, or by the prefix `IEBP`.

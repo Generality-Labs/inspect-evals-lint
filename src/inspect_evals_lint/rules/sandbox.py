@@ -166,25 +166,40 @@ def _host_path(source: str) -> bool:
 _INTERPOLATION = re.compile(r"\$\{[^}]*\}|\$[A-Za-z_]\w*")
 
 
+def _short_syntax(volume: str) -> tuple[str, str | None, list[str]]:
+    """Classify a short-syntax mount as bind, volume, anonymous or unknown, with its source and options.
+
+    Options that contain an interpolation keep a NUL character in its place.
+    """
+    # Mask interpolations so a ':' or '/' inside ${...} does not split or classify the mount.
+    tokens = iter(_INTERPOLATION.findall(volume))
+    masked = _INTERPOLATION.sub("\0", volume)
+    # Keep the drive letter attached to a Windows source path.
+    match = re.match(r"^([A-Za-z]:[\\/][^:]*|[^:]+):(.+)$", masked)
+    if not match:
+        return "anonymous", None, []  # Only a container target.
+    masked_source, masked_target = match.groups()
+    if not _host_path(masked_target) and not masked_target.startswith("\0"):
+        return "anonymous", None, []  # A container target with an access mode.
+    mode = re.match(r"^(?:[A-Za-z]:[\\/][^:]*|[^:]*)(?::(.*))?$", masked_target)
+    options = mode.group(1).split(",") if mode and mode.group(1) else []
+    source = re.sub("\0", lambda _: next(tokens), masked_source)
+    # A volume name cannot contain a path separator, so ${HOME}/.ssh is a host path.
+    if _host_path(masked_source) or re.search(r"[\\/]", masked_source):
+        return "bind", source, options
+    if "\0" in masked_source:
+        return "unknown", source, options  # ${VOLUME} may name a volume or a path.
+    return "volume", source, options
+
+
 def _bind_source(volume: Any, named_volumes: dict[str, Any]) -> str | None:
     """Return the host source of a bind mount, including local-driver named binds."""
     if isinstance(volume, str):
-        # Mask interpolations so a ':' or '/' inside ${...} does not split or classify the mount.
-        tokens = iter(_INTERPOLATION.findall(volume))
-        masked = _INTERPOLATION.sub("\0", volume)
-        # Keep the drive letter attached to a Windows source path.
-        match = re.match(r"^([A-Za-z]:[\\/][^:]*|[^:]+):(.+)$", masked)
-        if not match:
-            return None  # An anonymous volume has only a container target.
-        masked_source, masked_target = match.groups()
-        if not _host_path(masked_target) and not masked_target.startswith("\0"):
-            return None  # Anonymous volume with an access mode.
-        source = re.sub("\0", lambda _: next(tokens), masked_source)
-        # A volume name cannot contain a path separator, so ${HOME}/.ssh is a host path.
-        if _host_path(masked_source) or re.search(r"[\\/]", masked_source):
+        kind, source, _ = _short_syntax(volume)
+        if kind == "bind":
             return source
-        if "\0" in masked_source:
-            return None  # ${VOLUME} may name a volume or a path; the caller warns.
+        if kind != "volume":
+            return None  # The caller warns about an interpolated source.
     else:
         mount = _mapping(volume)
         if mount.get("type") in ("bind", "npipe"):
@@ -204,6 +219,67 @@ def _bind_source(volume: Any, named_volumes: dict[str, Any]) -> str | None:
     return None
 
 
+_SANDBOX_SETTINGS = "x-inspect_docker_sandbox"
+_ALLOW_WRITES = "unsafe_allow_writable_host_mounts"
+_ALLOW_WRITES_KEY = f"{_SANDBOX_SETTINGS}.{_ALLOW_WRITES}"
+_PROPAGATIONS = {"shared", "rshared", "slave", "rslave", "private", "rprivate"}
+_INTERPOLATED_MODE = "its access mode contains an interpolation that cannot be checked"
+_WRITABLE_HINT = (
+    "add ':ro', copy the files in with Sample.files, or use a Docker-managed volume; "
+    f"if the evaluation must write to the host, set {_ALLOW_WRITES_KEY}: true and allowlist that"
+)
+_UNVERIFIABLE_HINT = (
+    "remove the mount or the setting that prevents its verification; if the evaluation "
+    f"needs it, set {_ALLOW_WRITES_KEY}: true and allowlist that"
+)
+
+
+def _mount_rejection(volume: Any, named_volumes: dict[str, Any], can_remount: bool) -> str | None:
+    """Why inspect_ai's Docker sandbox refuses a mount by default, or None if it accepts it.
+
+    Mirrors ``inspect_ai.util._sandbox.docker.mounts``, which reads the same
+    settings after ``docker compose config`` normalises them.
+    """
+    if isinstance(volume, str):
+        kind, source, options = _short_syntax(volume)
+        if kind == "bind" and any("\0" in option for option in options):
+            return _INTERPOLATED_MODE
+        read_only = "ro" in options
+        propagation = next((o for o in options if o in _PROPAGATIONS), "rprivate")
+        recursive = None
+    else:
+        mount = _mapping(volume)
+        kind, source = mount.get("type"), mount.get("source")
+        if "$" in str(kind) or "$" in str(source):
+            return None  # The caller warns that the mount source cannot be checked.
+        bind = _mapping(mount.get("bind"))
+        propagation, recursive = bind.get("propagation", "rprivate"), bind.get("recursive")
+        if any("$" in str(v) for v in (mount.get("read_only"), propagation, recursive)):
+            return _INTERPOLATED_MODE
+        read_only = _enabled(mount.get("read_only"))
+    if kind == "bind":
+        if not read_only:
+            return "writable host bind"
+        if can_remount:
+            return "service privileges permit remounting host binds writable"
+        if propagation not in ("private", "rprivate"):
+            return "bind propagation may expose writable submounts"
+        if recursive == "writable":
+            return "writable submounts"
+    elif kind == "volume":
+        definition = _mapping(named_volumes.get(source)) if isinstance(source, str) else {}
+        if (
+            definition.get("external") not in (None, False)
+            or definition.get("driver", "local") != "local"
+            or definition.get("driver_opts")
+            or "name" in definition
+        ):
+            return "volume host access cannot be verified"
+    elif isinstance(kind, str) and kind not in ("anonymous", "unknown", "tmpfs", "image", "npipe"):
+        return f"mount type '{kind}' cannot be verified"
+    return None
+
+
 @dataclass(frozen=True)
 class _Privilege:
     """One setting that grants access, with the value an allowlist entry names."""
@@ -213,6 +289,8 @@ class _Privilege:
     detail: str
     line: int | None
     severity: Severity = "error"
+    rejection_hint: str | None = None
+    """Set for findings from inspect_ai's mount checks, which no allowlist entry can accept."""
 
     def key(self, service_name: str) -> str:
         key = f"{service_name}:{self.field}"
@@ -251,8 +329,24 @@ def _host_sourced(
             )
 
 
-def _service_privileges(service: dict[str, Any], compose: dict[str, Any]) -> Iterable[_Privilege]:
+def _rejected(field: str, label: str, reason: str, line: int | None) -> _Privilege:
+    """A mount setting that inspect_ai's Docker sandbox refuses, or warns it cannot check."""
+    if reason == _INTERPOLATED_MODE:
+        detail = f"mount of '{label}': {reason}"
+        return _Privilege(field, label, detail, line, "warning", rejection_hint=_WRITABLE_HINT)
+    hint = _WRITABLE_HINT if reason == "writable host bind" else _UNVERIFIABLE_HINT
+    detail = f"inspect_ai's Docker sandbox refuses '{label}': {reason}"
+    return _Privilege(field, label, detail, line, rejection_hint=hint)
+
+
+def _service_privileges(
+    service: dict[str, Any], compose: dict[str, Any], enforce_mounts: bool
+) -> Iterable[_Privilege]:
     named_volumes = _mapping(compose.get("volumes"))
+    can_remount = _enabled(service.get("privileged")) or any(
+        cap.upper().removeprefix("CAP_") in ("SYS_ADMIN", "ALL")
+        for cap, _ in _values(service, "cap_add")
+    )
     for field in ("privileged", "use_api_socket", *_HOST_NAMESPACES):
         value = service.get(field)
         line = line_of(service, field)
@@ -360,9 +454,22 @@ def _service_privileges(service: dict[str, Any], compose: dict[str, Any]) -> Ite
                 line,
                 "warning",
             )
+        if enforce_mounts and (reason := _mount_rejection(volume, named_volumes, can_remount)):
+            mount = _mapping(volume)
+            label = (
+                _short_syntax(volume)[1]
+                if isinstance(volume, str)
+                else mount.get("source", mount.get("target"))
+            )
+            yield _rejected("volumes", str(label), reason, line)
 
     yield from _host_sourced(service, compose, "secrets")
     yield from _host_sourced(service, compose, "configs")
+    if enforce_mounts and can_remount:
+        for field in ("secrets", "configs"):
+            if service.get(field):
+                reason = "service privileges permit remounting host binds writable"
+                yield _rejected(field, field, reason, line_of(service, field))
 
     for source, line in _values(service, "volumes_from"):
         if source.startswith("container:"):
@@ -380,6 +487,8 @@ def _service_privileges(service: dict[str, Any], compose: dict[str, Any]) -> Ite
                 line,
                 "warning",
             )
+        if enforce_mounts:
+            yield _rejected("volumes_from", source, "volumes_from cannot be verified", line)
 
 
 @rule(
@@ -400,7 +509,9 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
     under the package, including nested files and overrides. ``exclude`` does not
     apply: Compose files configure the sandbox from the host even when they sit
     beside challenge code that is excluded. Reports one error per service,
-    field and value for the settings described below.
+    field and value for the settings described below. It also reports the
+    mounts that inspect_ai's Docker sandbox refuses, which no allowlist entry
+    can accept.
 
     GPU reservations under ``deploy.resources.reservations.devices``, ordinary
     named or anonymous volumes, and namespaces shared by ``service:`` reference
@@ -493,11 +604,12 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
     ### Host files and engine access
 
     - Host bind mounts in either short or long ``volumes`` syntax expose a host
-      path. Writable mounts can let sandbox code change host files; read-only
-      mounts still expose their contents, potentially including credentials or
-      evaluation answers. Relative paths and Windows host paths are checked too,
-      as is a short-syntax source with a path separator outside its
-      interpolations, such as ``${HOME}/.ssh``: a volume name cannot contain one.
+      path. Writable mounts can let sandbox code change host files, and
+      inspect_ai refuses them (see below); read-only mounts still expose their
+      contents, potentially including credentials or evaluation answers.
+      Relative paths and Windows host paths are checked too, as is a
+      short-syntax source with a path separator outside its interpolations,
+      such as ``${HOME}/.ssh``: a volume name cannot contain one.
       [Docker bind mounts](https://docs.docker.com/engine/storage/bind-mounts/).
     - Named volumes whose local ``driver_opts.o`` contains ``bind`` or ``rbind``
       also expose the host path in ``driver_opts.device``. Review them as host
@@ -556,6 +668,47 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
     setting. Check what the command does and whether sandbox code can modify
     any scripts or inputs it will use with those privileges.
 
+    ### Mounts inspect_ai's Docker sandbox refuses
+
+    In releases after 0.3.279, inspect_ai's Docker sandbox refuses to start a
+    Compose project with a mount that could let sandbox code write to host
+    files ([inspect_ai#5830](https://github.com/UKGovernmentBEIS/inspect_ai/pull/5830)).
+    A malicious agent with host write access could rewrite a Compose file to
+    grant later samples more privileges, or redirect a later mount with a
+    symlink. The rule reports the mounts that inspect_ai refuses as errors
+    without an allowlist key:
+
+    - a host bind mount without ``:ro`` in short syntax or ``read_only: true``
+      in long syntax;
+    - a read-only bind mount, ``configs`` or ``secrets`` in a service with
+      ``privileged: true``, or ``SYS_ADMIN`` or ``ALL`` in ``cap_add``, since
+      the service could remount them writable;
+    - bind propagation other than ``private`` or ``rprivate``, and
+      ``bind.recursive: writable``;
+    - any ``volumes_from``, including ``service:`` references;
+    - a named volume that is ``external``, uses a driver other than
+      ``local``, sets ``driver_opts`` or sets a custom ``name``;
+    - a mount type other than ``bind``, ``volume``, ``tmpfs``, ``image`` or
+      ``npipe``.
+
+    An access mode with an interpolation produces a warning, because only the
+    resolved value shows whether the mount is read-only.
+
+    Fix a refused mount by adding ``:ro``, copying the files in with
+    ``Sample.files``, or using a Docker-managed volume. An evaluation that
+    needs host writes can set the top-level opt-out:
+
+    ```yaml
+    x-inspect_docker_sandbox:
+      unsafe_allow_writable_host_mounts: true
+    ```
+
+    inspect_ai then skips its mount checks for that Compose file, and so does
+    this rule. The rule reports the opt-out itself under the key
+    ``x-inspect_docker_sandbox.unsafe_allow_writable_host_mounts``, for review
+    and an allowlist entry. inspect_ai accepts only a literal boolean there, so
+    any other value, including an interpolation, is an error.
+
     ## Example
 
     ```yaml
@@ -576,9 +729,10 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
 
     This is a static check of declared Compose settings. It does not run Docker,
     read environment files, inspect images, combine overrides, follow ``include``
-    or ``extends`` files, or inspect Kubernetes settings. Interpolated privilege,
-    namespace, capability, device, security-option, and mount values that cannot
-    be checked produce warnings because [Compose interpolation](https://docs.docker.com/reference/compose-file/interpolation/)
+    or ``extends`` files, or inspect Kubernetes settings. It does not check the
+    Docker versions inspect_ai requires for read-only mounts. Interpolated
+    privilege, namespace, capability, device, security-option, and mount values
+    that cannot be checked produce warnings because [Compose interpolation](https://docs.docker.com/reference/compose-file/interpolation/)
     can change the effective settings at runtime. A pass means no listed
     settings were found in the files checked.
 
@@ -596,9 +750,10 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
       ``default:cap_add:SYS_PTRACE`` does not allow ``ALL``, and allowing one
       host path does not allow another. Settings without a value use
       ``service:field``, such as ``default:privileged`` and
-      ``default:post_start.privileged``. A key applies to that service across
-      the package's Compose files. Removed settings leave stale entries for the
-      runner to report.
+      ``default:post_start.privileged``. The writable-mount opt-out uses
+      ``x-inspect_docker_sandbox.unsafe_allow_writable_host_mounts``. A key
+      applies to that service across the package's Compose files. Removed
+      settings leave stale entries for the runner to report.
     """
     compose_files = iter_compose_files(ctx)
     if not compose_files:
@@ -624,6 +779,30 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
                 severity="warning",
             )
             continue
+        settings: Any = _mapping(compose).get(_SANDBOX_SETTINGS)
+        allow_writes = _mapping(settings).get(_ALLOW_WRITES)
+        if (settings is not None and not isinstance(settings, dict)) or (
+            allow_writes is not None and not isinstance(allow_writes, bool)
+        ):
+            issues += 1
+            yield Diagnostic(
+                f"{_ALLOW_WRITES_KEY} is not a literal boolean under a {_SANDBOX_SETTINGS} "
+                "mapping, so inspect_ai's Docker sandbox refuses the Compose file",
+                file=compose_file,
+                line=line_of(compose, _SANDBOX_SETTINGS),
+                hint="write it as a literal true or false, without interpolation",
+            )
+        elif allow_writes:
+            issues += 1
+            yield Diagnostic(
+                f"{_ALLOW_WRITES_KEY} turns off inspect_ai's host mount checks, so sandbox "
+                "code may write to host files through this Compose file's mounts",
+                file=compose_file,
+                line=line_of(settings, _ALLOW_WRITES),
+                key=_ALLOW_WRITES_KEY,
+                hint="remove it and make the mounts read-only, or review the host writes and "
+                f"document them as '{_ALLOW_WRITES_KEY}' in allowlists.sandbox_privileges",
+            )
         for service_name, service in _mapping(services).items():
             if not isinstance(service, dict):
                 issues += 1
@@ -635,17 +814,26 @@ def sandbox_privileges(ctx: LintContext) -> Iterable[Finding]:
                 )
                 continue
             checked_services += 1
-            for privilege in _service_privileges(_mapping(service), _mapping(compose)):
+            privileges = _service_privileges(
+                _mapping(service), _mapping(compose), enforce_mounts=allow_writes is not True
+            )
+            for privilege in privileges:
                 issues += 1
                 key = privilege.key(service_name)
+                if privilege.rejection_hint is not None:
+                    key, hint = None, privilege.rejection_hint
+                else:
+                    hint = (
+                        "remove the setting, or review the required access and document it "
+                        f"as '{key}' in allowlists.sandbox_privileges"
+                    )
                 yield Diagnostic(
                     f"Service '{service_name}' {privilege.field}: {privilege.detail}",
                     file=compose_file,
                     line=privilege.line,
                     severity=privilege.severity,
                     key=key,
-                    hint="remove the setting, or review the required access and document it "
-                    f"as '{key}' in allowlists.sandbox_privileges",
+                    hint=hint,
                 )
     if not issues:
         yield Outcome(
