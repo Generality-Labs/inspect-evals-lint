@@ -75,6 +75,20 @@ class TestSubstringVerdicts:
             pytest.param('ok = answer.startswith("yes")\n', id="startswith"),
             pytest.param('ok = "malicious" in response\n', id="task_word_not_in_vocabulary"),
             pytest.param('ok = "yes or no" in prompt\n', id="phrase_not_a_token"),
+            pytest.param('ok = "yes" in reply.lower().split()\n', id="membership_in_split_words"),
+            pytest.param('ok = "yes" in reply.splitlines()\n', id="membership_in_lines"),
+            pytest.param(
+                'def score(state, target):\n    return "yes" in state.output.choices[0].message.text.lower()\n',
+                id="model_under_test_output_through_a_subscript",
+            ),
+            pytest.param(
+                'def score(state, target):\n    return "yes" in state.output.completion.lower().replace("*", "")\n',
+                id="model_under_test_output_through_replace",
+            ),
+            pytest.param(
+                'def score(state, target):\n    if (pred := state.output.completion) and "yes" in pred:\n        return 1\n',
+                id="model_under_test_output_through_a_walrus",
+            ),
             pytest.param(
                 'def score(state, target):\n    return "true" in state.output.completion.lower()\n',
                 id="model_under_test_output_inline",
@@ -126,13 +140,25 @@ class TestUnanchoredRegexVerdicts:
             pytest.param('m = re.search(r"(A|B|C)", raw_grade)\n', id="one_character_alternation"),
             pytest.param('m = re.findall(r"(?:yes|no)", text)\n', id="non_capturing_alternation"),
             pytest.param('m = re.search(r"(?P<verdict>true|false)", text)\n', id="named_group"),
-            pytest.param('m = re.match("yes", text)\n', id="plain_string_pattern"),
+            pytest.param('m = re.search("yes", text)\n', id="plain_string_pattern"),
             pytest.param('m = re.finditer(r"(yes|no)", text)\n', id="finditer"),
-            pytest.param(
-                'm = re.fullmatch(r"\\s*(yes|no)\\s*", text)\n', id="fullmatch_is_not_an_anchor"
-            ),
             pytest.param('m = re.search(pattern=r"(yes|no)", string=text)\n', id="pattern_keyword"),
             pytest.param('m = re.search(r"(?i)correct:\\s*(yes|no)", text)\n', id="inline_flag"),
+            pytest.param(
+                'm = re.search(r"\\b(yes|no)\\b", text)\n', id="word_boundary_is_not_an_anchor"
+            ),
+            pytest.param(
+                'm = re.search(r"(yes|no)(?!\\w)", text)\n', id="lookahead_is_not_an_anchor"
+            ),
+            pytest.param(
+                'm = re.search(r"(?<!\\w)(yes|no)", text)\n', id="lookbehind_is_not_an_anchor"
+            ),
+            pytest.param(
+                'm = re.findall(r"\\b([ABC])\\b", grade)\n', id="bounded_one_character_class"
+            ),
+            pytest.param(
+                'parse = lambda text: re.search(r"(yes|no)", text)\n', id="inside_a_lambda"
+            ),
         ],
     )
     def test_an_unanchored_verdict_pattern_fails(self, tmp_path, source):
@@ -141,6 +167,19 @@ class TestUnanchoredRegexVerdicts:
         (diagnostic,) = _diagnostics(results)
         assert diagnostic.severity == "error"
         assert diagnostic.line == 2
+
+    def test_a_pattern_compiled_in_a_class_body_is_flagged(self, tmp_path):
+        source = (
+            "import re\n"
+            "\n"
+            "class Judge:\n"
+            '    PATTERN = re.compile(r"(yes|no)")\n'
+            "\n"
+            "    def parse(self, text):\n"
+            "        return self.PATTERN.search(text)\n"
+        )
+        results = _run(tmp_path, make_monorepo(tmp_path), source)
+        assert [d.line for d in _diagnostics(results)] == [4]
 
     def test_a_compiled_pattern_is_flagged_once_at_the_compile_site(self, tmp_path):
         source = (
@@ -163,7 +202,6 @@ class TestUnanchoredRegexVerdicts:
     @pytest.mark.parametrize(
         "source",
         [
-            pytest.param('m = re.search(r"\\b(yes|no)\\b", text)\n', id="word_boundary"),
             pytest.param(
                 'm = re.search(r"^(?:[-*]\\s*)?correct:\\s*(yes|no)", text, re.M)\n',
                 id="line_start",
@@ -171,9 +209,27 @@ class TestUnanchoredRegexVerdicts:
             pytest.param('m = re.search(r"(?m)^ANSWER:\\s*([01])", text)\n', id="inline_multiline"),
             pytest.param('m = re.search(r"(?i)correct:\\s*(yes|no)\\s*$", text)\n', id="line_end"),
             pytest.param('m = re.search(r"\\A(yes|no)", text)\n', id="string_start"),
-            pytest.param('m = re.search(r"(yes|no)(?!\\w)", text)\n', id="lookahead_boundary"),
-            pytest.param('m = re.search(r"(?<!\\w)(yes|no)", text)\n', id="lookbehind_boundary"),
-            pytest.param('m = re.search(rf"\\b{token}\\b", grade)\n', id="f_string_with_boundary"),
+            pytest.param(
+                'm = re.search(rf"{token}", grade)\n', id="f_string_with_an_unknown_token"
+            ),
+            pytest.param(
+                'm = re.match(r"\\s*(yes|no)", reply.lower())\n', id="match_reads_the_leading_token"
+            ),
+            pytest.param(
+                'm = re.fullmatch(r"\\s*(yes|no)\\s*", text)\n', id="fullmatch_reads_the_whole_text"
+            ),
+            pytest.param(
+                'def score(state, target):\n    return re.search(r"(yes|no)", state.output.completion)\n',
+                id="model_under_test_output_inline",
+            ),
+            pytest.param(
+                'def score(state, target):\n    pred = state.output.completion.lower()\n    return re.findall(r"(yes|no)", pred)\n',
+                id="model_under_test_output_through_a_name",
+            ),
+            pytest.param(
+                'def score(state, target):\n    return re.search(r"(yes|no)", string=state.output.completion)\n',
+                id="model_under_test_output_as_a_keyword",
+            ),
             pytest.param(
                 'm = re.search(r"<answer>(.*?)</answer>", text)\n', id="tag_capture_no_token"
             ),
@@ -210,6 +266,9 @@ class TestUnanchoredLabelledNumbers:
             ),
             pytest.param('m = re.search(r"Score: (\\d+)", text)\n', id="literal_space"),
             pytest.param('m = re.findall(r"score=(\\d+)", text)\n', id="equals_separator"),
+            pytest.param(
+                'm = re.search(r"\\bRatio:\\s*(\\d+)", output)\n', id="word_boundary_before_label"
+            ),
         ],
     )
     def test_a_labelled_number_searched_anywhere_warns(self, tmp_path, source):
@@ -229,7 +288,8 @@ class TestUnanchoredLabelledNumbers:
             pytest.param('m = re.search(r"Final Answer:\\s*(.+)", text)\n', id="any_capture"),
             pytest.param('m = re.search(r"(\\d+)", text)\n', id="number_without_a_label"),
             pytest.param(
-                'm = re.search(r"\\bRatio:\\s*(\\d+)", output)\n', id="word_boundary_before_label"
+                'def score(state, target):\n    return re.findall(r"confidence:\\s*(\\d+)", state.output.completion, re.I)\n',
+                id="model_under_test_output",
             ),
         ],
     )
