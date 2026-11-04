@@ -32,13 +32,11 @@ dev = [
     "pytest-cov>=7.0.0",
     "basedpyright>=1.39",
     "pre-commit>=4.0.0",
+    "ruff==0.15.20",
     "scriv>=1.8",
     "types-PyYAML",
     "mdformat>=1.0.0",
     "mdformat-gfm>=1.0.0",
-    # The ruff_rules_enabled tests run the real ruff. Same version as the
-    # ruff-pre-commit hook, so `uv run ruff` and pre-commit agree.
-    "ruff==0.15.20",
 ]
 docs = [
     "mdformat>=1.0.0",
