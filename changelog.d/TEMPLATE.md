@@ -1,6 +1,6 @@
 <!--
 A changelog fragment: one file per pull request, collected into CHANGELOG.md
-at release time by `uv run scriv collect`.
+by the Prepare release workflow (or `uv run scriv collect` by hand).
 
 Uncomment the section(s) that apply and replace the example bullet. Write for
 someone reading the release notes: what changed and why it matters to them.

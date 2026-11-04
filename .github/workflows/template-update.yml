@@ -5,8 +5,8 @@ name: Template Update
 # workflows need no run here — those are pinned `@v1` and propagate on their
 # own when the tag moves.
 #
-# To update to something other than `v1`, run `uvx copier update` locally with
-# `--vcs-ref`.
+# To update to something other than `v1`, run `uvx copier update --trust`
+# locally with `--vcs-ref`.
 on:
   schedule:
     - cron: "0 6 * * 1" # Mondays, 06:00 UTC
