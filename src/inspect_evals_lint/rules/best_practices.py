@@ -582,8 +582,9 @@ def sample_ids(ctx: LintContext) -> Iterable[Finding]:
     function's own names, then enclosing functions', then the module's.
     ``sample_fields`` and ``auto_id`` may be passed by keyword, or positionally
     to Inspect's ``hf_dataset``, ``csv_dataset``, ``json_dataset`` and
-    ``file_dataset`` and inspect_evals' ``load_csv_dataset`` and
-    ``load_json_dataset``. A loader's ``**kwargs`` is taken to set ``auto_id``.
+    ``file_dataset`` and to ``load_csv_dataset`` and ``load_json_dataset``,
+    whether imported from ``inspect_evals_utils`` or ``inspect_evals.utils``.
+    A loader's ``**kwargs`` is taken to set ``auto_id``.
     A ``FieldSpec`` the rule can't trace to a loader needs its own ``id=``. That
     covers one never passed to a loader, and one reached only through a
     container, an attribute such as ``self.fields``, or another file.
@@ -1155,7 +1156,7 @@ SHUFFLE_POSITION_OFFSETS = {"shuffle": 2, "seed": 3}
 """Where ``shuffle`` and ``seed`` follow ``sample_fields`` in every known loader (see ``SAMPLE_FIELDS_POSITION``)."""
 
 SHUFFLE_AND_SEED = "shuffle_and_seed"
-"""inspect_evals' helper splitting ``shuffle: bool | int`` into a loader's ``shuffle`` and ``seed``: an int is the seed."""
+"""The inspect_evals_utils helper splitting ``shuffle: bool | int`` into a loader's ``shuffle`` and ``seed``: an int is the seed."""
 
 
 @dataclass(frozen=True)
@@ -1595,7 +1596,8 @@ def shuffle_choices_seeded(ctx: LintContext) -> Iterable[Finding]:
 
 _SHUFFLE_HINT = (
     "keep the shuffle and default it to a seed, e.g. `shuffle: bool | int = 42` split with "
-    "inspect_evals' `shuffle_and_seed(shuffle)`, so a --limit run samples across a dataset "
+    "`shuffle_and_seed(shuffle)` from inspect_evals_utils, which inspect_evals.utils "
+    "re-exports, so a --limit run samples across a dataset "
     "whose records are grouped by category or subject, and does so the same way every run; "
     "if the records are in no meaningful order, the shuffle can go and order be left to "
     "`inspect eval --sample-shuffle <seed>`"
@@ -1625,8 +1627,9 @@ def shuffle_seeded(ctx: LintContext) -> Iterable[Finding]:
 
     Any call passing ``shuffle=`` by keyword is read, and ``shuffle`` and
     ``seed`` may be passed positionally to Inspect's ``hf_dataset``,
-    ``csv_dataset``, ``json_dataset`` and ``file_dataset`` and inspect_evals'
-    ``load_csv_dataset`` and ``load_json_dataset``.
+    ``csv_dataset``, ``json_dataset`` and ``file_dataset`` and to
+    ``load_csv_dataset`` and ``load_json_dataset``, whether imported from
+    ``inspect_evals_utils`` or ``inspect_evals.utils``.
 
     A dataset's ``.shuffle()`` method is read too, and warned on when it passes
     no seed or one that resolves to ``None``. A receiver named ``random``
@@ -1634,7 +1637,8 @@ def shuffle_seeded(ctx: LintContext) -> Iterable[Finding]:
     ``shuffle_choices_seeded``, a call inside an ``if`` that the defaults skip,
     such as ``if shuffle:`` with ``shuffle=False``, is not flagged.
 
-    inspect_evals' ``shuffle_and_seed(shuffle)`` reads ``shuffle`` as inspect
+    ``shuffle_and_seed(shuffle)``, from ``inspect_evals_utils`` or
+    ``inspect_evals.utils``, reads ``shuffle`` as inspect
     reads ``shuffle_choices``: an int is the seed, ``True`` is unseeded and
     ``False`` is off. A call to it is flagged when its argument resolves to
     ``True``, so ``shuffle: bool | int = 42`` passes and ``= True`` does not.
