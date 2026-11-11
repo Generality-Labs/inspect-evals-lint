@@ -10,19 +10,19 @@ from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
 from inspect_evals_lint.registry import rule
 from inspect_evals_lint.rules._ast import column_of, end_line_of, parse_failures, parse_python_files
 from inspect_evals_lint.rules.code_extraction import (
-    HELPER_DISTRIBUTION,
     helper_modules,
+    helper_unavailable,
     is_test_file,
 )
-from inspect_evals_lint.rules.dependencies import declared_dependencies
 
 HELPER = "strip_json_fence"
 
 _STRICT_METHODS = frozenset({"model_validate_json", "validate_json"})
 
 _HINT = (
-    f"pass the reply through inspect_evals.utils.code.{HELPER}() first, so JSON wrapped in a "
-    "code fence still parses, and bump the task version, since replies that failed to parse "
+    f"pass the reply through {HELPER}() first, from inspect_evals_utils.code, which "
+    "inspect_evals.utils.code re-exports, so JSON wrapped in a code fence still parses, "
+    "and bump the task version, since replies that failed to parse "
     "can now be graded; if the upstream benchmark rejects fenced replies, suppress with a reason"
 )
 
@@ -143,10 +143,10 @@ def _sites(scope: _Function) -> list[tuple[ast.Call, str]]:
     name="fence_tolerant_json",
     category="code_quality",
     scopes=("eval", "helper"),
-    summary="A generated reply is passed through inspect_evals' strip_json_fence before strict JSON parsing",
+    summary="A generated reply is passed through the shared strip_json_fence helper before strict JSON parsing",
 )
 def fence_tolerant_json(ctx: LintContext) -> Iterable[Finding]:
-    """A generated reply is passed through ``inspect_evals.utils.code.strip_json_fence`` before strict JSON parsing.
+    """A generated reply is passed through ``inspect_evals_utils.code.strip_json_fence`` before strict JSON parsing.
 
     ## What it does
     Flags ``json.loads``, a pydantic model's ``model_validate_json`` or a
@@ -159,10 +159,13 @@ def fence_tolerant_json(ctx: LintContext) -> Iterable[Finding]:
     from ``state.output``, whose format may be part of what the task measures.
     Test files are not read.
 
-    The rule applies only where the helper is available: in inspect_evals itself,
-    where a helper package (``helper-dirs``) defines ``strip_json_fence``, and in
-    a repository whose ``pyproject.toml`` declares a dependency on
-    ``inspect-evals``. Elsewhere it is skipped.
+    The rule applies only where the helper is available: in a repository whose
+    ``pyproject.toml`` declares a dependency on ``inspect-evals-utils``, which
+    defines it in ``inspect_evals_utils.code``, or on ``inspect-evals``, which
+    re-exports it from ``inspect_evals.utils.code``, and where a helper package
+    (``helper-dirs``) defines ``strip_json_fence`` itself. inspect_evals depends
+    on ``inspect-evals-utils``, so the rule runs there. A dependency in the
+    ``dev`` group does not count. Elsewhere the rule is skipped.
 
     ## Why is this bad?
     A model asked for bare JSON, even through a ``response_schema``, sometimes
@@ -198,7 +201,7 @@ def fence_tolerant_json(ctx: LintContext) -> Iterable[Finding]:
     ```
     Use instead:
     ```python
-    from inspect_evals.utils.code import strip_json_fence
+    from inspect_evals_utils.code import strip_json_fence
 
 
     async def score(state: TaskState, target: Target) -> Score:
@@ -208,12 +211,8 @@ def fence_tolerant_json(ctx: LintContext) -> Iterable[Finding]:
     ```
     """
     helpers = helper_modules(ctx, HELPER)
-    if not helpers and HELPER_DISTRIBUTION not in declared_dependencies(ctx.root):
-        yield Outcome(
-            "skip",
-            f"inspect_evals.utils.code.{HELPER} is not available: no helper package defines it "
-            f"and pyproject.toml does not depend on {HELPER_DISTRIBUTION}",
-        )
+    if skip := helper_unavailable(ctx, helpers, HELPER):
+        yield skip
         return
 
     parsed_files = parse_python_files(ctx)

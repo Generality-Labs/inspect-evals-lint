@@ -10,11 +10,11 @@ A dataset loader that shuffles samples is given a seed.
 
 Warns on each `shuffle=` argument that resolves to true when the call passes no `seed=`, or a `seed=` that resolves to `None`. Values are resolved as `shuffle_choices_seeded` resolves them, and a value the rule can't resolve is taken at face value. A call with `**kwargs` and no `seed=` is taken to pass one.
 
-Any call passing `shuffle=` by keyword is read, and `shuffle` and `seed` may be passed positionally to Inspect's `hf_dataset`, `csv_dataset`, `json_dataset` and `file_dataset` and inspect_evals' `load_csv_dataset` and `load_json_dataset`.
+Any call passing `shuffle=` by keyword is read, and `shuffle` and `seed` may be passed positionally to Inspect's `hf_dataset`, `csv_dataset`, `json_dataset` and `file_dataset` and to `load_csv_dataset` and `load_json_dataset`, whether imported from `inspect_evals_utils` or `inspect_evals.utils`.
 
 A dataset's `.shuffle()` method is read too, and warned on when it passes no seed or one that resolves to `None`. A receiver named `random` shuffles a list, not a dataset, and is not read. As in `shuffle_choices_seeded`, a call inside an `if` that the defaults skip, such as `if shuffle:` with `shuffle=False`, is not flagged.
 
-inspect_evals' `shuffle_and_seed(shuffle)` reads `shuffle` as inspect reads `shuffle_choices`: an int is the seed, `True` is unseeded and `False` is off. A call to it is flagged when its argument resolves to `True`, so `shuffle: bool | int = 42` passes and `= True` does not. The loader it feeds is not flagged again.
+`shuffle_and_seed(shuffle)`, from `inspect_evals_utils` or `inspect_evals.utils`, reads `shuffle` as inspect reads `shuffle_choices`: an int is the seed, `True` is unseeded and `False` is off. A call to it is flagged when its argument resolves to `True`, so `shuffle: bool | int = 42` passes and `= True` does not. The loader it feeds is not flagged again.
 
 A dataset helper that takes `shuffle=` but seeds internally is flagged where it is called without a seed; suppress that finding with the reason. When the value comes from a parameter default, the diagnostic points at the default.
 
