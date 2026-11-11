@@ -82,6 +82,40 @@ class TestWhereTheHelperIsAvailable:
         )
         assert [r.status for r in _run(tmp_path, config, APPS_STYLE)] == ["warn"]
 
+    def test_standalone_repo_depending_on_inspect_evals_utils_warns(self, tmp_path):
+        config = make_register_repo(tmp_path)
+        write(
+            tmp_path / "pyproject.toml",
+            '[project]\nname = "my-eval"\ndependencies = ["inspect-ai", "inspect-evals-utils>=0.2"]\n',
+        )
+        results = _run(tmp_path, config, APPS_STYLE)
+        assert [r.status for r in results] == ["warn"]
+        (diagnostic,) = results
+        assert isinstance(diagnostic, Diagnostic)
+        assert diagnostic.hint is not None
+        assert "inspect_evals_utils.code" in diagnostic.hint
+
+    def test_monorepo_whose_utils_re_export_the_packaged_helper_warns(self, tmp_path):
+        """inspect_evals since its helpers moved to inspect-evals-utils: ``utils/code.py`` defines nothing."""
+        config = make_monorepo(tmp_path)
+        write(
+            tmp_path / "pyproject.toml",
+            '[project]\nname = "inspect_evals"\n'
+            'dependencies = ["inspect_ai", "inspect-evals-utils[huggingface]==0.2.0"]\n\n'
+            '[tool.inspect-evals-lint]\npreset = "monorepo"\n',
+        )
+        write(
+            tmp_path / "src/inspect_evals/utils/code.py",
+            "from inspect_evals_utils.code import extract_code_block\n\n"
+            '__all__ = ["extract_code_block"]\n',
+        )
+        assert [r.status for r in _run(tmp_path, config, APPS_STYLE)] == ["warn"]
+
+    def test_the_skip_names_both_distributions(self, tmp_path):
+        (skip,) = _run(tmp_path, make_register_repo(tmp_path), APPS_STYLE)
+        assert "inspect-evals-utils" in skip.message
+        assert skip.message.endswith("inspect-evals")
+
     def test_inspect_evals_in_an_extra_counts(self, tmp_path):
         config = make_register_repo(tmp_path)
         write(

@@ -22,8 +22,12 @@ from inspect_evals_lint.rules._ast import (
 from inspect_evals_lint.rules.dependencies import declared_dependencies
 
 HELPER = "extract_code_block"
-HELPER_DISTRIBUTION = "inspect-evals"
-"""The distribution that ships ``inspect_evals.utils.code.extract_code_block``, in PEP 503 form."""
+HELPER_DISTRIBUTIONS = ("inspect-evals-utils", "inspect-evals")
+"""The distributions the helpers import from, in PEP 503 form.
+
+``inspect-evals-utils`` defines them in ``inspect_evals_utils.code`` and
+``inspect-evals`` re-exports them from ``inspect_evals.utils.code``.
+"""
 
 _RE_FUNCTIONS = frozenset({"compile", "search", "findall", "finditer", "match", "fullmatch", "sub"})
 _STR_METHODS = frozenset({"split", "replace", "find", "partition", "startswith"})
@@ -39,7 +43,8 @@ _BARE_FENCE_FILLER = re.compile(r"```|`\{3,?\d*\}|\\[ns]|[\s?*+^$]")
 """What a pattern matching only a fence may also hold: optional newlines and whitespace, anchors."""
 
 _HINT = (
-    f"use inspect_evals.utils.code.{HELPER}(completion, language) and bump the task version, "
+    f"use {HELPER}(completion, language) from inspect_evals_utils.code, which "
+    "inspect_evals.utils.code re-exports, and bump the task version, "
     "since the extracted text can change; if the upstream benchmark takes a different block, "
     "suppress with a reason"
 )
@@ -96,6 +101,20 @@ def helper_modules(ctx: LintContext, helper: str = HELPER) -> set[Path]:
             except (OSError, UnicodeDecodeError, SyntaxError):
                 continue
     return found
+
+
+def helper_unavailable(ctx: LintContext, helpers: set[Path], helper: str) -> Outcome | None:
+    """The skip for a repository that cannot import ``helper``; None where it can.
+
+    ``helpers`` is what :func:`helper_modules` found for it.
+    """
+    if helpers or declared_dependencies(ctx.root).intersection(HELPER_DISTRIBUTIONS):
+        return None
+    return Outcome(
+        "skip",
+        f"{helper} is not available: no helper package defines it and pyproject.toml "
+        f"depends on neither {' nor '.join(HELPER_DISTRIBUTIONS)}",
+    )
 
 
 def is_test_file(path: Path, package: Path) -> bool:
@@ -278,10 +297,10 @@ def _sites(tree: ast.Module) -> list[tuple[_Function | None, list[_FenceCall]]]:
     name="shared_code_extraction",
     category="code_quality",
     scopes=("eval", "helper"),
-    summary="Code is extracted from a completion with inspect_evals' extract_code_block, not a hand-rolled fence pattern",
+    summary="Code is extracted from a completion with the shared extract_code_block helper, not a hand-rolled fence pattern",
 )
 def shared_code_extraction(ctx: LintContext) -> Iterable[Finding]:
-    r"""Code is extracted from a completion with ``inspect_evals.utils.code.extract_code_block``, not a hand-rolled fence pattern.
+    r"""Code is extracted from a completion with ``inspect_evals_utils.code.extract_code_block``, not a hand-rolled fence pattern.
 
     ## What it does
     Flags a string literal holding a triple-backtick fence, or a regex
@@ -302,10 +321,13 @@ def shared_code_extraction(ctx: LintContext) -> Iterable[Finding]:
     names another language, such as ``(?:json|python)?``, still counts. Test
     files and the module that defines the helper are not read.
 
-    The rule applies only where the helper is available: in inspect_evals itself,
-    where a helper package (``helper-dirs``) defines ``extract_code_block``, and in
-    a repository whose ``pyproject.toml`` declares a dependency on
-    ``inspect-evals``. Elsewhere it is skipped.
+    The rule applies only where the helper is available: in a repository whose
+    ``pyproject.toml`` declares a dependency on ``inspect-evals-utils``, which
+    defines it in ``inspect_evals_utils.code``, or on ``inspect-evals``, which
+    re-exports it from ``inspect_evals.utils.code``, and where a helper package
+    (``helper-dirs``) defines ``extract_code_block`` itself. inspect_evals
+    depends on ``inspect-evals-utils``, so the rule runs there. A dependency in
+    the ``dev`` group does not count. Elsewhere the rule is skipped.
 
     ## Why is this bad?
     Hand-rolled fence patterns disagree on the edge cases: prose before the fence,
@@ -342,7 +364,7 @@ def shared_code_extraction(ctx: LintContext) -> Iterable[Finding]:
     ```
     Use instead:
     ```python
-    from inspect_evals.utils.code import extract_code_block
+    from inspect_evals_utils.code import extract_code_block
 
 
     def find_code(completion: str) -> str:
@@ -350,7 +372,7 @@ def shared_code_extraction(ctx: LintContext) -> Iterable[Finding]:
     ```
     Where the evaluation takes another block:
     ```python
-    from inspect_evals.utils.code import extract_code_blocks
+    from inspect_evals_utils.code import extract_code_blocks
 
     blocks = extract_code_blocks(text, "cpp")
     code = next((block for block in reversed(blocks) if "#include" in block), None)
@@ -361,12 +383,8 @@ def shared_code_extraction(ctx: LintContext) -> Iterable[Finding]:
     ```
     """
     helpers = helper_modules(ctx)
-    if not helpers and HELPER_DISTRIBUTION not in declared_dependencies(ctx.root):
-        yield Outcome(
-            "skip",
-            f"inspect_evals.utils.code.{HELPER} is not available: no helper package defines it "
-            f"and pyproject.toml does not depend on {HELPER_DISTRIBUTION}",
-        )
+    if skip := helper_unavailable(ctx, helpers, HELPER):
+        yield skip
         return
 
     parsed_files = parse_python_files(ctx)
