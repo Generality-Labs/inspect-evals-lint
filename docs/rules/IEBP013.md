@@ -28,11 +28,13 @@ Without a separate grader, the model under evaluation grades its own answers. Th
 
 ## How to fix it
 
-Use `get_model(role="grader", default=...)`. Set the default to the grader used by the original benchmark's authors. A model name string is accepted; prefer a `Model` that also preserves the generation settings specified in their paper or code.
+For a custom scorer using one grader, call `get_model(role="grader", default=...)` inside the inner `score()` function. Set the default to the grader used by the original benchmark's authors and preserve its generation settings. Keep its name and settings as constants; construct a configured default `Model` during scoring only when the role is unconfigured, so an override does not require the default provider's credentials or dependencies.
 
 If the original benchmark grades without a model and your implementation adds one, choose a default grader and document that choice in the README. Changing the default can affect scores, so bump the task version to indicate that scores may no longer be comparable.
 
 Alternatively, use `get_model(role="grader", required=True)` to require the user to configure a grader. If the role is missing, the error occurs when `get_model` runs. Inside `score()`, that is the first scored sample.
+
+`get_model(role=...)` returns only the first model of a bound list. For built-in `model_graded_qa()` and `model_graded_fact()` scorers, leave a configured role to the scorer. Inspect `model_roles()` inside `score()` and pass a fallback only when the role is unconfigured. If no default is suitable, pass `model_role=ModelRole("grader", required=True)` to the built-in scorer. See the [grader-role guidance](https://github.com/UKGovernmentBEIS/inspect_evals/blob/main/BEST_PRACTICES.md#use-model-roles-for-multi-model-evals).
 
 ### When using the evaluated model is intentional
 

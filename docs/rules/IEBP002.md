@@ -28,6 +28,10 @@ grader = get_model(role="grader", default="openai/gpt-4o")
 grader = get_model(role="grader", required=True)
 ```
 
+These examples select one model for a custom scorer. Run them inside the inner `score()` function, or a helper called from it. If the role holds a list, `get_model()` returns only its first member.
+
+For built-in `model_graded_qa()` and `model_graded_fact()` scorers, leave a configured role to the scorer so it can use all of its graders. Inspect `model_roles()` during scoring and pass a fallback only when the role is unconfigured. With no suitable default, use `model_role=ModelRole("grader", required=True)` on the built-in scorer. See the [grader-role guidance](https://github.com/UKGovernmentBEIS/inspect_evals/blob/main/BEST_PRACTICES.md#use-model-roles-for-multi-model-evals). This rule checks only `get_model(role=...)` calls; it does not validate those built-in scorer forms.
+
 ## Options
 
 - `allowlists.model_role_resolution`: `{ package = ["role"] }` entries reported as warnings while an existing surface is burned down.
