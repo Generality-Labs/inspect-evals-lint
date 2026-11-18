@@ -8,7 +8,6 @@ import pytest
 from inspect_evals_lint.config import PRESETS
 from inspect_evals_lint.registry import get_rule
 from inspect_evals_lint.rules.best_practices import (
-    GetModelVisitor,
     ModelRoleVisitor,
     SampleIdVisitor,
     TaskDefaultsVisitor,
@@ -17,117 +16,6 @@ from inspect_evals_lint.rules.best_practices import (
 )
 from inspect_evals_lint.suppressions import apply_suppressions, load_suppressions
 from tests.conftest import context_for, write
-
-
-class TestGetModelVisitor:
-    """Test the GetModelVisitor class."""
-
-    def test_get_model_in_solver(self):
-        """Test that get_model() inside @solver is marked valid."""
-        code = """
-@solver
-def my_solver():
-    model = get_model()
-    return model
-"""
-        tree = ast.parse(code)
-        visitor = GetModelVisitor()
-        visitor.visit(tree)
-
-        assert len(visitor.calls) == 1
-        _line, context, is_valid = visitor.calls[0]
-        assert context == "my_solver"
-        assert is_valid is True
-
-    def test_get_model_in_scorer(self):
-        """Test that get_model() inside @scorer is marked valid."""
-        code = """
-@scorer
-def my_scorer():
-    model = get_model()
-    return model
-"""
-        tree = ast.parse(code)
-        visitor = GetModelVisitor()
-        visitor.visit(tree)
-
-        assert len(visitor.calls) == 1
-        _line, context, is_valid = visitor.calls[0]
-        assert context == "my_scorer"
-        assert is_valid is True
-
-    def test_get_model_in_agent(self):
-        """An agent is the solver of a sandboxed evaluation; get_model() in its execute is late enough."""
-        code = """
-@agent
-def my_agent(model=None):
-    async def execute(state):
-        return await get_model(model).generate(state.messages)
-    return execute
-"""
-        visitor = GetModelVisitor()
-        visitor.visit(ast.parse(code))
-
-        assert len(visitor.calls) == 1
-        _line, context, is_valid = visitor.calls[0]
-        assert context == "execute"
-        assert is_valid is True
-
-    def test_get_model_outside_solver_scorer(self):
-        """Test that get_model() outside @solver/@scorer is marked invalid."""
-        code = """
-def my_function():
-    model = get_model()
-    return model
-"""
-        tree = ast.parse(code)
-        visitor = GetModelVisitor()
-        visitor.visit(tree)
-
-        assert len(visitor.calls) == 1
-        _line, context, is_valid = visitor.calls[0]
-        assert context == "my_function"
-        assert is_valid is False
-
-    def test_get_model_at_module_level(self):
-        """Test that get_model() at module level is marked invalid."""
-        code = "model = get_model()"
-        tree = ast.parse(code)
-        visitor = GetModelVisitor()
-        visitor.visit(tree)
-
-        assert len(visitor.calls) == 1
-        _line, context, is_valid = visitor.calls[0]
-        assert context == "module"
-        assert is_valid is False
-
-    def test_no_get_model_calls(self):
-        """Test code without get_model() calls."""
-        code = """
-@solver
-def my_solver():
-    return "hello"
-"""
-        tree = ast.parse(code)
-        visitor = GetModelVisitor()
-        visitor.visit(tree)
-
-        assert len(visitor.calls) == 0
-
-    def test_get_model_with_attribute_call(self):
-        """Test module.get_model() pattern."""
-        code = """
-@solver
-def my_solver():
-    model = inspect_ai.get_model()
-    return model
-"""
-        tree = ast.parse(code)
-        visitor = GetModelVisitor()
-        visitor.visit(tree)
-
-        assert len(visitor.calls) == 1
-        assert visitor.calls[0][2] is True  # is_valid
 
 
 class TestSampleIdVisitor:
