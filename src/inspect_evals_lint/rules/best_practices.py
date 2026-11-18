@@ -18,42 +18,7 @@ from inspect_evals_lint.rules._ast import (
     parse_failures,
     parse_python_files,
 )
-
-MODEL_RESOLVING_DECORATORS = ("solver", "scorer", "agent")
-"""The components inside which ``get_model()`` resolves late enough for the caller to override it."""
-
-
-class GetModelVisitor(ast.NodeVisitor):
-    """Record every ``get_model()`` call with whether it sits inside a ``@solver``, ``@scorer`` or ``@agent``."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[int, str, bool]] = []  # (line, context, is_valid)
-        self.nodes: list[ast.Call] = []
-        self._in_component = False
-        self._current_context = "module"
-
-    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        old_context = self._current_context
-        old_in_component = self._in_component
-
-        self._current_context = node.name
-        for decorator in node.decorator_list:
-            if get_decorator_name(decorator) in MODEL_RESOLVING_DECORATORS:
-                self._in_component = True
-                break
-
-        self.generic_visit(node)
-
-        self._current_context = old_context
-        self._in_component = old_in_component
-
-    visit_AsyncFunctionDef = visit_FunctionDef  # noqa: N815
-
-    def visit_Call(self, node: ast.Call) -> None:
-        if get_call_name(node) == "get_model":
-            self.calls.append((node.lineno, self._current_context, self._in_component))
-            self.nodes.append(node)
-        self.generic_visit(node)
+from inspect_evals_lint.rules._model_timing import model_lookups
 
 
 @rule(
@@ -61,7 +26,7 @@ class GetModelVisitor(ast.NodeVisitor):
     name="get_model_location",
     category="best_practices",
     scopes=("eval", "helper"),
-    summary="get_model() is only called inside @solver, @scorer or @agent functions",
+    summary="Resolve models and inspect model roles during solver, scorer or agent execution",
     references=(
         inspect_docs("models", "Models: Role Resolution", "role-resolution"),
         inspect_docs("solvers", "Solvers: Models in Solvers", "models-in-solvers"),
@@ -70,61 +35,94 @@ class GetModelVisitor(ast.NodeVisitor):
     ),
 )
 def get_model_location(ctx: LintContext) -> Iterable[Finding]:
-    """``get_model()`` is only called inside ``@solver``, ``@scorer`` or ``@agent`` functions.
+    """Resolve models and inspect model roles during solver, scorer or agent execution.
 
     ## What it does
-    Warns on each ``get_model()`` call that is not inside a function decorated with
-    ``@solver``, ``@scorer`` or ``@agent``. An agent is the solver of a sandboxed
-    evaluation, and its ``execute`` runs per sample just as a solver's does.
+
+    Warns when ``get_model()`` or ``model_roles()`` can run during module, task,
+    solver, scorer or agent construction. A decorator such as ``@scorer``
+    registers a factory; its body runs before the inner scoring function does.
+    Defaults and decorators on the returned callback run when the factory
+    defines it.
+
+    The rule follows named functions returned by component factories and
+    direct calls to package helpers, including imports and re-exports within
+    the package. Helpers reached only during execution pass. A helper reached
+    during construction as well is reported at its lookup.
 
     ## Why is this bad?
-    Resolving a concrete model at import time or inside ``@task`` fixes it before
-    the caller can choose one. Resolving it inside the solver, scorer or agent keeps
-    the task declarative and lets ``--model-role`` and task parameters override it.
+
+    A task can be constructed before ``eval()`` receives its model roles.
+    Resolving a role in a factory can select the fallback before the runner's
+    chosen model is available. A ``model_roles()`` check at that point also
+    misses the runner's binding, including a list of graders.
 
     ## Example
-    ```python
-    GRADER = get_model("openai/gpt-4o")   # resolved at import
 
+    ```python
+    @scorer(metrics=[accuracy()])
+    def graded():
+        grader = get_model(role="grader", default=DEFAULT_GRADER)
+
+        async def score(state, target):
+            return await grader.generate(state.input_text)
+
+        return score
+    ```
+
+    Use instead:
+
+    ```python
     @scorer(metrics=[accuracy()])
     def graded():
         async def score(state, target):
-            return await GRADER.generate(...)
+            grader = get_model(role="grader", default=DEFAULT_GRADER)
+            return await grader.generate(state.input_text)
+
+        return score
     ```
-    Use instead:
-    ```python
-    @scorer(metrics=[accuracy()])
-    def graded(model: str | Model | None = None):
-        async def score(state, target):
-            grader = get_model(model, role="grader", default="openai/gpt-4o")
-            ...
-    ```
+
+    This example selects one model for a custom scorer. For a built-in
+    ``model_graded_*`` scorer, inspect ``model_roles()`` inside ``score()`` and
+    leave a configured role to the built-in scorer. See the
+    [grader-role guidance](https://github.com/UKGovernmentBEIS/inspect_evals/blob/main/BEST_PRACTICES.md#use-model-roles-for-multi-model-evals).
+    Constructing a built-in scorer with ``model_role=...`` is allowed; that
+    scorer resolves the role when it runs.
+
+    ## Known limits
+
+    The analysis follows named package functions, not arbitrary callbacks,
+    method dispatch, function aliases assigned to variables, or calls through
+    other packages. A lookup with no known runtime path is reported as well;
+    helpers whose runtime callers are outside the checked package may need a
+    suppression explaining how they are invoked. Calls imported under aliases
+    are not recognised. Conditional branches are all considered possible.
     """
     parsed_files = parse_python_files(ctx)
     yield from parse_failures(parsed_files)
-
+    lookups = model_lookups(ctx, parsed_files.parsed)
     found = False
-    for parsed in parsed_files.parsed:
-        visitor = GetModelVisitor()
-        visitor.visit(parsed.tree)
-        for (line, context, is_valid), node in zip(visitor.calls, visitor.nodes, strict=True):
-            if is_valid:
-                continue
-            found = True
-            yield Diagnostic(
-                f"get_model() called outside @solver/@scorer/@agent (in {context})",
-                file=parsed.path,
-                line=line,
-                column=column_of(node),
-                end_line=end_line_of(node),
-                severity="warning",
-                hint="resolve models inside @solver/@scorer/@agent so tasks stay declarative",
-            )
-    if not found:
-        yield Outcome(
-            "pass",
-            "get_model() calls are properly inside @solver/@scorer/@agent decorated functions",
+    for lookup in lookups:
+        if lookup.runtime_only:
+            continue
+        found = True
+        name = get_call_name(lookup.node)
+        context = (
+            "can run during construction"
+            if lookup.phases
+            else "has no statically identified solver, scorer or agent runtime caller"
         )
+        yield Diagnostic(
+            f"{name}() {context}",
+            file=lookup.file.path,
+            line=lookup.node.lineno,
+            column=column_of(lookup.node),
+            end_line=end_line_of(lookup.node),
+            severity="warning",
+            hint="resolve models and inspect roles inside the running solve(), score() or execute() function, or a helper called from it",
+        )
+    if not found:
+        yield Outcome("pass", "Model lookups run only during solver, scorer or agent execution")
 
 
 class TaskParameterVisitor(ast.NodeVisitor):
@@ -877,6 +875,19 @@ def model_role_resolution(ctx: LintContext) -> Iterable[Finding]:
     # or
     grader = get_model(role="grader", required=True)
     ```
+
+    These examples select one model for a custom scorer. Run them inside the
+    inner ``score()`` function, or a helper called from it. If the role holds
+    a list, ``get_model()`` returns only its first member.
+
+    For built-in ``model_graded_qa()`` and ``model_graded_fact()`` scorers,
+    leave a configured role to the scorer so it can use all of its graders.
+    Inspect ``model_roles()`` during scoring and pass a fallback only when
+    the role is unconfigured. With no suitable default, use
+    ``model_role=ModelRole("grader", required=True)`` on the built-in scorer.
+    See the [grader-role guidance](https://github.com/UKGovernmentBEIS/inspect_evals/blob/main/BEST_PRACTICES.md#use-model-roles-for-multi-model-evals).
+    This rule checks only ``get_model(role=...)`` calls; it does not validate
+    those built-in scorer forms.
 
     ## Options
     - `allowlists.model_role_resolution`: `{ package = ["role"] }` entries reported as warnings while an existing surface is burned down.
