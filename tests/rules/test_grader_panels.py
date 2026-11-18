@@ -1,6 +1,8 @@
 """Only warn when a role selection reaches a built-in grader's model argument."""
 
+from dataclasses import replace
 from pathlib import Path
+from textwrap import dedent
 
 import pytest
 
@@ -179,10 +181,11 @@ def test_suppression_with_reason_applies_to_multiline_call(
     root, config = monorepo
     write(
         config.package_dir(root, "alpha") / "grader.py",
-        "model_graded_qa(\n    model=get_model(role='grader'),  # inspect-evals-lint: ignore[IEBP017] - protocol selects the first grader only\n)\n",
+        "model_graded_qa(\n    model=get_model(role='grader'),  # inspect-evals-lint: ignore[IEBP017] -- protocol selects the first grader only\n)\n",
     )
-    report = lint_package(root, "alpha", config, check="IEBP017")
+    report = lint_package(root, "alpha", replace(config, select=("IEBP017", "IECQ005")))
     assert report.statuses()["grader_panel_preservation"] == ["suppressed"]
+    assert report.statuses()["suppression_syntax"] == ["pass"]
 
 
 def test_class_fields_are_not_method_closure_variables(tmp_path: Path) -> None:
@@ -216,3 +219,276 @@ def test_shared_helper_package_is_checked(monorepo: tuple[Path, LintConfig]) -> 
     )
     report = lint_package(root, "utils", config, check="IEBP017")
     assert report.statuses()["grader_panel_preservation"] == ["warn"]
+
+
+@pytest.mark.parametrize(
+    ("expected", "source"),
+    [
+        pytest.param(
+            1, "f = lambda: model_graded_qa(model=get_model(role='grader'))", id="lambda missed"
+        ),
+        pytest.param(
+            1,
+            "from typing import cast\nmodel_graded_qa(model=cast(Model, get_model(role='grader')))",
+            id="cast missed",
+        ),
+        pytest.param(
+            1,
+            "model_graded_qa(model=[get_model(role='grader')])",
+            id="list missed (documented limit)",
+        ),
+        pytest.param(
+            1,
+            "grader, t = get_model(role='grader'), 1\nmodel_graded_qa(model=grader)",
+            id="tuple unpack missed (documented limit)",
+        ),
+        pytest.param(
+            0,
+            "\n        grader = get_model(role='grader')\n        match x:\n            case _:\n                grader = DEFAULT\n                model_graded_qa(model=grader)\n    ",
+            id="match reassignment false positive",
+        ),
+        pytest.param(
+            1,
+            "\n        match x:\n            case _:\n                grader = get_model(role='grader')\n                model_graded_qa(model=grader)\n    ",
+            id="match selection missed",
+        ),
+        pytest.param(
+            0,
+            "\n        grader = get_model(role='grader')\n        try:\n            grader = DEFAULT\n        except Exception:\n            grader = OTHER\n        model_graded_qa(model=grader)\n    ",
+            id="try reassignment false positive",
+        ),
+        pytest.param(
+            0,
+            "\n        def score():\n            grader = get_model(role='grader')\n            try:\n                return DEFAULT\n            except Exception:\n                return OTHER\n            model_graded_qa(model=grader)\n    ",
+            id="unreachable after try false positive",
+        ),
+        pytest.param(
+            1,
+            "\n        try:\n            grader = get_model(role='grader')\n            risky()\n        except Exception:\n            model_graded_qa(model=grader)\n    ",
+            id="handler selection missed",
+        ),
+        pytest.param(
+            1,
+            "\n        class Judge:\n            def score(self):\n                return model_graded_qa(model=grader)\n        grader = get_model(role='grader')\n    ",
+            id="class method late assignment missed",
+        ),
+        pytest.param(
+            1,
+            "\n        def score():\n            return model_graded_qa(model=grader)\n        grader = get_model(role='grader')\n    ",
+            id="function late assignment control",
+        ),
+        pytest.param(
+            0,
+            "\n        grader = get_model(role='grader')\n        class Judge:\n            def score(self):\n                return model_graded_qa(model=grader)\n        grader = DEFAULT\n    ",
+            id="class method reassignment false positive",
+        ),
+        pytest.param(
+            0,
+            "\n        grader = get_model(role='grader')\n        def score():\n            return model_graded_qa(model=grader)\n        grader = DEFAULT\n    ",
+            id="function reassignment control",
+        ),
+        pytest.param(
+            1,
+            "\n        if bad:\n            raise RuntimeError()\n        from inspect_ai.scorer import model_graded_qa as grade\n        def score():\n            return grade(model=get_model(role='grader'))\n    ",
+            id="alias after raise missed in closure",
+        ),
+        pytest.param(
+            1,
+            "\n        if bad:\n            raise RuntimeError()\n        from inspect_ai.scorer import model_graded_qa as grade\n        grade(model=get_model(role='grader'))\n    ",
+            id="alias after raise direct control",
+        ),
+        pytest.param(
+            1,
+            "\n        try:\n            from inspect_ai.scorer import model_graded_qa as grade\n        except ImportError:\n            raise\n        grade(model=get_model(role='grader'))\n    ",
+            id="try import alias missed",
+        ),
+        pytest.param(
+            1,
+            "\n        grader = None\n        for s in xs:\n            if grader:\n                model_graded_qa(model=grader)\n            grader = get_model(role='grader')\n    ",
+            id="loop next iteration missed",
+        ),
+        pytest.param(
+            0,
+            "\n        grader = get_model(role='grader')\n        def score():\n            match value:\n                case grader:\n                    model_graded_qa(model=grader)\n    ",
+            id="match capture shadow false positive",
+        ),
+        pytest.param(
+            0,
+            "\n        grader = get_model(role='grader')\n        *grader, last = defaults\n        model_graded_qa(model=grader)\n    ",
+            id="starred target rebinding false positive",
+        ),
+    ],
+)
+def test_review_regressions(tmp_path: Path, expected: int, source: str) -> None:
+    assert len(findings(tmp_path, dedent(source))) == expected
+
+
+@pytest.mark.parametrize(
+    ("expected", "source"),
+    [
+        (1, "grade = lambda: model_graded_qa(model=grader)\ngrader = get_model(role='grader')"),
+        (
+            0,
+            "grader = get_model(role='grader')\ngrade = lambda grader: model_graded_qa(model=grader)",
+        ),
+        (
+            0,
+            "grader = get_model(role='grader')\ngrade = lambda: model_graded_qa(model=grader)\ngrader = DEFAULT",
+        ),
+        (
+            1,
+            "grader = get_model(role='grader')\ngrade = lambda model=grader: model_graded_qa(model=model)\ngrader = DEFAULT",
+        ),
+        (
+            1,
+            "class Judge:\n    grade = lambda: model_graded_qa(model=grader)\ngrader = get_model(role='grader')",
+        ),
+        (
+            0,
+            "grader = DEFAULT\nclass Judge:\n    grader = get_model(role='grader')\n    grade = lambda: model_graded_qa(model=grader)",
+        ),
+        (1, "def score(grade=model_graded_qa):\n    return grade(model=get_model(role='grader'))"),
+        (
+            1,
+            "from typing import cast as typed\nmodel_graded_qa(model=typed(Model, get_model(role='grader')))",
+        ),
+        (
+            0,
+            "from elsewhere import cast\nmodel_graded_qa(model=cast(Model, get_model(role='grader')))",
+        ),
+        (
+            0,
+            "from typing import cast\ndef score(cast):\n    return model_graded_qa(model=cast(Model, get_model(role='grader')))",
+        ),
+        (
+            1,
+            "from typing import cast\nmodel_graded_qa(model=cast(typ=Model, val=get_model(role='grader')))",
+        ),
+        (1, "model_graded_qa(model=[*unknown, get_model(role='grader')])"),
+        (1, "models = [get_model(role='grader')]\nmodel_graded_qa(model=[*models])"),
+        (0, "grader, other = get_model(role='grader'), DEFAULT\nmodel_graded_qa(model=other)"),
+        (1, "grader, other = get_model(role='grader'), DEFAULT\nmodel_graded_qa(model=grader)"),
+        (
+            1,
+            "first, *rest, last = DEFAULT, get_model(role='grader'), OTHER\nmodel_graded_qa(model=rest)",
+        ),
+        (
+            0,
+            "first, *rest, last = get_model(role='grader'), DEFAULT, OTHER\nmodel_graded_qa(model=rest)",
+        ),
+        (
+            1,
+            "(grader, other), last = (get_model(role='grader'), DEFAULT), OTHER\nmodel_graded_qa(model=grader)",
+        ),
+        (
+            0,
+            "(grader, other), last = (get_model(role='grader'), DEFAULT), OTHER\nmodel_graded_qa(model=other)",
+        ),
+    ],
+)
+def test_expression_and_capture_boundaries(tmp_path: Path, expected: int, source: str) -> None:
+    assert len(findings(tmp_path, source)) == expected
+
+
+@pytest.mark.parametrize(
+    ("expected", "source"),
+    [
+        (
+            0,
+            "grader = get_model(role='grader')\ntry:\n    risky()\nexcept Exception:\n    pass\nfinally:\n    grader = DEFAULT\nmodel_graded_qa(model=grader)",
+        ),
+        (
+            1,
+            "grader = DEFAULT\ntry:\n    risky()\nexcept Exception:\n    pass\nfinally:\n    grader = get_model(role='grader')\nmodel_graded_qa(model=grader)",
+        ),
+        (
+            0,
+            "def factory():\n    grader = get_model(role='grader')\n    def score():\n        return model_graded_qa(model=grader)\n    try:\n        return score\n    finally:\n        grader = DEFAULT",
+        ),
+        (
+            0,
+            "def score():\n    grader = get_model(role='grader')\n    try:\n        risky()\n    finally:\n        return DEFAULT\n    model_graded_qa(model=grader)",
+        ),
+        (
+            0,
+            "grader = get_model(role='grader')\ntry:\n    risky()\nexcept Exception as grader:\n    model_graded_qa(model=grader)",
+        ),
+        (
+            1,
+            "def score():\n    try:\n        from inspect_ai.scorer import model_graded_qa as grade\n    except ImportError:\n        return None\n    return grade(model=get_model(role='grader'))",
+        ),
+        (
+            1,
+            "def factory():\n    if bad:\n        return None\n    from inspect_ai.scorer import model_graded_qa as grade\n    def score():\n        return grade(model=get_model(role='grader'))\n    return score",
+        ),
+        (
+            1,
+            "grader = None\nfor item in items:\n    if flag:\n        grader = get_model(role='grader')\n        continue\n    model_graded_qa(model=grader)",
+        ),
+        (
+            0,
+            "grader = get_model(role='grader')\nfor item in items:\n    break\n    model_graded_qa(model=grader)",
+        ),
+        (
+            0,
+            "grader = DEFAULT\nfor item in items:\n    grader = get_model(role='grader')\nelse:\n    grader = DEFAULT\nmodel_graded_qa(model=grader)",
+        ),
+        (
+            1,
+            "grader = DEFAULT\nfor item in items:\n    grader = get_model(role='grader')\n    break\nelse:\n    grader = DEFAULT\nmodel_graded_qa(model=grader)",
+        ),
+        (
+            1,
+            "grader = get_model(role='grader')\nfor item in items:\n    grader = [grader]\nmodel_graded_qa(model=grader)",
+        ),
+        (
+            1,
+            "grader = None\nwhile flag:\n    model_graded_qa(model=grader)\n    grader = get_model(role='grader')",
+        ),
+        (
+            1,
+            "grader = get_model(role='grader')\nmatch value:\n    case _ if flag:\n        grader = DEFAULT\nmodel_graded_qa(model=grader)",
+        ),
+        (
+            0,
+            "grader = get_model(role='grader')\nmatch value:\n    case 1:\n        grader = DEFAULT\n    case _:\n        grader = OTHER\nmodel_graded_qa(model=grader)",
+        ),
+    ],
+)
+def test_control_flow_boundaries(tmp_path: Path, expected: int, source: str) -> None:
+    assert len(findings(tmp_path, source)) == expected
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "score = (lambda: model_graded_qa(model=get_model(role='grader'))) if flag else None",
+        "scores = [lambda: model_graded_qa(model=get_model(role='grader')) for _ in items]",
+        "(grader := get_model(role='grader')) if flag else None\nmodel_graded_qa(model=grader)",
+    ],
+)
+def test_expression_branches_retain_deferred_calls(tmp_path: Path, source: str) -> None:
+    assert len(findings(tmp_path, source)) == 1
+
+
+def test_finally_sees_selection_when_the_try_body_raises_before_reassignment(
+    tmp_path: Path,
+) -> None:
+    assert (
+        len(
+            findings(
+                tmp_path,
+                "grader = get_model(role='grader')\ntry:\n    risky()\n    grader = DEFAULT\nfinally:\n    model_graded_qa(model=grader)",
+            )
+        )
+        == 1
+    )
+
+
+@pytest.mark.parametrize(("name", "expected"), [("grader", 1), ("other", 0)])
+def test_branch_merge_preserves_tuple_positions(tmp_path: Path, name: str, expected: int) -> None:
+    source = (
+        "pair = (get_model(role='grader'), DEFAULT) if flag else (get_model(role='judge'), OTHER)\ngrader, other = pair\n"
+        f"model_graded_qa(model={name})"
+    )
+    assert len(findings(tmp_path, source)) == expected

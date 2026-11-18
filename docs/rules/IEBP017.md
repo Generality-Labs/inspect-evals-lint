@@ -8,7 +8,7 @@ Preserve configured grader panels when calling built-in model graders.
 
 ## What it does
 
-Warns when a model selected by `get_model(role=...)` is passed to the `model=` argument of `model_graded_qa()` or `model_graded_fact()`. The rule follows direct expressions, local assignments and named nested-function closures within a file. It recognises imported aliases and merges possible assignments across branches. A later unconditional reassignment clears the earlier selection.
+Warns when a model selected by `get_model(role=...)` is passed to the `model=` argument of `model_graded_qa()` or `model_graded_fact()`. The rule follows direct expressions, local assignments and function and lambda closures within a file. It recognises imported aliases and merges possible assignments across branches. A later unconditional reassignment clears the earlier selection. Literal lists and tuples, unpacking and `typing.cast()` retain the selected model.
 
 ## Why is this bad?
 
@@ -35,12 +35,12 @@ This defers a configured role to the built-in scorer and uses the default only w
 Bare built-in scorer calls are allowed. Defaults and required roles are separate policy choices. A scorer that intentionally selects one panel member can use the normal suppression with a reason:
 
 ```python
-model_graded_qa(model=get_model(role="grader"))  # inspect-evals-lint: ignore[IEBP017] - protocol uses the first grader only
+model_graded_qa(model=get_model(role="grader"))  # inspect-evals-lint: ignore[IEBP017] -- protocol uses the first grader only
 ```
 
 ## Known limits
 
-This is bounded source analysis. It does not trace models through helper return values, arguments to other functions, attributes, containers or dynamic imports. It checks keyword `model=` arguments. Closures are analysed using their enclosing scope's final possible assignments; callback invocation order and mutations from other functions are not modelled. Role-absence guards use string-literal membership tests against `model_roles()`; equivalent guards through other expressions may need a suppression.
+This is bounded source analysis. It does not trace models through helper return values, arguments to other functions, attributes, container indexing or mutation, or dynamic imports. It checks keyword `model=` arguments. Closures are analysed using their enclosing scope's final possible assignments; callback invocation order and mutations from other functions are not modelled. Comprehension loop variables are not captured in deferred functions. Role-absence guards use string-literal membership tests against `model_roles()`; equivalent guards through other expressions may need a suppression. Branch predicates and exception types are not resolved. Exception handlers receive the possible states before statements in the try body; partial evaluation within an expression and effects inside called functions are not modelled. Loops include both zero and multiple iterations, without proving whether a particular iteration count or branch is possible. Match captures inherit the subject's possible role selections without resolving pattern elements.
 
 ## See also
 
