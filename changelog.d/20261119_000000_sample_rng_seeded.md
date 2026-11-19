@@ -1,0 +1,3 @@
+### Added
+
+- `sample_rng_seeded` (IEBP018) warns on unseeded randomness in the code that builds samples: draws from the stdlib `random` module's global generator with no `random.seed(...)`, and `random.Random()` or `numpy.random.default_rng()` built without a seed. It reads `@task` functions, functions that build a `Sample` or a dataset, and the package functions they call, including a solver's `solve`. `@tool`, `@scorer` and `@metric` functions are not read. Fixing a finding changes the presented samples, so it needs a comparability bump to the task version ([#63](https://github.com/Generality-Labs/inspect-evals-lint/issues/63)).
