@@ -12,7 +12,7 @@ are not followed.
 from __future__ import annotations
 
 import ast
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -40,6 +40,10 @@ Binding = tuple[Literal["function", "module"], Module, str]
 
 def _is_decorated(fn: FunctionNode, name: str) -> bool:
     return any(get_decorator_name(d) == name for d in fn.decorator_list)
+
+
+def _is_scorer(fn: FunctionNode) -> bool:
+    return _is_decorated(fn, "scorer")
 
 
 def _functions_in(body: list[ast.stmt]) -> dict[str, FunctionNode]:
@@ -124,7 +128,21 @@ class ScorerCode:
     _bound: dict[int, frozenset[str]] = field(default_factory=dict)
 
     @classmethod
-    def build(cls, ctx: LintContext, files: list[ParsedFile]) -> ScorerCode:
+    def build(
+        cls,
+        ctx: LintContext,
+        files: list[ParsedFile],
+        is_root: Callable[[FunctionNode], bool] | None = None,
+        not_followed: tuple[str, ...] = ("tool",),
+    ) -> ScorerCode:
+        """Index the package and follow calls from its ``@scorer`` functions.
+
+        ``is_root`` picks other functions to start from, for a rule that reads
+        different code the same way. A function decorated with a name in
+        ``not_followed`` is never reached.
+        """
+        if is_root is None:
+            is_root = _is_scorer
         code = cls(tuple(ctx.config.module_name(ctx.name).split(".")))
         for parsed in files:
             if not isinstance(parsed.tree, ast.Module):
@@ -134,11 +152,13 @@ class ScorerCode:
             if is_package:
                 code.packages.add(module)
             code._index(parsed, module, parsed.tree.body, ())
-        pending = [f for f in code.functions.values() if _is_decorated(f.node, "scorer")]
+        pending = [f for f in code.functions.values() if is_root(f.node)]
         seen: set[int] = set()
         while pending:
             function = pending.pop()
-            if id(function.node) in seen or _is_decorated(function.node, "tool"):
+            if id(function.node) in seen or any(
+                _is_decorated(function.node, name) for name in not_followed
+            ):
                 continue
             seen.add(id(function.node))
             code.reached.append(function)
