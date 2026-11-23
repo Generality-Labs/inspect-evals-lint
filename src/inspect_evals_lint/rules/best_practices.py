@@ -19,6 +19,8 @@ from inspect_evals_lint.rules._ast import (
     parse_python_files,
 )
 from inspect_evals_lint.rules._model_timing import model_lookups
+from inspect_evals_lint.rules.host_code import FunctionNode, scope_nodes
+from inspect_evals_lint.rules.scoring import PackageFunction, ScorerCode
 
 
 @rule(
@@ -1717,3 +1719,308 @@ def shuffle_seeded(ctx: LintContext) -> Iterable[Finding]:
     yield from _report_shuffles(
         ctx, "shuffle", judge, "shuffles the samples", "warning", _SHUFFLE_HINT
     )
+
+
+# sample_rng_seeded
+
+RANDOM_DRAWS = frozenset(
+    {
+        "betavariate",
+        "binomialvariate",
+        "choice",
+        "choices",
+        "expovariate",
+        "gammavariate",
+        "gauss",
+        "getrandbits",
+        "lognormvariate",
+        "normalvariate",
+        "paretovariate",
+        "randbytes",
+        "randint",
+        "random",
+        "randrange",
+        "sample",
+        "shuffle",
+        "triangular",
+        "uniform",
+        "vonmisesvariate",
+        "weibullvariate",
+    }
+)
+"""The functions of the stdlib ``random`` module that draw from its global generator."""
+
+GENERATOR_CONSTRUCTORS = frozenset({"Random", "default_rng"})
+"""``random.Random`` and ``numpy.random.default_rng``, each taking the seed first."""
+
+SAMPLE_BUILDERS = frozenset({"Sample", "MemoryDataset", *SAMPLE_FIELDS_POSITION})
+"""Calls that mark a function as building samples or a dataset."""
+
+_NOT_SAMPLE_CODE = ("tool", "scorer", "metric")
+
+
+def _builds_samples(fn: FunctionNode) -> bool:
+    """A ``@task`` function, or one that calls ``Sample``, ``MemoryDataset`` or a known loader."""
+    return any(get_decorator_name(d) == "task" for d in fn.decorator_list) or any(
+        isinstance(node, ast.Call) and get_call_name(node) in SAMPLE_BUILDERS
+        for node in scope_nodes(fn.body)
+    )
+
+
+@dataclass(frozen=True)
+class _RandomNames:
+    """What a file's names say about the stdlib ``random`` module."""
+
+    modules: frozenset[str]
+    """Names bound to the module: ``random``, or the alias in ``import random as rnd``."""
+    functions: dict[str, str]
+    """Names imported from the module, each with the function it is: ``{"shuffle": "shuffle"}``."""
+
+    @classmethod
+    def of(cls, tree: ast.AST) -> _RandomNames:
+        """Read the imports of ``random``; a name the file also assigns or takes as a parameter is not the module's."""
+        modules: set[str] = set()
+        functions: dict[str, str] = {}
+        rebound: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules.update(a.asname or a.name for a in node.names if a.name == "random")
+            elif isinstance(node, ast.ImportFrom) and node.module == "random" and node.level == 0:
+                functions.update({a.asname or a.name: a.name for a in node.names})
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                rebound.add(node.id)
+            elif isinstance(node, ast.arg):
+                rebound.add(node.arg)
+        return cls(
+            frozenset(modules - rebound),
+            {name: fn for name, fn in functions.items() if name not in rebound},
+        )
+
+    def function(self, call: ast.Call) -> tuple[str, str] | None:
+        """The ``random`` function a call runs and how the call spells it; None for any other call."""
+        func = call.func
+        if isinstance(func, ast.Name) and func.id in self.functions:
+            return self.functions[func.id], func.id
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id in self.modules
+        ):
+            return func.attr, f"{func.value.id}.{func.attr}"
+        return None
+
+    def seeds(self, body: list[ast.stmt]) -> bool:
+        """Whether ``body`` calls ``random.seed`` with an argument."""
+        return any(
+            isinstance(node, ast.Call)
+            and (node.args or node.keywords)
+            and (self.function(node) or ("", ""))[0] == "seed"
+            for node in scope_nodes(body)
+        )
+
+
+def _unseeded_generator(
+    call: ast.Call, functions: list[_Function], constants: dict[str, ast.expr]
+) -> str | None:
+    """Why a ``Random`` or ``default_rng`` call has no seed; None for a seeded one or any other call."""
+    if get_call_name(call) not in GENERATOR_CONSTRUCTORS:
+        return None
+    seed = call.args[0] if call.args else call.keywords[0].value if call.keywords else None
+    if seed is None:
+        return "is built without a seed"
+    if isinstance(seed, ast.Starred) or (call.keywords and call.keywords[0].arg is None):
+        return None
+    resolved = _resolve(seed, functions, constants)
+    if resolved is None or resolved.value is not None:
+        return None
+    if resolved.default is None:
+        return "is built without a seed"
+    return f"is given {ast.unparse(seed)}, which defaults to None"
+
+
+def _module_generators(tree: ast.Module, constants: dict[str, ast.expr]) -> dict[str, ast.Call]:
+    """Module-level names bound to a generator built without a seed, each with the call."""
+    found: dict[str, ast.Call] = {}
+    for statement in tree.body:
+        if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+            target, value = statement.targets[0], statement.value
+        elif isinstance(statement, ast.AnnAssign):
+            target, value = statement.target, statement.value
+        else:
+            continue
+        if (
+            isinstance(target, ast.Name)
+            and isinstance(value, ast.Call)
+            and _unseeded_generator(value, [], constants)
+        ):
+            found[target.id] = value
+    return found
+
+
+_RNG_HINT = (
+    "draw from a generator built with a seed, such as `random.Random(seed)` or "
+    "`random.Random(sample_id)`, so every build presents the same samples; the fix changes the "
+    "presented samples, so bump the task version's comparability; if the value never reaches "
+    "the model or the score, such as retry jitter or a port number, suppress with a reason"
+)
+
+
+def _rng_diagnostic(message: str, function: PackageFunction, call: ast.Call) -> Diagnostic:
+    return Diagnostic(
+        message,
+        file=function.file.path,
+        line=call.lineno,
+        column=column_of(call),
+        end_line=end_line_of(call),
+        severity="warning",
+        hint=_RNG_HINT,
+    )
+
+
+def _unseeded_draws(
+    function: PackageFunction,
+    names: _RandomNames,
+    tree: ast.Module,
+    constants: dict[str, ast.expr],
+    module_generators: dict[str, ast.Call],
+    code: ScorerCode,
+) -> Iterable[tuple[ast.Call, str]]:
+    """Each unseeded source of randomness ``function`` uses, as the call to report and its message."""
+    where = f"{function.node.name}()"
+    nodes = list(scope_nodes(function.node.body))
+    calls = sorted(
+        (n for n in nodes if isinstance(n, ast.Call)), key=lambda c: (c.lineno, c.col_offset)
+    )
+
+    seeded = names.seeds(tree.body) or any(names.seeds(fn.body) for fn in function.scopes)
+    draws = [
+        (call, drawn[1])
+        for call in calls
+        if (drawn := names.function(call)) is not None and drawn[0] in RANDOM_DRAWS
+    ]
+    if draws and not seeded:
+        first, label = draws[0]
+        more = sorted({call.lineno for call, _ in draws[1:]} - {first.lineno})
+        also = f"; more at line(s) {', '.join(map(str, more))}" if more else ""
+        yield first, f"{label}() in {where} uses the unseeded global random module{also}"
+
+    enclosing = [_function_of(fn) for fn in reversed(function.scopes)]
+    for call in calls:
+        reason = _unseeded_generator(call, enclosing, constants)
+        if reason is not None:
+            yield call, f"{ast.unparse(call.func)}() in {where} {reason}"
+
+    local = {name for fn in function.scopes for name in code.bound(fn)}
+    for node in nodes:
+        if (
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Load)
+            and node.id in module_generators
+            and node.id not in local
+        ):
+            call = module_generators[node.id]
+            yield (
+                call,
+                f"{ast.unparse(call.func)}() bound to {node.id} is built without a seed "
+                f"and used in {where}",
+            )
+
+
+@rule(
+    code="IEBP018",
+    name="sample_rng_seeded",
+    category="best_practices",
+    scopes=("eval", "helper"),
+    summary="Randomness used while building samples is seeded",
+)
+def sample_rng_seeded(ctx: LintContext) -> Iterable[Finding]:
+    """Randomness used while building samples is seeded.
+
+    ## What it does
+    Warns on three sources of randomness that have no seed:
+
+    - a call to a function of the stdlib ``random`` module that draws from its
+      global generator, such as ``random.shuffle``, ``random.sample`` or
+      ``random.choice``, or the same function imported by name;
+    - ``random.Random()`` built with no seed;
+    - ``numpy.random.default_rng()`` built with no seed.
+
+    A draw from the global generator is seeded when ``random.seed(...)`` is
+    called with an argument in the same function, in a function enclosing it,
+    or at the top level of the file. A generator is unseeded when it is built
+    with no argument, with ``None``, or with a name that resolves to ``None``
+    through a parameter default or a module-level constant, as
+    ``shuffle_seeded`` resolves a seed. Any other argument, such as a sample id,
+    counts as a seed. Draws from the global generator report once per function,
+    at the first call. A generator bound at the top level of a file is reported
+    where it is built, when a function the rule reads uses the name.
+
+    Only the code that decides what a sample holds is read: every ``@task``
+    function, every function that calls ``Sample``, ``MemoryDataset`` or a
+    dataset loader, the functions nested in them, and the package functions
+    they call, followed to any depth. That takes in a solver the task uses and
+    its ``solve`` function, which runs once per sample. A call is followed when
+    its target can be read from the source, as the scoring rules follow one, so
+    a method call is not followed. ``@tool``, ``@scorer`` and ``@metric``
+    functions are not read, and neither is code that runs when a file is
+    imported.
+
+    ``random.SystemRandom`` is not flagged, since it cannot be seeded. The
+    legacy ``numpy.random`` functions are left to ruff's ``NPY002``.
+
+    Fixing a finding changes the samples the task presents. That breaks
+    comparability with earlier runs, so it needs a comparability bump to the
+    task version. Where the value never reaches the model or the score, such as
+    retry jitter or a port number, suppress the finding with a reason.
+
+    ## Why is this bad?
+    A sample built with unseeded randomness differs between builds of the same
+    task: its options come in another order, it holds different distractors, or
+    its target moves. Two runs of the same task on the same model then answer
+    different questions, so their scores can't be compared sample by sample,
+    and a result can't be reproduced from its log. ``shuffle_choices_seeded``
+    and ``shuffle_seeded`` cover the shuffles a dataset loader does. This rule
+    covers the ones the evaluation's own code does.
+
+    ## Example
+    ```python
+    def record_to_sample(record: dict[str, Any]) -> Sample:
+        candidates = record["candidates"]
+        random.shuffle(candidates)
+        return Sample(input=record["question"], choices=candidates, id=record["id"])
+    ```
+    Use instead:
+    ```python
+    def record_to_sample(record: dict[str, Any]) -> Sample:
+        candidates = record["candidates"]
+        random.Random(record["id"]).shuffle(candidates)
+        return Sample(input=record["question"], choices=candidates, id=record["id"])
+    ```
+    """
+    parsed_files = parse_python_files(ctx)
+    yield from parse_failures(parsed_files)
+
+    code = ScorerCode.build(
+        ctx, parsed_files.parsed, is_root=_builds_samples, not_followed=_NOT_SAMPLE_CODE
+    )
+    per_file: dict[int, tuple[_RandomNames, dict[str, ast.expr], dict[str, ast.Call]]] = {}
+    issues: dict[int, Diagnostic] = {}
+    for function in code.reached:
+        tree = function.file.tree
+        assert isinstance(tree, ast.Module)
+        if id(tree) not in per_file:
+            constants = _module_constants(tree)
+            per_file[id(tree)] = (
+                _RandomNames.of(tree),
+                constants,
+                _module_generators(tree, constants),
+            )
+        names, constants, module_generators = per_file[id(tree)]
+        for call, message in _unseeded_draws(
+            function, names, tree, constants, module_generators, code
+        ):
+            issues.setdefault(id(call), _rng_diagnostic(message, function, call))
+
+    yield from sorted(issues.values(), key=lambda d: (str(d.file), d.line or 0, d.column or 0))
+    if not issues:
+        yield Outcome("pass", "No unseeded randomness in the code that builds samples")
