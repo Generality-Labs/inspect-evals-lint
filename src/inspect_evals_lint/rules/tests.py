@@ -19,6 +19,7 @@ from inspect_evals_lint.rules._ast import (
     get_call_name,
     get_decorator_name,
     iter_python_files,
+    read_python_source,
     safe_parse_file,
 )
 
@@ -125,7 +126,7 @@ def e2e_test(ctx: LintContext) -> Iterable[Finding]:
     unparsable: list[Diagnostic] = []
     for py_file in ctx.test_path.rglob("*.py"):
         try:
-            content = py_file.read_text(encoding="utf-8")
+            content = read_python_source(py_file)
             tree = ast.parse(content)
         except (SyntaxError, UnicodeDecodeError, OSError) as e:
             unparsable.append(Diagnostic(f"Could not parse file: {e}", file=py_file, line=1))
@@ -151,8 +152,8 @@ def _first_mention(
     pattern = re.compile(rf"(?<!\w){re.escape(needle)}(?!\w)") if whole_word else None
     for py_file in files:
         try:
-            lines = py_file.read_text(encoding="utf-8").splitlines()
-        except (OSError, UnicodeDecodeError):
+            lines = read_python_source(py_file).splitlines()
+        except (OSError, UnicodeDecodeError, SyntaxError):
             continue
         for i, line in enumerate(lines, start=1):
             found = pattern.search(line) is not None if pattern else needle in line

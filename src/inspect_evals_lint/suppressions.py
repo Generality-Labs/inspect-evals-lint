@@ -21,6 +21,7 @@ from inspect_evals_lint.rules._ast import (
     iter_dockerfiles,
     iter_package_files,
     iter_python_files,
+    read_python_source,
 )
 from inspect_evals_lint.rules._compose import iter_compose_files
 
@@ -170,8 +171,11 @@ def _dockerfile_target(lines: list[str], index: int) -> int:
 
 def _read_comments(path: Path, suppressions: Suppressions) -> None:
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
+        text = (
+            read_python_source(path) if path.suffix == ".py" else path.read_text(encoding="utf-8")
+        )
+        lines = text.splitlines()
+    except (OSError, UnicodeDecodeError, SyntaxError):
         return
     dockerfile = is_dockerfile(path)
 

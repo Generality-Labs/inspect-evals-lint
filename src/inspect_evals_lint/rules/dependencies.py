@@ -17,7 +17,7 @@ from inspect_evals_lint.config import LintConfig
 from inspect_evals_lint.context import LintContext, is_package
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
 from inspect_evals_lint.registry import inspect_docs, rule
-from inspect_evals_lint.rules._ast import iter_python_files
+from inspect_evals_lint.rules._ast import iter_python_files, read_python_source
 
 
 def normalize_name(name: str) -> str:
@@ -287,7 +287,7 @@ def _get_imports_from_file(
 ) -> tuple[dict[str, Site], dict[str, Site], str | None]:
     """``(eager, lazy)`` top-level module names with their first site, plus a syntax-error message if any."""
     try:
-        tree = ast.parse(file_path.read_text(encoding="utf-8"))
+        tree = ast.parse(read_python_source(file_path))
     except SyntaxError as e:
         return {}, {}, str(e)
     visitor = _ImportVisitor()
