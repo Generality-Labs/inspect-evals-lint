@@ -274,14 +274,16 @@ def module_names(tree: ast.Module) -> Names:
     return {**conditional, **_imports_in(_unconditional_statements(tree.body))}
 
 
-def _locally_bound(body: list[ast.stmt], parameters: Iterable[str]) -> set[str]:
-    """Names a function or class body binds other than by import, less its ``global`` and ``nonlocal`` names."""
+def bound_names(
+    body: list[ast.stmt], parameters: Iterable[str], *, skip: frozenset[int] = frozenset()
+) -> set[str]:
+    """Names a function or class body binds, less its ``global`` and ``nonlocal`` names."""
     bound = set(parameters)
     declared: set[str] = set()
-    for node in scope_nodes(body):
+    for node in scope_nodes(body, skip):
         if isinstance(node, (ast.Global, ast.Nonlocal)):
             declared.update(node.names)
-        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             bound.add(node.id)
         elif (
             isinstance(
@@ -298,9 +300,15 @@ def _locally_bound(body: list[ast.stmt], parameters: Iterable[str]) -> set[str]:
             and node.name
         ):
             bound.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            bound.update((a.asname or a.name).split(".")[0] for a in node.names)
         elif isinstance(node, ast.MatchMapping) and node.rest:
             bound.add(node.rest)
-    return bound - declared - _BUILTIN_SINKS
+    return bound - declared
+
+
+def _locally_bound(body: list[ast.stmt], parameters: Iterable[str]) -> set[str]:
+    return bound_names(body, parameters) - _BUILTIN_SINKS
 
 
 def local_names(body: list[ast.stmt], outer: Names, parameters: Iterable[str] = ()) -> Names:
@@ -383,7 +391,7 @@ def _nested_definitions(
     ]
 
 
-def _parameters(fn: FunctionNode) -> list[ast.arg]:
+def function_parameters(fn: FunctionNode | ast.Lambda) -> list[ast.arg]:
     args = fn.args
     extra = [a for a in (args.vararg, args.kwarg) if a is not None]
     return [*args.posonlyargs, *args.args, *args.kwonlyargs, *extra]
@@ -592,7 +600,11 @@ class FileAnalysis:
         scope = self._function_scope(fn, outer.visible, outer.methods, depth=0)
         if tool_argument:
             scope.taint.update(
-                {p.arg: f"tool argument {p.arg!r}" for p in _parameters(fn) if p.arg != "self"}
+                {
+                    p.arg: f"tool argument {p.arg!r}"
+                    for p in function_parameters(fn)
+                    if p.arg != "self"
+                }
             )
         is_tool = any(get_decorator_name(d) == "tool" for d in fn.decorator_list)
         self._analyse_body(scope, tool_factory=is_tool)
@@ -607,7 +619,7 @@ class FileAnalysis:
         via: str = "",
     ) -> Scope:
         """A scope for ``fn``'s body that closes over ``defining``: its taint, sandbox bindings and names."""
-        parameters = {param.arg for param in _parameters(fn)}
+        parameters = {param.arg for param in function_parameters(fn)}
 
         def closes_over(name: str) -> bool:
             return name.split(".")[0] not in parameters
@@ -626,14 +638,14 @@ class FileAnalysis:
             sandboxes={s for s in defining.sandboxes if closes_over(s)},
         )
         self._seed_parameters(fn, scope)
-        for param, default in _defaults(fn.args):
+        for param, default in parameter_defaults(fn.args):
             reason = self.taint_of(default, defining)
             if reason is not None:
                 scope.taint.setdefault(param.arg, reason)
         return scope
 
     def _seed_parameters(self, fn: FunctionNode, scope: Scope) -> None:
-        for param in _parameters(fn):
+        for param in function_parameters(fn):
             names = annotation_names(param.annotation)
             if "ModelOutput" in names:
                 scope.taint.setdefault(param.arg, f"model output (parameter {param.arg!r})")
@@ -804,7 +816,7 @@ class FileAnalysis:
         args = fn.args
         positional = [*args.posonlyargs, *args.args][1 if bound else 0 :]
         named = {param.arg for param in [*positional, *args.kwonlyargs]}
-        everything = [param.arg for param in _parameters(fn)][1 if bound else 0 :]
+        everything = [param.arg for param in function_parameters(fn)][1 if bound else 0 :]
         seeds: dict[str, str] = {}
         for index, arg in enumerate(call.args):
             value = arg.value if isinstance(arg, ast.Starred) else arg
@@ -935,14 +947,14 @@ def _flows(node: ast.AST) -> Iterator[tuple[ast.expr, ast.expr]]:
             yield node.func.value, arg
     elif isinstance(node, ast.Match):
         for case in node.cases:
-            for name in _captures(case.pattern):
+            for name in pattern_captures(case.pattern):
                 yield ast.Name(id=name, ctx=ast.Store()), node.subject
     elif isinstance(node, ast.Lambda):
-        for param, default in _defaults(node.args):
+        for param, default in parameter_defaults(node.args):
             yield ast.Name(id=param.arg, ctx=ast.Store()), default
 
 
-def _defaults(args: ast.arguments) -> list[tuple[ast.arg, ast.expr]]:
+def parameter_defaults(args: ast.arguments) -> list[tuple[ast.arg, ast.expr]]:
     """Each parameter that has a default, with its default."""
     positional = [*args.posonlyargs, *args.args]
     pairs = zip(positional[len(positional) - len(args.defaults) :], args.defaults, strict=True)
@@ -950,7 +962,7 @@ def _defaults(args: ast.arguments) -> list[tuple[ast.arg, ast.expr]]:
     return [*pairs, *((param, d) for param, d in keyword_only if d is not None)]
 
 
-def _captures(pattern: ast.pattern) -> Iterator[str]:
+def pattern_captures(pattern: ast.pattern) -> Iterator[str]:
     """The names a ``match`` pattern binds; each takes part of the subject."""
     for node in ast.walk(pattern):
         if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
