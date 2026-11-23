@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 from dataclasses import replace
 from pathlib import Path
 
@@ -972,3 +973,39 @@ def test_component_registered_under_another_name_is_matched_by_that_name(
         'def test_submit():\n    assert exit_reason == "submit"\n',
     )
     assert statuses(root, config)["custom_tool_tests"] == ["pass"]
+
+
+def _messages(root: Path, config: LintConfig) -> list[tuple[str, str, str]]:
+    report = lint_package(root, "alpha", config)
+    return sorted(
+        (r.rule.name if r.rule else "", r.status, getattr(r, "message", "")) for r in report.items()
+    )
+
+
+@pytest.mark.parametrize(
+    "encode",
+    [
+        pytest.param(lambda text: codecs.BOM_UTF8 + text.encode("utf-8"), id="byte_order_mark"),
+        pytest.param(
+            lambda text: ("# -*- coding: latin-1 -*-\n" + text).encode("latin-1"),
+            id="declared_latin_1",
+        ),
+    ],
+)
+def test_source_encoding_does_not_change_the_report(tmp_path: Path, encode) -> None:  # type: ignore[no-untyped-def]
+    # A register entry had one file saved with a UTF-8 byte order mark, and
+    # every rule that parses the package reported "invalid non-printable
+    # character U+FEFF" for it although Python imports the file.
+    config = make_monorepo(tmp_path)
+    eval_file = tmp_path / "src/inspect_evals/alpha/alpha.py"
+    write(eval_file, eval_file.read_text() + "\nNOTE = '\u00fcber'\n")
+    expected = _messages(tmp_path, config)
+
+    python_files = sorted(tmp_path.rglob("*.py"))
+    assert python_files
+    for path in python_files:
+        path.write_bytes(encode(path.read_text(encoding="utf-8")))
+
+    messages = _messages(tmp_path, config)
+    assert not [m for m in messages if "Could not parse" in m[2] or "Syntax error" in m[2]]
+    assert messages == expected

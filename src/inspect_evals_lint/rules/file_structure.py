@@ -15,7 +15,11 @@ from inspect_evals_lint.config import LintConfig
 from inspect_evals_lint.context import LintContext, is_package
 from inspect_evals_lint.diagnostics import Diagnostic, Finding, Outcome
 from inspect_evals_lint.registry import inspect_docs, rule
-from inspect_evals_lint.rules._ast import get_decorator_name, iter_python_files
+from inspect_evals_lint.rules._ast import (
+    get_decorator_name,
+    iter_python_files,
+    read_python_source,
+)
 
 
 def _find_task_functions(file_path: Path) -> list[str]:
@@ -23,7 +27,7 @@ def _find_task_functions(file_path: Path) -> list[str]:
     if not file_path.exists():
         return []
     try:
-        tree = ast.parse(file_path.read_text(encoding="utf-8"))
+        tree = ast.parse(read_python_source(file_path))
     except SyntaxError:
         return []
     return [
@@ -39,7 +43,7 @@ def _get_exported_names(init_file: Path) -> set[str]:
     if not init_file.exists():
         return set()
     try:
-        tree = ast.parse(init_file.read_text(encoding="utf-8"))
+        tree = ast.parse(read_python_source(init_file))
     except SyntaxError:
         return set()
 
@@ -178,7 +182,7 @@ def main_file(ctx: LintContext) -> Iterable[Finding]:
         if not candidate.exists():
             continue
         try:
-            ast.parse(candidate.read_text(encoding="utf-8"))
+            ast.parse(read_python_source(candidate))
         except SyntaxError as e:
             yield Diagnostic(
                 f"Syntax error in {candidate.name}: {e}", file=candidate, line=e.lineno
@@ -251,7 +255,7 @@ def init_exports(ctx: LintContext) -> Iterable[Finding]:
         return
 
     try:
-        ast.parse(init_file.read_text(encoding="utf-8"))
+        ast.parse(read_python_source(init_file))
     except SyntaxError as e:
         yield Diagnostic(f"Syntax error in __init__.py: {e}", file=init_file, line=e.lineno)
         return

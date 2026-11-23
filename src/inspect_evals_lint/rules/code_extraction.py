@@ -18,6 +18,7 @@ from inspect_evals_lint.rules._ast import (
     get_call_name,
     parse_failures,
     parse_python_files,
+    read_python_source,
 )
 from inspect_evals_lint.rules.dependencies import declared_dependencies
 
@@ -92,7 +93,7 @@ def helper_modules(ctx: LintContext, helper: str = HELPER) -> set[Path]:
             continue
         for path in package.rglob("*.py"):
             try:
-                text = path.read_text(encoding="utf-8")
+                text = read_python_source(path)
                 if f"def {helper}" in text and any(
                     isinstance(node, _Function) and node.name == helper
                     for node in ast.parse(text).body

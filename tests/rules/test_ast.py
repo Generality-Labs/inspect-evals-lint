@@ -1,14 +1,22 @@
 """Shared AST helpers."""
 
 import ast
+import codecs
+from pathlib import Path
+
+import pytest
 
 from inspect_evals_lint.config import PRESETS
 from inspect_evals_lint.rules._ast import (
+    ParsedFile,
+    ParseFailure,
     get_call_name,
     get_decorator_name,
     is_dockerfile,
     iter_dockerfiles,
     iter_python_files,
+    read_python_source,
+    safe_parse_file,
 )
 from tests.conftest import context_for, write
 
@@ -132,3 +140,47 @@ class TestFileIteration:
         assert iter_dockerfiles(ctx) == [pkg / "Dockerfile"]
         assert iter_python_files(ctx) == [pkg / "e.py"]
         assert len(iter_dockerfiles(context_for(pkg))) == 2
+
+
+class TestReadPythonSource:
+    """Python files are decoded the way the interpreter decodes them."""
+
+    def test_byte_order_mark_is_dropped(self, tmp_path: Path) -> None:
+        path = tmp_path / "bom.py"
+        path.write_bytes(codecs.BOM_UTF8 + b'"""Docstring."""\nx = 1\n')
+
+        assert read_python_source(path) == '"""Docstring."""\nx = 1\n'
+        assert isinstance(safe_parse_file(path), ParsedFile)
+
+    def test_declared_encoding_is_used(self, tmp_path: Path) -> None:
+        path = tmp_path / "latin1.py"
+        path.write_bytes("# -*- coding: latin-1 -*-\nname = '\u00fcber'\n".encode("latin-1"))
+
+        assert "\u00fcber" in read_python_source(path)
+        parsed = safe_parse_file(path)
+        assert isinstance(parsed, ParsedFile)
+        assign = parsed.tree.body[0]
+        assert isinstance(assign, ast.Assign)
+        assert ast.literal_eval(assign.value) == "\u00fcber"
+
+    def test_crlf_line_endings_are_normalised(self, tmp_path: Path) -> None:
+        path = tmp_path / "crlf.py"
+        path.write_bytes(b"x = 1\r\ny = 2\r\n")
+
+        assert read_python_source(path) == "x = 1\ny = 2\n"
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param(b"# -*- coding: no-such-codec -*-\nx = 1\n", id="unknown_encoding"),
+            pytest.param(
+                codecs.BOM_UTF8 + b"# -*- coding: latin-1 -*-\nx = 1\n", id="mark_contradicts"
+            ),
+            pytest.param(b"x = 1\nname = '\xe9'\n", id="undeclared_non_utf8"),
+        ],
+    )
+    def test_undecodable_file_is_a_parse_failure(self, tmp_path: Path, content: bytes) -> None:
+        path = tmp_path / "bad.py"
+        path.write_bytes(content)
+
+        assert isinstance(safe_parse_file(path), ParseFailure)

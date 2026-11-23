@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import tokenize
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -72,9 +73,21 @@ def get_call_name(node: ast.Call) -> str | None:
     return None
 
 
+def read_python_source(file_path: Path) -> str:
+    """Text of a Python file, decoded the way the interpreter decodes it.
+
+    Python accepts a UTF-8 byte order mark and a PEP 263 ``# -*- coding: ... -*-``
+    declaration. Decoding as plain UTF-8 keeps the mark as U+FEFF, which
+    ``ast.parse`` rejects in a string, and misreads a file in a declared encoding.
+    Raises ``SyntaxError`` for an unknown or contradictory declaration.
+    """
+    with tokenize.open(file_path) as source:
+        return source.read()
+
+
 def safe_parse_file(file_path: Path) -> ParsedFile | ParseFailure:
     try:
-        return ParsedFile(path=file_path, tree=ast.parse(file_path.read_text(encoding="utf-8")))
+        return ParsedFile(path=file_path, tree=ast.parse(read_python_source(file_path)))
     except (SyntaxError, UnicodeDecodeError, OSError) as e:
         return ParseFailure(path=file_path, error=str(e))
 
